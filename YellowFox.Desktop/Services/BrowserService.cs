@@ -79,8 +79,15 @@ public class BrowserService
             var cdpUrl = await process.StandardOutput.ReadLineAsync();
             if (string.IsNullOrEmpty(cdpUrl))
             {
+                // Read error output to get actual error message
+                var errorOutput = await process.StandardError.ReadToEndAsync();
                 process.Kill();
-                throw new InvalidOperationException("Failed to get CDP URL from Python process");
+                
+                var errorMessage = string.IsNullOrWhiteSpace(errorOutput)
+                    ? "Failed to get CDP URL from Python process (no error details available)"
+                    : $"Failed to get CDP URL from Python process. Error: {errorOutput.Trim()}";
+                
+                throw new InvalidOperationException(errorMessage);
             }
             
             // Connect Playwright to CDP endpoint
