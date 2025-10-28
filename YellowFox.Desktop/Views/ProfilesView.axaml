@@ -1,0 +1,291 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:YellowFox.Desktop.ViewModels"
+             xmlns:converters="using:YellowFox.Desktop.Converters"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="1000" d:DesignHeight="600"
+             x:Class="YellowFox.Desktop.Views.ProfilesView"
+             x:DataType="vm:ProfilesViewModel"
+             Background="#1E1E1E">
+    
+    <UserControl.Resources>
+        <converters:BoolToColorConverter x:Key="StatusColorConverter" />
+    </UserControl.Resources>
+    
+    <DockPanel>
+        <!-- Top Toolbar -->
+        <Border DockPanel.Dock="Top" 
+                Background="#2D2D2D" 
+                BorderBrush="#3E3E42" 
+                BorderThickness="0,0,0,1"
+                Padding="20,12">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                <!-- Left: New Profile Button -->
+                <Button Grid.Column="0"
+                        Content="➕ New Profile" 
+                        Command="{Binding NewProfileCommand}"
+                        Padding="16,8"
+                        FontWeight="SemiBold"
+                        Background="#4CAF50"
+                        Foreground="White"
+                        CornerRadius="6"
+                        BorderThickness="0" />
+                
+                <!-- Center: Search Box -->
+                <TextBox Grid.Column="1"
+                         Width="400"
+                         Margin="20,0"
+                         Watermark="🔍 Search profiles..." 
+                         Text="{Binding SearchText}"
+                         VerticalContentAlignment="Center"
+                         Padding="12,8"
+                         Background="#252526"
+                         Foreground="#CCCCCC"
+                         BorderBrush="#3E3E42"
+                         CornerRadius="6" />
+                
+                <!-- Right: Refresh Button -->
+                <Button Grid.Column="2"
+                        Content="🔄 Refresh" 
+                        Command="{Binding RefreshCommand}"
+                        Padding="12,8"
+                        Background="#3E3E42"
+                        Foreground="#CCCCCC"
+                        BorderThickness="0"
+                        CornerRadius="6"
+                        Margin="0,0,10,0" />
+            </Grid>
+        </Border>
+        
+        <!-- Table Header -->
+        <Border DockPanel.Dock="Top"
+                Background="#252526"
+                BorderBrush="#3E3E42"
+                BorderThickness="0,0,0,1"
+                Padding="20,12">
+            <Grid ColumnDefinitions="50,30,250,120,150,*,380">
+                <TextBlock Grid.Column="1" Text="" Foreground="#858585" FontSize="12" FontWeight="SemiBold" />
+                <TextBlock Grid.Column="2" Text="Name" Foreground="#858585" FontSize="12" FontWeight="SemiBold" />
+                <TextBlock Grid.Column="3" Text="OS" Foreground="#858585" FontSize="12" FontWeight="SemiBold" />
+                <TextBlock Grid.Column="4" Text="Screen" Foreground="#858585" FontSize="12" FontWeight="SemiBold" />
+                <TextBlock Grid.Column="5" Text="Notes" Foreground="#858585" FontSize="12" FontWeight="SemiBold" />
+                <TextBlock Grid.Column="6" Text="Actions" Foreground="#858585" FontSize="12" FontWeight="SemiBold" HorizontalAlignment="Right" Margin="0,0,20,0" />
+            </Grid>
+        </Border>
+        
+        <!-- Bottom Action Bar (Bulk Actions) - MUST BE BEFORE ScrollViewer -->
+        <Border DockPanel.Dock="Bottom"
+                Background="#2A2D2E"
+                BorderBrush="#3E3E42"
+                BorderThickness="0,1,0,0"
+                Padding="20,15"
+                IsVisible="{Binding HasSelection}">
+            <StackPanel Orientation="Vertical" HorizontalAlignment="Center" Spacing="12">
+                <!-- Selection Count -->
+                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                    <TextBlock Text="{Binding SelectedCount}" 
+                               Foreground="#CCCCCC"
+                               FontWeight="SemiBold"
+                               FontSize="14" />
+                    <TextBlock Text="profile(s) selected" 
+                               Foreground="#858585"
+                               FontSize="14" />
+                </StackPanel>
+                
+                <!-- Action Buttons -->
+                <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center">
+                    <!-- Start All Button -->
+                    <Button Content="▶ START ALL" 
+                            Command="{Binding StartAllSelectedCommand}"
+                            Background="Transparent"
+                            Foreground="#4CAF50"
+                            BorderBrush="#4CAF50"
+                            BorderThickness="1"
+                            Padding="24,10"
+                            FontSize="13"
+                            FontWeight="SemiBold"
+                            CornerRadius="6" />
+                    
+                    <!-- Delete All Button -->
+                    <Button Content="🗑️ DELETE ALL" 
+                            Command="{Binding DeleteAllSelectedCommand}"
+                            Background="Transparent"
+                            Foreground="#F44336"
+                            BorderBrush="#F44336"
+                            BorderThickness="1"
+                            Padding="24,10"
+                            FontSize="13"
+                            FontWeight="SemiBold"
+                            CornerRadius="6" />
+                </StackPanel>
+            </StackPanel>
+        </Border>
+        
+        <!-- Profiles Table -->
+        <ScrollViewer>
+            <ItemsControl ItemsSource="{Binding Profiles}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate DataType="vm:ProfileItemViewModel">
+                        <!-- Profile Row -->
+                        <Border Background="#252526"
+                                BorderBrush="#3E3E42"
+                                BorderThickness="0,0,0,1"
+                                Padding="20,16">
+                            <Border.Styles>
+                                <Style Selector="Border:pointerover">
+                                    <Setter Property="Background" Value="#2D2D30" />
+                                </Style>
+                            </Border.Styles>
+                            
+                            <Grid ColumnDefinitions="50,30,250,120,150,*,380">
+                                <!-- Checkbox Column -->
+                                <CheckBox Grid.Column="0" 
+                                          VerticalAlignment="Center"
+                                          IsChecked="{Binding IsSelected}" />
+                                
+                                <!-- Status Indicator -->
+                                <Ellipse Grid.Column="1"
+                                         Width="10" Height="10"
+                                         VerticalAlignment="Center"
+                                         HorizontalAlignment="Left"
+                                         Fill="{Binding IsRunning, Converter={StaticResource StatusColorConverter}}" />
+                                
+                                <!-- Name with Icon -->
+                                <StackPanel Grid.Column="2" 
+                                            Orientation="Horizontal" 
+                                            Spacing="10"
+                                            VerticalAlignment="Center">
+                                    <TextBlock Text="💻" FontSize="16" VerticalAlignment="Center" />
+                                    <TextBlock Text="{Binding Profile.Name}" 
+                                               FontSize="14" 
+                                               FontWeight="SemiBold"
+                                               Foreground="#CCCCCC"
+                                               VerticalAlignment="Center" />
+                                </StackPanel>
+                                
+                                <!-- OS -->
+                                <TextBlock Grid.Column="3"
+                                           Text="{Binding Profile.FingerprintConfig.Os}" 
+                                           Foreground="#858585"
+                                           FontSize="13"
+                                           VerticalAlignment="Center"
+                                           TextTrimming="CharacterEllipsis" />
+                                
+                                <!-- Screen Resolution -->
+                                <TextBlock Grid.Column="4"
+                                           Foreground="#858585"
+                                           FontSize="13"
+                                           VerticalAlignment="Center">
+                                    <Run Text="{Binding Profile.FingerprintConfig.Screen.MaxWidth}" />
+                                    <Run Text="×" />
+                                    <Run Text="{Binding Profile.FingerprintConfig.Screen.MaxHeight}" />
+                                </TextBlock>
+                                
+                                <!-- Notes -->
+                                <TextBlock Grid.Column="5"
+                                           Text="{Binding Profile.Notes}" 
+                                           Foreground="#858585"
+                                           FontSize="13"
+                                           VerticalAlignment="Center"
+                                           TextTrimming="CharacterEllipsis" />
+                                
+                                <!-- Action Buttons -->
+                                <StackPanel Grid.Column="6" 
+                                            Orientation="Horizontal" 
+                                            Spacing="8"
+                                            VerticalAlignment="Center"
+                                            HorizontalAlignment="Right"
+                                            Margin="0,0,20,0">
+                                    
+                                    <!-- Start Button (when not running) -->
+                                    <Button Content="▶ START" 
+                                            Command="{Binding StartCommand}"
+                                            IsVisible="{Binding !IsRunning}"
+                                            Background="Transparent"
+                                            Foreground="#4CAF50"
+                                            BorderBrush="#4CAF50"
+                                            BorderThickness="1"
+                                            Padding="16,6"
+                                            FontSize="12"
+                                            FontWeight="SemiBold"
+                                            CornerRadius="4" />
+                                    
+                                    <!-- Stop Button (when running) -->
+                                    <Button Content="⏹ STOP" 
+                                            Command="{Binding StopCommand}"
+                                            IsVisible="{Binding IsRunning}"
+                                            Background="Transparent"
+                                            Foreground="#F44336"
+                                            BorderBrush="#F44336"
+                                            BorderThickness="1"
+                                            Padding="16,6"
+                                            FontSize="12"
+                                            FontWeight="SemiBold"
+                                            CornerRadius="4" />
+                                    
+                                    <!-- Edit Button -->
+                                    <Button Content="✏️" 
+                                            Command="{Binding EditCommand}"
+                                            Background="Transparent"
+                                            Foreground="#CCCCCC"
+                                            BorderBrush="#3E3E42"
+                                            BorderThickness="1"
+                                            Padding="8,6"
+                                            FontSize="14"
+                                            CornerRadius="4"
+                                            ToolTip.Tip="Edit" />
+                                    
+                                    <!-- Clone Button -->
+                                    <Button Content="📋" 
+                                            Command="{Binding CloneCommand}"
+                                            Background="Transparent"
+                                            Foreground="#CCCCCC"
+                                            BorderBrush="#3E3E42"
+                                            BorderThickness="1"
+                                            Padding="8,6"
+                                            FontSize="14"
+                                            CornerRadius="4"
+                                            ToolTip.Tip="Clone" />
+                                    
+                                    <!-- Delete Button -->
+                                    <Button Content="🗑️" 
+                                            Command="{Binding DeleteCommand}"
+                                            Background="Transparent"
+                                            Foreground="#F44336"
+                                            BorderBrush="#3E3E42"
+                                            BorderThickness="1"
+                                            Padding="8,6"
+                                            FontSize="14"
+                                            CornerRadius="4"
+                                            ToolTip.Tip="Delete" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+        
+        <!-- Empty State -->
+        <Panel IsVisible="{Binding !Profiles.Count}">
+            <StackPanel VerticalAlignment="Center" 
+                        HorizontalAlignment="Center"
+                        Spacing="15">
+                <TextBlock Text="📁" 
+                           FontSize="48" 
+                           HorizontalAlignment="Center" />
+                <TextBlock Text="No profiles yet" 
+                           FontSize="18" 
+                           FontWeight="SemiBold"
+                           Foreground="#CCCCCC"
+                           HorizontalAlignment="Center" />
+                <TextBlock Text="Click 'New Profile' to create your first profile" 
+                           Foreground="#858585"
+                           FontSize="14"
+                           HorizontalAlignment="Center" />
+            </StackPanel>
+        </Panel>
+    </DockPanel>
+    
+</UserControl>

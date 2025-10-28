@@ -1,0 +1,448 @@
+# YellowFox Architecture
+
+## Overview
+
+YellowFox uses a hybrid architecture combining .NET desktop UI with Python browser automation.
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                   Avalonia UI (.NET)                    │
+│  ┌────────────┐  ┌──────────────┐  ┌────────────────┐  │
+│  │   Views    │←→│  ViewModels  │←→│    Services    │  │
+│  │   (XAML)   │  │   (MVVM)     │  │  - Database    │  │
+│  └────────────┘  └──────────────┘  │  - Browser     │  │
+│                                     └────────┬───────┘  │
+│                                              │          │
+└──────────────────────────────────────────────┼──────────┘
+                                               │
+                                      Process Spawn
+                                               │
+                                               ▼
+┌─────────────────────────────────────────────────────────┐
+│              Python Script (camoufox-server.py)         │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │  1. Read config JSON                             │   │
+│  │  2. Launch CamouFox with BrowserForge            │   │
+│  │  3. Print CDP URL to stdout                      │   │
+│  │  4. Keep process alive                           │   │
+│  └──────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────┘
+                                               │
+                                               │ CDP Protocol
+                                               ▼
+┌─────────────────────────────────────────────────────────┐
+│               CamouFox Browser Instance                 │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │  - Modified Firefox with anti-detect patches     │   │
+│  │  - BrowserForge auto-generated fingerprints      │   │
+│  │  - Isolated user profile directory               │   │
+│  │  - CDP server listening on random port           │   │
+│  └──────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────┘
+                                               │
+                                               │ Playwright
+                                               ▼
+┌─────────────────────────────────────────────────────────┐
+│        .NET Playwright Client (Browser Control)         │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │  - Connect via CDP URL                           │   │
+│  │  - Monitor browser status                        │   │
+│  │  - Control browser lifecycle                     │   │
+│  └──────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────┘
+```
+
+## Component Details
+
+### .NET Application Layer
+
+**Avalonia UI (Cross-Platform Desktop)**
+- **Framework**: .NET 8, Avalonia 11.x
+- **Pattern**: MVVM (Model-View-ViewModel)
+- **UI Toolkit**: Avalonia controls, ReactiveUI patterns via CommunityToolkit.Mvvm
+- **Platforms**: Windows, macOS, Linux
+
+**Models** (`Models/`)
+- `Profile`: Browser profile configuration
+- `FingerprintConfig`: OS, screen settings
+- `ScreenConfig`: Screen dimensions
+- `ScreenPreset`: Predefined resolutions
+
+**Services** (`Services/`)
+- `DatabaseService`: SQLite persistence layer
+  - Connection: `data/yellowfox.db`
+  - Tables: `profiles`
+  - Operations: CRUD + Clone
+  
+- `BrowserService`: Browser lifecycle management
+  - Spawns Python process
+  - Captures CDP URL
+  - Manages Playwright connection
+  - Tracks running instances
+  - Cleanup on shutdown
+
+**ViewModels** (`ViewModels/`)
+- `MainWindowViewModel`: Root VM, hosts other VMs
+- `ProfilesViewModel`: Profile list management
+- `ProfileItemViewModel`: Individual profile with actions
+- `ProfileEditorViewModel`: Create/edit profile dialog
+
+**Views** (`Views/`)
+- `MainWindow.axaml`: Main window with sidebar
+- `ProfilesView.axaml`: Profile list with DataGrid
+- `ProfileEditorView.axaml`: (To be implemented)
+
+### Python Layer
+
+**camoufox-server.py**
+- **Purpose**: Launch CamouFox with configuration
+- **Input**: JSON config via file path argument
+- **Output**: CDP URL to stdout
+- **Lifecycle**: Runs until killed by .NET process
+- **Dependencies**: 
+  - `camoufox`: Anti-detect browser
+  - `playwright`: Browser automation
+
+**Configuration Flow**:
+```python
+config = {
+    "os": "windows",              # From profile
+    "screen": {                    # From profile
+        "maxWidth": 1920,
+        "maxHeight": 1080
+    },
+    "user_data_dir": "./profiles/abc-123"  # Generated by .NET
+}
+```
+
+**BrowserForge Integration**:
+- CamouFox automatically calls BrowserForge
+- Generates realistic fingerprints based on OS + screen
+- Fills in: userAgent, navigator props, WebGL, Canvas, etc.
+- Ensures consistency (e.g., Windows userAgent matches Windows navigator.platform)
+
+### Database Layer
+
+**SQLite Schema**:
+```sql
+-- Current (Phase 1)
+CREATE TABLE profiles (
+    id TEXT PRIMARY KEY,           -- GUID
+    name TEXT NOT NULL UNIQUE,     -- User-friendly name
+    notes TEXT,                    -- Optional notes
+    fingerprint_config TEXT        -- JSON: {"os": "...", "screen": {...}}
+);
+
+-- Future (Phase 2+)
+CREATE TABLE proxies (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    type TEXT NOT NULL,            -- 'socks5', 'http', 'https'
+    host TEXT NOT NULL,
+    port INTEGER NOT NULL,
+    username TEXT,
+    password TEXT
+);
+
+CREATE TABLE extensions (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    path TEXT NOT NULL,            -- Relative to data/extensions/
+    enabled BOOLEAN DEFAULT true
+);
+
+CREATE TABLE bookmarks (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    bookmarks_json TEXT NOT NULL   -- Nested folder structure
+);
+```
+
+**Storage Locations**:
+- `data/yellowfox.db` - Database
+- `data/profiles/{profile-id}/` - Browser profile directories
+- `data/extensions/{extension-id}/` - Extension files (future)
+
+### Browser Layer
+
+**CamouFox**:
+- Modified Firefox ESR with anti-detect patches
+- Removes WebDriver detection
+- Spoofs navigator properties
+- Randomizes Canvas/WebGL fingerprints
+- Patches WebRTC for IP spoofing
+
+**CDP (Chrome DevTools Protocol)**:
+- Communication protocol between .NET and browser
+- CamouFox exposes CDP server on random port
+- Playwright connects via WebSocket
+- Allows: navigation, screenshots, cookies, storage, etc.
+
+**Playwright**:
+- Microsoft's browser automation library
+- .NET bindings via Microsoft.Playwright package
+- Connects to CamouFox via `ConnectOverCDPAsync()`
+- Used for monitoring, not active control in MVP
+
+## Data Flow
+
+### Starting a Browser Profile
+
+```
+1. User clicks "Start" button
+   └─> ProfileItemViewModel.StartAsyncCommand
+       └─> ProfilesViewModel.StartProfileAsync()
+           └─> BrowserService.StartProfileAsync(profileId)
+
+2. BrowserService retrieves profile from database
+   └─> DatabaseService.GetProfile(id)
+   └─> Returns Profile object
+
+3. BrowserService prepares configuration
+   └─> Get user data directory: data/profiles/{id}/
+   └─> Create config JSON with os, screen, user_data_dir
+   └─> Write to temp file
+
+4. BrowserService spawns Python process
+   └─> Command: python camoufox-server.py {tempfile}
+   └─> Redirect stdout/stderr
+   └─> Wait for CDP URL output
+
+5. Python script launches CamouFox
+   └─> Load config JSON
+   └─> CamouFox.__aenter__() with config
+   └─> BrowserForge auto-generates fingerprints
+   └─> Print CDP URL to stdout
+   └─> Enter wait state
+
+6. BrowserService captures CDP URL
+   └─> Read first line from stdout
+   └─> Example: "http://localhost:52341"
+
+7. BrowserService connects Playwright
+   └─> Playwright.CreateAsync()
+   └─> Chromium.ConnectOverCDPAsync(cdpUrl)
+   └─> Store browser reference
+
+8. Update UI
+   └─> Store running instance in dictionary
+   └─> Update ProfileItemViewModel.IsRunning = true
+   └─> UI shows 🟢 status
+```
+
+### Stopping a Browser Profile
+
+```
+1. User clicks "Stop" button
+   └─> ProfileItemViewModel.StopAsyncCommand
+       └─> ProfilesViewModel.StopProfileAsync()
+           └─> BrowserService.StopProfileAsync(profileId)
+
+2. BrowserService closes connections
+   └─> browser.CloseAsync() - Playwright
+   └─> playwright.Dispose()
+
+3. BrowserService kills Python process
+   └─> process.Kill()
+   └─> process.WaitForExitAsync()
+
+4. Cleanup
+   └─> Delete temp config file
+   └─> Remove from running instances dictionary
+
+5. Update UI
+   └─> ProfileItemViewModel.IsRunning = false
+   └─> UI shows ⚫ status
+```
+
+## Key Design Decisions
+
+### Why Hybrid .NET + Python?
+
+**Pros**:
+- ✅ Native desktop UI performance (Avalonia)
+- ✅ Leverage existing CamouFox Python library
+- ✅ BrowserForge integration out-of-the-box
+- ✅ Cross-platform with single codebase
+- ✅ Clean separation of concerns
+
+**Cons**:
+- ⚠️ Two runtime dependencies (Python + .NET)
+- ⚠️ Inter-process communication overhead
+- ⚠️ Deployment complexity
+
+**Alternatives Considered**:
+1. **Pure .NET with Playwright** - Would need to reimplement BrowserForge fingerprint generation
+2. **Pure Python with Qt/Tkinter** - Worse UI/UX, less modern
+3. **Electron + Python** - Too bloated, high memory usage
+
+### Why SQLite?
+
+- Single-file database, no server needed
+- Cross-platform compatibility
+- Sufficient for desktop app scale (<10k profiles)
+- Easy backup (copy .db file)
+- JSON support for flexible schema (fingerprint_config)
+
+### Why MVVM Pattern?
+
+- Natural fit for Avalonia UI
+- Clean separation: View ↔ ViewModel ↔ Model
+- Testable business logic (VMs)
+- Data binding reduces boilerplate
+- CommunityToolkit.Mvvm simplifies commands/properties
+
+### Why CommunityToolkit.Mvvm over ReactiveUI?
+
+- Simpler API, less boilerplate
+- Source generators for commands/properties
+- Better performance (compile-time vs runtime)
+- Official Microsoft toolkit
+- Easier for developers to understand
+
+## Security Considerations
+
+### Current Implementation
+
+**Profile Isolation**:
+- Each profile has separate user_data_dir
+- Browser processes are sandboxed
+- No data sharing between profiles
+
+**Credential Storage**:
+- ⚠️ Plaintext in database (fingerprint_config JSON)
+- ⚠️ Temp config files in system temp directory
+- ⚠️ No encryption at rest
+
+**Process Security**:
+- Python process spawned with user privileges
+- No elevated permissions required
+- Process cleanup on app exit
+
+### Future Improvements
+
+**Phase 2+ Security**:
+- Encrypt proxy passwords
+- Use Windows Data Protection API (DPAPI) or equivalent
+- Secure credential storage
+- Process sandboxing improvements
+- Audit logging
+
+## Performance Characteristics
+
+### Resource Usage (per profile)
+
+- **Memory**: ~500MB-1GB (CamouFox browser)
+- **CPU**: Minimal when idle, spikes during page load
+- **Disk**: ~50MB for fresh profile, grows with usage
+- **Network**: Depends on browsing activity
+
+### Scalability
+
+- **Concurrent browsers**: Limited by system RAM
+- **Recommended**: 8GB RAM = 4-6 concurrent browsers
+- **Database**: SQLite handles 10k+ profiles easily
+- **UI**: DataGrid virtualizes, no performance issues with 1000+ profiles
+
+### Startup Time
+
+- **Cold start**: ~3-5 seconds (.NET app init + DB load)
+- **Browser launch**: ~5-10 seconds (Python + CamouFox + fingerprint generation)
+- **Subsequent starts**: Faster due to warm profile directories
+
+## Testing Strategy
+
+### Unit Tests (Future)
+
+```csharp
+// DatabaseService tests
+[Fact]
+public void CreateProfile_ShouldAddToDatabase() { }
+
+[Fact]
+public void GetProfile_NonExistent_ShouldReturnNull() { }
+
+// BrowserService tests (with mocks)
+[Fact]
+public async Task StartProfile_ValidId_ShouldSpawnProcess() { }
+```
+
+### Integration Tests (Future)
+
+```csharp
+[Fact]
+public async Task FullWorkflow_CreateStartStop_ShouldSucceed()
+{
+    // Create profile
+    var profile = new Profile { Name = "Test" };
+    db.CreateProfile(profile);
+    
+    // Start browser
+    await browser.StartProfileAsync(profile.Id);
+    Assert.True(browser.IsRunning(profile.Id));
+    
+    // Stop browser
+    await browser.StopProfileAsync(profile.Id);
+    Assert.False(browser.IsRunning(profile.Id));
+}
+```
+
+### Manual Testing
+
+See TODO.md for comprehensive testing checklist.
+
+## Deployment
+
+### Development Build
+
+```bash
+dotnet build
+cd YellowFox.Desktop
+dotnet run
+```
+
+### Release Build
+
+```bash
+dotnet publish -c Release -r win-x64 --self-contained
+```
+
+Output: `bin/Release/net8.0/win-x64/publish/`
+
+### Distribution
+
+**Windows**:
+- Create installer with Inno Setup or WiX
+- Bundle Python runtime (embed Python)
+- Include camoufox in installer
+
+**macOS**:
+- Create .app bundle
+- Sign with Apple Developer certificate
+- Notarize for Gatekeeper
+
+**Linux**:
+- Create .deb/.rpm packages
+- Or AppImage for universal compatibility
+
+## Future Architecture Changes
+
+### Phase 2: Proxy Support
+
+- Add proxy validation service
+- Test proxy connectivity before use
+- Cache proxy status (working/failed)
+
+### Phase 3-4: Extensions & Bookmarks
+
+- File management service for extensions
+- Bookmarks serialization service
+- Injection mechanism for bookmarks
+
+### Long-term: Microservices
+
+If team/scale grows:
+- Separate .NET API service
+- Web-based UI (Blazor)
+- Centralized profile/proxy management
+- Multi-user support with auth

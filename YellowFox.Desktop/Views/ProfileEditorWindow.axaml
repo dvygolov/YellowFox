@@ -1,0 +1,142 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:YellowFox.Desktop.ViewModels"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="500" d:DesignHeight="450"
+        x:Class="YellowFox.Desktop.Views.ProfileEditorWindow"
+        x:DataType="vm:ProfileEditorViewModel"
+        Icon="/Assets/avalonia-logo.ico"
+        Width="500" Height="550"
+        MinWidth="450" MinHeight="500"
+        Title="{Binding Title}"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="#252526">
+
+    <DockPanel Margin="30">
+        <!-- Buttons at bottom -->
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Center" Spacing="15" Margin="0,30,0,0">
+            <Button Content="Save" 
+                    Width="140" 
+                    Height="42"
+                    Click="SaveButton_Click"
+                    Background="#4CAF50"
+                    Foreground="White"
+                    BorderThickness="0"
+                    CornerRadius="8"
+                    FontWeight="SemiBold"
+                    FontSize="14"
+                    Cursor="Hand">
+                <Button.Styles>
+                    <Style Selector="Button:pointerover">
+                        <Setter Property="Background" Value="#66BB6A" />
+                    </Style>
+                    <Style Selector="Button:pressed">
+                        <Setter Property="Background" Value="#388E3C" />
+                    </Style>
+                </Button.Styles>
+            </Button>
+            <Button Content="Cancel" 
+                    Width="140" 
+                    Height="42"
+                    Click="CancelButton_Click"
+                    Background="#3E3E42"
+                    Foreground="#CCCCCC"
+                    BorderThickness="0"
+                    CornerRadius="8"
+                    FontWeight="SemiBold"
+                    FontSize="14"
+                    Cursor="Hand">
+                <Button.Styles>
+                    <Style Selector="Button:pointerover">
+                        <Setter Property="Background" Value="#4A4A4E" />
+                    </Style>
+                    <Style Selector="Button:pressed">
+                        <Setter Property="Background" Value="#2E2E32" />
+                    </Style>
+                </Button.Styles>
+            </Button>
+        </StackPanel>
+        
+        <!-- Form fields -->
+        <StackPanel Spacing="18">
+            <TextBlock Text="{Binding Title}" 
+                       FontSize="20" 
+                       FontWeight="Bold" 
+                       Foreground="#CCCCCC"
+                       Margin="0,0,0,15" />
+            
+            <!-- Name -->
+            <StackPanel Spacing="8">
+                <TextBlock Text="Profile Name *" 
+                           FontWeight="SemiBold"
+                           Foreground="#CCCCCC"
+                           FontSize="13" />
+                <TextBox Text="{Binding Name}" 
+                         Watermark="Enter profile name..."
+                         Background="#1E1E1E"
+                         Foreground="#CCCCCC"
+                         BorderBrush="#3E3E42"
+                         Padding="12,10"
+                         CornerRadius="6" />
+            </StackPanel>
+            
+            <!-- Notes -->
+            <StackPanel Spacing="8">
+                <TextBlock Text="Notes" 
+                           FontWeight="SemiBold"
+                           Foreground="#CCCCCC"
+                           FontSize="13" />
+                <TextBox Text="{Binding Notes}" 
+                         Watermark="Optional notes..."
+                         AcceptsReturn="True"
+                         TextWrapping="Wrap"
+                         Height="80"
+                         Background="#1E1E1E"
+                         Foreground="#CCCCCC"
+                         BorderBrush="#3E3E42"
+                         Padding="12,10"
+                         CornerRadius="6" />
+            </StackPanel>
+            
+            <!-- Operating System -->
+            <StackPanel Spacing="8">
+                <TextBlock Text="Operating System *" 
+                           FontWeight="SemiBold"
+                           Foreground="#CCCCCC"
+                           FontSize="13" />
+                <ComboBox ItemsSource="{Binding OsOptions}"
+                          SelectedItem="{Binding SelectedOs}"
+                          HorizontalAlignment="Stretch"
+                          Background="#1E1E1E"
+                          Foreground="#CCCCCC"
+                          BorderBrush="#3E3E42"
+                          Padding="12,10"
+                          CornerRadius="6" />
+            </StackPanel>
+            
+            <!-- Screen Resolution -->
+            <StackPanel Spacing="8">
+                <TextBlock Text="Screen Resolution *" 
+                           FontWeight="SemiBold"
+                           Foreground="#CCCCCC"
+                           FontSize="13" />
+                <ComboBox ItemsSource="{Binding ScreenPresets}"
+                          SelectedItem="{Binding SelectedScreenPreset}"
+                          HorizontalAlignment="Stretch"
+                          Background="#1E1E1E"
+                          Foreground="#CCCCCC"
+                          BorderBrush="#3E3E42"
+                          Padding="12,10"
+                          CornerRadius="6" />
+            </StackPanel>
+            
+            <TextBlock Text="* Required fields" 
+                       FontSize="11" 
+                       Foreground="#858585" 
+                       Margin="0,10,0,0" />
+        </StackPanel>
+    </DockPanel>
+
+</Window>

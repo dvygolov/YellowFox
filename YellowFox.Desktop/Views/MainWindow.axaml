@@ -1,0 +1,64 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:YellowFox.Desktop.ViewModels"
+        xmlns:views="using:YellowFox.Desktop.Views"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="700"
+        x:Class="YellowFox.Desktop.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Icon="/Assets/avalonia-logo.ico"
+        Title="YellowFox - Profile Manager"
+        Width="1200" Height="700"
+        MinWidth="900" MinHeight="500"
+        WindowState="Maximized">
+
+    <DockPanel Background="#1E1E1E">
+        <!-- Sidebar -->
+        <Border DockPanel.Dock="Left" Width="200" BorderBrush="#3E3E42" BorderThickness="0,0,1,0" Background="#252526">
+            <StackPanel Margin="15,20">
+                <TextBlock Text="🦊 YellowFox" FontSize="18" FontWeight="Bold" Foreground="#CCCCCC" Margin="0,0,0,30" />
+                <Button Content="📋 Profiles" 
+                        HorizontalAlignment="Stretch" 
+                        Margin="0,0,0,8"
+                        Padding="12,10"
+                        Background="#3E3E42"
+                        Foreground="#CCCCCC"
+                        BorderThickness="0"
+                        HorizontalContentAlignment="Left"
+                        FontWeight="SemiBold" />
+                <TextBlock Text="COMING SOON:" Foreground="#606060" Margin="0,25,0,8" FontSize="10" FontWeight="SemiBold" />
+                <Button Content="🌐 Proxies" 
+                        HorizontalAlignment="Stretch" 
+                        Margin="0,0,0,8"
+                        Padding="12,10"
+                        Background="Transparent"
+                        Foreground="#606060"
+                        BorderThickness="0"
+                        HorizontalContentAlignment="Left"
+                        IsEnabled="False" />
+                <Button Content="🧩 Extensions" 
+                        HorizontalAlignment="Stretch" 
+                        Margin="0,0,0,8"
+                        Padding="12,10"
+                        Background="Transparent"
+                        Foreground="#606060"
+                        BorderThickness="0"
+                        HorizontalContentAlignment="Left"
+                        IsEnabled="False" />
+                <Button Content="🔖 Bookmarks" 
+                        HorizontalAlignment="Stretch"
+                        Padding="12,10"
+                        Background="Transparent"
+                        Foreground="#606060"
+                        BorderThickness="0"
+                        HorizontalContentAlignment="Left"
+                        IsEnabled="False" />
+            </StackPanel>
+        </Border>
+        
+        <!-- Main Content -->
+        <views:ProfilesView DataContext="{Binding ProfilesViewModel}" />
+    </DockPanel>
+
+</Window>
