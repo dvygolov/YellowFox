@@ -14,6 +14,16 @@
   </ItemGroup>
 
   <ItemGroup>
+    <None Update="settings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="..\python\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>python\%(RecursiveDir)%(Filename)%(Extension)</Link>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Avalonia" Version="11.3.8" />
     <PackageReference Include="Avalonia.Controls.DataGrid" Version="11.3.8" />
     <PackageReference Include="Avalonia.Desktop" Version="11.3.8" />
@@ -27,6 +37,6 @@
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.2.1" />
     <PackageReference Include="MessageBox.Avalonia" Version="3.2.0" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.10" />
-    <PackageReference Include="Microsoft.Playwright" Version="1.55.0" />
+    <PackageReference Include="Microsoft.Playwright" Version="1.53.0" />
   </ItemGroup>
 </Project>

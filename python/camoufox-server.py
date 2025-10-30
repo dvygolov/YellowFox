@@ -5,11 +5,12 @@ Launches CamouFox browser with provided configuration and prints CDP URL.
 """
 import sys
 import json
-import asyncio
-from camoufox.async_api import Camoufox
+
+from camoufox.server import launch_server
+from browserforge.fingerprints import Screen
 
 
-async def main():
+def main():
     """Launch CamouFox browser and print CDP URL."""
     # Read config from command line argument or stdin
     if len(sys.argv) > 1:
@@ -20,27 +21,16 @@ async def main():
         # Read from stdin
         config = json.load(sys.stdin)
     
-    # Extract profile directory from config
-    user_data_dir = config.pop('user_data_dir', None)
-    
+    constrains = Screen(max_width=config['screen']['maxWidth'], max_height=config['screen']['maxHeight'])
     # Launch CamouFox with configuration
-    browser = await Camoufox(
-        config=config,
+    launch_server(
         headless=False,
-        user_data_dir=user_data_dir
-    ).__aenter__()
-    
-    # Print CDP URL for .NET to connect
-    print(browser.cdp_url, flush=True)
-    print(f"DEBUG:PID={browser.process.pid}", flush=True, file=sys.stderr)
-    
-    # Keep the browser running
-    # The .NET app will manage the browser lifecycle via CDP
-    try:
-        await asyncio.Event().wait()
-    except (KeyboardInterrupt, SystemExit):
-        await browser.__aexit__(None, None, None)
-
+        geoip=True,
+        os = config['os'],
+        screen = constrains,
+        persistent_context=True,
+        user_data_dir=config['user_data_dir']
+    )
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    main()

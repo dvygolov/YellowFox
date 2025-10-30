@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Microsoft.Playwright;
 using YellowFox.Desktop.Models;
@@ -12,11 +13,13 @@ namespace YellowFox.Desktop.Services;
 public class BrowserService
 {
     private readonly DatabaseService _databaseService;
+    private readonly SettingsService _settingsService;
     private readonly Dictionary<string, RunningInstance> _runningInstances = new();
     
-    public BrowserService(DatabaseService databaseService)
+    public BrowserService(DatabaseService databaseService, SettingsService settingsService)
     {
         _databaseService = databaseService;
+        _settingsService = settingsService;
     }
     
     public bool IsRunning(string profileId) => _runningInstances.ContainsKey(profileId);
@@ -53,18 +56,34 @@ public class BrowserService
             var tempConfigPath = Path.GetTempFileName();
             await File.WriteAllTextAsync(tempConfigPath, configJson);
             
-            // Get paths
-            var appDir = AppDomain.CurrentDomain.BaseDirectory;
-            var pythonScript = Path.Combine(appDir, "python", "camoufox-server.py");
+            // Get paths from settings
+            var pythonDir = _settingsService.GetPythonScriptsPath();
             
-            // Determine Python command
-            var pythonCommand = OperatingSystem.IsWindows() ? "python" : "python3";
+            // On Windows, use batch file that activates venv
+            // On Linux/macOS, use shell script that activates venv
+            string fileName;
+            string arguments;
+            
+            if (OperatingSystem.IsWindows())
+            {
+                // Use batch file that handles venv activation
+                var batchFile = Path.Combine(pythonDir, "start-server.bat");
+                fileName = batchFile;
+                arguments = $"\"{tempConfigPath}\"";
+            }
+            else
+            {
+                // Linux/macOS: use shell script that handles venv activation
+                var shellScript = Path.Combine(pythonDir, "start-server.sh");
+                fileName = "/bin/bash";
+                arguments = $"\"{shellScript}\" \"{tempConfigPath}\"";
+            }
             
             // Start Python process
             var processStartInfo = new ProcessStartInfo
             {
-                FileName = pythonCommand,
-                Arguments = $"\"{pythonScript}\" \"{tempConfigPath}\"",
+                FileName = fileName,
+                Arguments = arguments,
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -75,8 +94,42 @@ public class BrowserService
             if (process == null)
                 throw new InvalidOperationException("Failed to start Python process");
             
-            // Read CDP URL from stdout
-            var cdpUrl = await process.StandardOutput.ReadLineAsync();
+            // Read CDP URL from stdout - read lines until we find the URL
+            string? cdpUrl = null;
+            var timeout = TimeSpan.FromSeconds(30);
+            var startTime = DateTime.Now;
+            
+            while (cdpUrl == null && (DateTime.Now - startTime) < timeout)
+            {
+                // Check if process has exited (error case)
+                if (process.HasExited)
+                {
+                    var errorOutput = await process.StandardError.ReadToEndAsync();
+                    throw new InvalidOperationException($"Python process exited unexpectedly. Error: {errorOutput}");
+                }
+                
+                var line = await process.StandardOutput.ReadLineAsync();
+                if (line == null)
+                {
+                    // No data available yet, wait a bit and continue
+                    await Task.Delay(100);
+                    continue;
+                }
+                
+                // Look for CDP URL pattern (contains ws:// or http://)
+                if (line.Contains("ws://") || line.Contains("http://"))
+                {
+                    // Extract URL using regex to handle ANSI color codes
+                    // Pattern matches: ws://host:port/path or http://host:port/path
+                    var match = Regex.Match(line, @"(wss?://[^\s\[\]]+|https?://[^\s\[\]]+)");
+                    if (match.Success)
+                    {
+                        cdpUrl = match.Groups[1].Value.Trim();
+                        break;
+                    }
+                }
+            }
+            
             if (string.IsNullOrEmpty(cdpUrl))
             {
                 // Read error output to get actual error message
@@ -90,9 +143,8 @@ public class BrowserService
                 throw new InvalidOperationException(errorMessage);
             }
             
-            // Connect Playwright to CDP endpoint
             var playwright = await Playwright.CreateAsync();
-            var browser = await playwright.Chromium.ConnectOverCDPAsync(cdpUrl);
+            var browser = await playwright.Firefox.ConnectAsync(cdpUrl);
             
             // Store running instance
             _runningInstances[profileId] = new RunningInstance
@@ -103,6 +155,8 @@ public class BrowserService
                 Playwright = playwright,
                 Browser = browser
             };
+            var page = await browser.NewPageAsync();
+            await page.GotoAsync("https://yellowweb.top");
             
             return true;
         }

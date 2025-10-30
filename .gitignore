@@ -26,6 +26,7 @@ __pycache__/
 .Python
 env/
 venv/
+python/venv/
 ENV/
 *.egg-info/
 dist/

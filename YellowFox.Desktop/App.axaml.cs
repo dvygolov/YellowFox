@@ -28,8 +28,9 @@ public partial class App : Application
             DisableAvaloniaDataAnnotationValidation();
             
             // Initialize services
+            var settingsService = new SettingsService();
             var databaseService = new DatabaseService();
-            _browserService = new BrowserService(databaseService);
+            _browserService = new BrowserService(databaseService, settingsService);
             
             desktop.MainWindow = new MainWindow
             {
