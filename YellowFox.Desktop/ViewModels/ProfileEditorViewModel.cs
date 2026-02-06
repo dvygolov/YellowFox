@@ -25,6 +25,9 @@ public partial class ProfileEditorViewModel : ViewModelBase
     
     [ObservableProperty]
     private ScreenPreset? _selectedScreenPreset;
+
+    [ObservableProperty]
+    private ProxyOption? _selectedProxyOption;
     
     public ObservableCollection<string> OsOptions { get; } = new()
     {
@@ -34,6 +37,7 @@ public partial class ProfileEditorViewModel : ViewModelBase
     };
     
     public ObservableCollection<ScreenPreset> ScreenPresets { get; } = new(ScreenPreset.Presets);
+    public ObservableCollection<ProxyOption> ProxyOptions { get; } = new();
     
     public bool IsEditMode => _existingProfile != null && !_isCloneMode;
     public string Title => _isCloneMode ? "Clone Profile" : (IsEditMode ? "Edit Profile" : "New Profile");
@@ -43,6 +47,8 @@ public partial class ProfileEditorViewModel : ViewModelBase
         _databaseService = databaseService;
         _existingProfile = existingProfile;
         _isCloneMode = isCloneMode;
+
+        LoadProxies(existingProfile?.ProxyId);
         
         if (existingProfile != null)
         {
@@ -62,7 +68,8 @@ public partial class ProfileEditorViewModel : ViewModelBase
             SelectedOs = GetDefaultOs();
             SelectedScreenPreset = ScreenPreset.Presets[0];
         }
-        
+
+        SelectedProxyOption ??= ProxyOptions.First();
     }
     
     [RelayCommand]
@@ -78,6 +85,7 @@ public partial class ProfileEditorViewModel : ViewModelBase
         var profile = (_existingProfile != null && !_isCloneMode) ? _existingProfile : new Profile();
         profile.Name = Name.Trim();
         profile.Notes = string.IsNullOrWhiteSpace(Notes) ? null : Notes.Trim();
+        profile.ProxyId = SelectedProxyOption?.Id;
         profile.FingerprintConfig = new FingerprintConfig
         {
             Os = SelectedOs,
@@ -111,4 +119,33 @@ public partial class ProfileEditorViewModel : ViewModelBase
         if (OperatingSystem.IsLinux()) return "linux";
         return "windows";
     }
+
+    private void LoadProxies(string? selectedProxyId)
+    {
+        ProxyOptions.Clear();
+        ProxyOptions.Add(new ProxyOption(null, "No proxy"));
+
+        var proxies = _databaseService.GetAllProxies()
+            .Where(p => p.IsEnabled)
+            .ToList();
+
+        foreach (var proxy in proxies)
+        {
+            ProxyOptions.Add(new ProxyOption(proxy.Id, $"{proxy.Name} ({proxy.Type.ToUpperInvariant()} {proxy.Host}:{proxy.Port})"));
+        }
+
+        SelectedProxyOption = ProxyOptions.FirstOrDefault(p => p.Id == selectedProxyId) ?? ProxyOptions.First();
+    }
+}
+
+public sealed class ProxyOption
+{
+    public ProxyOption(string? id, string displayName)
+    {
+        Id = id;
+        DisplayName = displayName;
+    }
+
+    public string? Id { get; }
+    public string DisplayName { get; }
 }

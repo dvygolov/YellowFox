@@ -68,7 +68,6 @@ public partial class ProfileEditorWindow : Window
                 ContentMessage = message,
                 ButtonDefinitions = new[] { new ButtonDefinition { Name = "OK" } },
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                WindowIcon = this.Icon,
                 MinWidth = 400,
                 MaxWidth = 600,
                 SizeToContent = SizeToContent.WidthAndHeight

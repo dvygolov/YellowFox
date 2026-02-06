@@ -22,15 +22,28 @@ def main():
         config = json.load(sys.stdin)
     
     constrains = Screen(max_width=config['screen']['maxWidth'], max_height=config['screen']['maxHeight'])
+    proxy = config.get('proxy')
+    addons = config.get('addons') or []
+
+    if isinstance(proxy, str):
+        proxy = {"server": proxy}
+
+    launch_kwargs = {
+        "headless": False,
+        "geoip": True,
+        "os": config['os'],
+        "screen": constrains,
+        "persistent_context": True,
+        "user_data_dir": config['user_data_dir']
+    }
+
+    if isinstance(proxy, dict) and proxy:
+        launch_kwargs["proxy"] = proxy
+    if addons:
+        launch_kwargs["addons"] = addons
+
     # Launch CamouFox with configuration
-    launch_server(
-        headless=False,
-        geoip=True,
-        os = config['os'],
-        screen = constrains,
-        persistent_context=True,
-        user_data_dir=config['user_data_dir']
-    )
+    launch_server(**launch_kwargs)
 
 if __name__ == '__main__':
     main()

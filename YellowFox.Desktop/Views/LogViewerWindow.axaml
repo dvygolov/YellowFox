@@ -1,0 +1,115 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:YellowFox.Desktop.ViewModels"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        d:DesignWidth="900"
+        d:DesignHeight="640"
+        x:Class="YellowFox.Desktop.Views.LogViewerWindow"
+        x:DataType="vm:LogViewerViewModel"
+        Icon="/Assets/avalonia-logo.ico"
+        Width="900"
+        Height="640"
+        MinWidth="700"
+        MinHeight="480"
+        Background="#1E1E1E"
+        Title="{Binding Title}"
+        WindowStartupLocation="CenterOwner">
+
+    <Grid RowDefinitions="Auto,*">
+        <Border Grid.Row="0"
+                Padding="16,8"
+                Background="#222629"
+                BorderBrush="#3E3E42"
+                BorderThickness="0,0,0,1">
+            <DockPanel LastChildFill="True">
+                <StackPanel DockPanel.Dock="Right"
+                            Orientation="Horizontal"
+                            Spacing="8">
+                    <Button Content="Refresh"
+                            Command="{Binding RefreshCommand}"
+                            Classes="SecondaryActionButton"
+                            MinWidth="86"
+                            ToolTip.Tip="Reload log file" />
+                    <Button Content="Clear Log"
+                            Command="{Binding ClearCommand}"
+                            Classes="DangerActionButton"
+                            MinWidth="86"
+                            ToolTip.Tip="Clear log file contents" />
+                </StackPanel>
+
+                <TextBlock Text="{Binding LogFilePathDisplay}"
+                           Foreground="#9AA1A8"
+                           FontSize="12"
+                           VerticalAlignment="Center"
+                           Margin="0,0,12,0"
+                           TextTrimming="CharacterEllipsis" />
+            </DockPanel>
+        </Border>
+
+        <ListBox Grid.Row="1"
+                 ItemsSource="{Binding Lines}"
+                 Background="#1E1E1E"
+                 BorderThickness="0"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                 ScrollViewer.VerticalScrollBarVisibility="Auto">
+            <ListBox.Styles>
+                <Style Selector="ListBoxItem">
+                    <Setter Property="Padding" Value="0" />
+                    <Setter Property="Margin" Value="0" />
+                    <Setter Property="Background" Value="Transparent" />
+                    <Setter Property="BorderThickness" Value="0" />
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                </Style>
+                <Style Selector="ListBoxItem:selected">
+                    <Setter Property="Background" Value="Transparent" />
+                </Style>
+            </ListBox.Styles>
+            <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:LogLineViewModel">
+                    <Border Background="{Binding Background}"
+                            Padding="12,8"
+                            Margin="0,0,0,1">
+                        <TextBlock Text="{Binding Text}"
+                                   Foreground="{Binding Foreground}"
+                                   FontFamily="Cascadia Mono,Consolas,monospace"
+                                   FontSize="12"
+                                   TextWrapping="Wrap" />
+                    </Border>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+
+    </Grid>
+
+    <Window.Styles>
+        <Style Selector="Button.SecondaryActionButton">
+            <Setter Property="Background" Value="#2E3132" />
+            <Setter Property="Foreground" Value="#E2E2E2" />
+            <Setter Property="BorderBrush" Value="#3E3E42" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="12,6" />
+            <Setter Property="CornerRadius" Value="7" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+        <Style Selector="Button.SecondaryActionButton:pointerover">
+            <Setter Property="Background" Value="#3A3D3E" />
+            <Setter Property="BorderBrush" Value="#4A4D4E" />
+        </Style>
+
+        <Style Selector="Button.DangerActionButton">
+            <Setter Property="Background" Value="#4A1F1F" />
+            <Setter Property="Foreground" Value="#FFDADA" />
+            <Setter Property="BorderBrush" Value="#783030" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="12,6" />
+            <Setter Property="CornerRadius" Value="7" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+        <Style Selector="Button.DangerActionButton:pointerover">
+            <Setter Property="Background" Value="#5A2727" />
+            <Setter Property="BorderBrush" Value="#8A3B3B" />
+        </Style>
+    </Window.Styles>
+</Window>

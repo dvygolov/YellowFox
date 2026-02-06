@@ -1,0 +1,48 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:YellowFox.Desktop.ViewModels"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d"
+             d:DesignWidth="1000"
+             d:DesignHeight="700"
+             x:Class="YellowFox.Desktop.Views.ExtensionsView"
+             x:DataType="vm:ExtensionsViewModel"
+             Background="#1E1E1E">
+
+    <DockPanel Margin="20">
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="10" Margin="0,0,0,12">
+            <Button Content="Import Archive" Command="{Binding ImportArchiveCommand}" />
+            <Button Content="Toggle Enabled" Command="{Binding ToggleEnabledCommand}" IsEnabled="{Binding HasSelection}" />
+            <Button Content="Delete" Command="{Binding DeleteSelectedCommand}" IsEnabled="{Binding HasSelection}" />
+            <Button Content="Refresh" Command="{Binding RefreshCommand}" />
+        </StackPanel>
+
+        <Border DockPanel.Dock="Bottom"
+                Background="#252526"
+                BorderBrush="#3E3E42"
+                BorderThickness="0,1,0,0"
+                Padding="12,10"
+                Margin="0,12,0,0">
+            <TextBlock Foreground="#AAAAAA">
+                <Run Text="Status: " />
+                <Run Text="{Binding StatusMessage}" />
+            </TextBlock>
+        </Border>
+
+        <ListBox ItemsSource="{Binding Extensions}"
+                 SelectedItem="{Binding SelectedExtension}"
+                 Background="#252526"
+                 BorderBrush="#3E3E42">
+            <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:ExtensionItemViewModel">
+                    <Grid ColumnDefinitions="220,120,*" Margin="8,6">
+                        <TextBlock Grid.Column="0" Text="{Binding Name}" Foreground="#CCCCCC" />
+                        <TextBlock Grid.Column="1" Text="{Binding Status}" Foreground="#AAAAAA" />
+                        <TextBlock Grid.Column="2" Text="{Binding Path}" Foreground="#858585" TextTrimming="CharacterEllipsis" />
+                    </Grid>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+    </DockPanel>
+</UserControl>

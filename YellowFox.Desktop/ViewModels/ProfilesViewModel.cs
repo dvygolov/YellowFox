@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Controls;
+using Avalonia.Platform.Storage;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MsBox.Avalonia;
@@ -53,7 +54,7 @@ public partial class ProfilesViewModel : ViewModelBase
         
         foreach (var profile in profiles)
         {
-            var vm = new ProfileItemViewModel(profile, this);
+            var vm = new ProfileItemViewModel(profile, this, _databaseService);
             vm.PropertyChanged += OnProfileItemPropertyChanged;
             Profiles.Add(vm);
         }
@@ -90,7 +91,7 @@ public partial class ProfilesViewModel : ViewModelBase
         Profiles.Clear();
         foreach (var profile in filtered)
         {
-            var vm = new ProfileItemViewModel(profile, this);
+            var vm = new ProfileItemViewModel(profile, this, _databaseService);
             Profiles.Add(vm);
         }
     }
@@ -189,6 +190,64 @@ public partial class ProfilesViewModel : ViewModelBase
             LoadProfiles();
         }
     }
+
+    public async Task ExportCookies(ProfileItemViewModel profileVm)
+    {
+        var mainWindow = GetMainWindow();
+        var file = await mainWindow.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title = $"Export cookies: {profileVm.Profile.Name}",
+            SuggestedFileName = $"{profileVm.Profile.Name}-cookies.json",
+            FileTypeChoices = new[]
+            {
+                new FilePickerFileType("JSON") { Patterns = new[] { "*.json" } }
+            }
+        });
+
+        if (file == null)
+            return;
+
+        var result = await _browserService.ExportCookiesAsync(profileVm.Profile.Id, file.Path.LocalPath);
+        await ShowInfo(result.Success ? "Cookies Export" : "Export Error", result.Message);
+    }
+
+    public async Task ImportCookies(ProfileItemViewModel profileVm)
+    {
+        var mainWindow = GetMainWindow();
+        var files = await mainWindow.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = $"Import cookies: {profileVm.Profile.Name}",
+            AllowMultiple = false,
+            FileTypeFilter = new[]
+            {
+                new FilePickerFileType("JSON") { Patterns = new[] { "*.json" } }
+            }
+        });
+
+        var file = files.FirstOrDefault();
+        if (file == null)
+            return;
+
+        var result = await _browserService.ImportCookiesAsync(profileVm.Profile.Id, file.Path.LocalPath);
+        await ShowInfo(result.Success ? "Cookies Import" : "Import Error", result.Message);
+    }
+
+    public async Task OpenLog(ProfileItemViewModel profileVm)
+    {
+        try
+        {
+            var logPath = _browserService.GetOrCreateProfileLogPath(profileVm.Profile.Id);
+            var logViewer = new LogViewerWindow
+            {
+                DataContext = new LogViewerViewModel(logPath, profileVm.Profile.Name)
+            };
+            logViewer.Show(GetMainWindow());
+        }
+        catch (Exception ex)
+        {
+            await ShowInfo("Log Error", ex.Message);
+        }
+    }
     
     [RelayCommand]
     private async Task StartAllSelected()
@@ -235,20 +294,38 @@ public partial class ProfilesViewModel : ViewModelBase
                     new ButtonDefinition { Name = "No", IsCancel = true }
                 },
                 WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                WindowIcon = mainWindow?.Icon,
                 MinWidth = 400,
                 MaxWidth = 600,
                 SizeToContent = SizeToContent.WidthAndHeight
             });
         
-        var result = await box.ShowWindowDialogAsync(mainWindow);
+        var result = await box.ShowWindowDialogAsync(mainWindow!);
         return result == "Yes";
+    }
+
+    private async Task ShowInfo(string title, string message)
+    {
+        var mainWindow = GetMainWindow();
+        var box = MessageBoxManager.GetMessageBoxCustom(
+            new MessageBoxCustomParams
+            {
+                ContentTitle = title,
+                ContentMessage = message,
+                ButtonDefinitions = new[] { new ButtonDefinition { Name = "OK", IsDefault = true } },
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                MinWidth = 360,
+                MaxWidth = 600,
+                SizeToContent = SizeToContent.WidthAndHeight
+            });
+
+        await box.ShowWindowDialogAsync(mainWindow!);
     }
 }
 
 public partial class ProfileItemViewModel : ViewModelBase
 {
     private readonly ProfilesViewModel _parent;
+    private readonly DatabaseService _databaseService;
     
     [ObservableProperty]
     private bool _isRunning;
@@ -257,13 +334,26 @@ public partial class ProfileItemViewModel : ViewModelBase
     private bool _isSelected;
     
     public Profile Profile { get; }
+    public string ProxyDisplay
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(Profile.ProxyId))
+                return "No proxy";
+
+            var proxy = _databaseService.GetProxy(Profile.ProxyId);
+            return proxy?.Name ?? "Unknown proxy";
+        }
+    }
     
     public string StatusIcon => IsRunning ? "🟢" : "⚫";
+    public bool IsNotRunning => !IsRunning;
     
-    public ProfileItemViewModel(Profile profile, ProfilesViewModel parent)
+    public ProfileItemViewModel(Profile profile, ProfilesViewModel parent, DatabaseService databaseService)
     {
         Profile = profile;
         _parent = parent;
+        _databaseService = databaseService;
     }
     
     [RelayCommand]
@@ -295,10 +385,29 @@ public partial class ProfileItemViewModel : ViewModelBase
     {
         await _parent.CloneProfile(this);
     }
+
+    [RelayCommand]
+    private async Task ExportCookies()
+    {
+        await _parent.ExportCookies(this);
+    }
+
+    [RelayCommand]
+    private async Task ImportCookies()
+    {
+        await _parent.ImportCookies(this);
+    }
+
+    [RelayCommand]
+    private async Task ViewLog()
+    {
+        await _parent.OpenLog(this);
+    }
     
     partial void OnIsRunningChanged(bool value)
     {
         OnPropertyChanged(nameof(StatusIcon));
+        OnPropertyChanged(nameof(IsNotRunning));
     }
     
     public void UpdateRunningStatus(bool isRunning)

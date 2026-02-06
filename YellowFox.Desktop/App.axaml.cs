@@ -30,11 +30,13 @@ public partial class App : Application
             // Initialize services
             var settingsService = new SettingsService();
             var databaseService = new DatabaseService();
-            _browserService = new BrowserService(databaseService, settingsService);
+            var proxyValidatorService = new ProxyValidatorService();
+            var extensionStorageService = new ExtensionStorageService(databaseService);
+            _browserService = new BrowserService(databaseService, settingsService, proxyValidatorService);
             
             desktop.MainWindow = new MainWindow
             {
-                DataContext = new MainWindowViewModel(databaseService, _browserService),
+                DataContext = new MainWindowViewModel(databaseService, _browserService, proxyValidatorService, extensionStorageService),
             };
             
             // Handle application exit

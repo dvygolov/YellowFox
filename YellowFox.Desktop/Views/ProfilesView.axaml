@@ -13,6 +13,38 @@
         <converters:BoolToColorConverter x:Key="StatusColorConverter" />
     </UserControl.Resources>
     
+    <UserControl.Styles>
+        <Style Selector="Button.PrimaryAction">
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="CornerRadius" Value="5" />
+            <Setter Property="Padding" Value="10,6" />
+            <Setter Property="MinWidth" Value="68" />
+        </Style>
+        <Style Selector="Button.PrimaryAction:pointerover">
+            <Setter Property="Opacity" Value="0.9" />
+        </Style>
+        <Style Selector="Button.SecondaryAction">
+            <Setter Property="Background" Value="#2E3132" />
+            <Setter Property="BorderBrush" Value="#3E3E42" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="#D0D0D0" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Width" Value="34" />
+            <Setter Property="Height" Value="34" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="FontFamily" Value="Segoe MDL2 Assets" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+        <Style Selector="Button.SecondaryAction:pointerover">
+            <Setter Property="Background" Value="#3A3E40" />
+            <Setter Property="BorderBrush" Value="#5A5F63" />
+        </Style>
+    </UserControl.Styles>
+    
     <DockPanel>
         <!-- Top Toolbar -->
         <Border DockPanel.Dock="Top" 
@@ -64,13 +96,14 @@
                 BorderBrush="#3E3E42"
                 BorderThickness="0,0,0,1"
                 Padding="20,12">
-            <Grid ColumnDefinitions="50,30,250,120,150,*,380">
+            <Grid ColumnDefinitions="40,24,170,90,110,120,*,24,Auto">
                 <TextBlock Grid.Column="1" Text="" Foreground="#858585" FontSize="12" FontWeight="SemiBold" />
                 <TextBlock Grid.Column="2" Text="Name" Foreground="#858585" FontSize="12" FontWeight="SemiBold" />
                 <TextBlock Grid.Column="3" Text="OS" Foreground="#858585" FontSize="12" FontWeight="SemiBold" />
                 <TextBlock Grid.Column="4" Text="Screen" Foreground="#858585" FontSize="12" FontWeight="SemiBold" />
-                <TextBlock Grid.Column="5" Text="Notes" Foreground="#858585" FontSize="12" FontWeight="SemiBold" />
-                <TextBlock Grid.Column="6" Text="Actions" Foreground="#858585" FontSize="12" FontWeight="SemiBold" HorizontalAlignment="Right" Margin="0,0,20,0" />
+                <TextBlock Grid.Column="5" Text="Proxy" Foreground="#858585" FontSize="12" FontWeight="SemiBold" />
+                <TextBlock Grid.Column="6" Text="Notes" Foreground="#858585" FontSize="12" FontWeight="SemiBold" />
+                <TextBlock Grid.Column="8" Text="Actions" Foreground="#858585" FontSize="12" FontWeight="SemiBold" HorizontalAlignment="Right" />
             </Grid>
         </Border>
         
@@ -123,22 +156,42 @@
         </Border>
         
         <!-- Profiles Table -->
-        <ScrollViewer>
-            <ItemsControl ItemsSource="{Binding Profiles}">
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate DataType="vm:ProfileItemViewModel">
-                        <!-- Profile Row -->
-                        <Border Background="#252526"
-                                BorderBrush="#3E3E42"
-                                BorderThickness="0,0,0,1"
-                                Padding="20,16">
-                            <Border.Styles>
-                                <Style Selector="Border:pointerover">
-                                    <Setter Property="Background" Value="#2D2D30" />
-                                </Style>
-                            </Border.Styles>
-                            
-                            <Grid ColumnDefinitions="50,30,250,120,150,*,380">
+        <ListBox ItemsSource="{Binding Profiles}"
+                 Background="Transparent"
+                 BorderThickness="0"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                 ScrollViewer.VerticalScrollBarVisibility="Auto">
+            <ListBox.Styles>
+                <Style Selector="ListBoxItem">
+                    <Setter Property="Padding" Value="0" />
+                    <Setter Property="Margin" Value="0" />
+                    <Setter Property="Background" Value="Transparent" />
+                    <Setter Property="BorderThickness" Value="0" />
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                </Style>
+                <Style Selector="ListBoxItem:selected">
+                    <Setter Property="Background" Value="Transparent" />
+                </Style>
+                <Style Selector="ListBoxItem:pointerover">
+                    <Setter Property="Background" Value="Transparent" />
+                </Style>
+            </ListBox.Styles>
+
+            <ListBox.ItemTemplate>
+                <DataTemplate DataType="vm:ProfileItemViewModel">
+                    <!-- Profile Row -->
+                    <Border Background="#252526"
+                            BorderBrush="#3E3E42"
+                            BorderThickness="0,0,0,1"
+                            Padding="20,16"
+                            HorizontalAlignment="Stretch">
+                        <Border.Styles>
+                            <Style Selector="Border:pointerover">
+                                <Setter Property="Background" Value="#2D2D30" />
+                            </Style>
+                        </Border.Styles>
+                        
+                        <Grid ColumnDefinitions="40,24,170,90,110,120,*,24,Auto" HorizontalAlignment="Stretch">
                                 <!-- Checkbox Column -->
                                 <CheckBox Grid.Column="0" 
                                           VerticalAlignment="Center"
@@ -184,6 +237,14 @@
                                 
                                 <!-- Notes -->
                                 <TextBlock Grid.Column="5"
+                                           Text="{Binding ProxyDisplay}" 
+                                           Foreground="#858585"
+                                           FontSize="13"
+                                           VerticalAlignment="Center"
+                                           TextTrimming="CharacterEllipsis" />
+
+                                <!-- Notes -->
+                                <TextBlock Grid.Column="6"
                                            Text="{Binding Profile.Notes}" 
                                            Foreground="#858585"
                                            FontSize="13"
@@ -191,81 +252,68 @@
                                            TextTrimming="CharacterEllipsis" />
                                 
                                 <!-- Action Buttons -->
-                                <StackPanel Grid.Column="6" 
+                                <StackPanel Grid.Column="8" 
                                             Orientation="Horizontal" 
-                                            Spacing="8"
+                                            Spacing="6"
                                             VerticalAlignment="Center"
-                                            HorizontalAlignment="Right"
-                                            Margin="0,0,20,0">
+                                            HorizontalAlignment="Right">
                                     
                                     <!-- Start Button (when not running) -->
-                                    <Button Content="▶ START" 
+                                    <Button Classes="PrimaryAction"
+                                            Content="Start" 
                                             Command="{Binding StartCommand}"
-                                            IsVisible="{Binding !IsRunning}"
-                                            Background="Transparent"
-                                            Foreground="#4CAF50"
-                                            BorderBrush="#4CAF50"
-                                            BorderThickness="1"
-                                            Padding="16,6"
-                                            FontSize="12"
-                                            FontWeight="SemiBold"
-                                            CornerRadius="4" />
+                                            IsVisible="{Binding IsNotRunning}"
+                                            Background="#2E7D32" />
                                     
                                     <!-- Stop Button (when running) -->
-                                    <Button Content="⏹ STOP" 
+                                    <Button Classes="PrimaryAction"
+                                            Content="Stop" 
                                             Command="{Binding StopCommand}"
                                             IsVisible="{Binding IsRunning}"
-                                            Background="Transparent"
-                                            Foreground="#F44336"
-                                            BorderBrush="#F44336"
-                                            BorderThickness="1"
-                                            Padding="16,6"
-                                            FontSize="12"
-                                            FontWeight="SemiBold"
-                                            CornerRadius="4" />
+                                            Background="#B71C1C" />
                                     
                                     <!-- Edit Button -->
-                                    <Button Content="✏️" 
+                                    <Button Classes="SecondaryAction"
+                                            Content="&#xE70F;" 
                                             Command="{Binding EditCommand}"
-                                            Background="Transparent"
-                                            Foreground="#CCCCCC"
-                                            BorderBrush="#3E3E42"
-                                            BorderThickness="1"
-                                            Padding="8,6"
-                                            FontSize="14"
-                                            CornerRadius="4"
                                             ToolTip.Tip="Edit" />
                                     
                                     <!-- Clone Button -->
-                                    <Button Content="📋" 
+                                    <Button Classes="SecondaryAction"
+                                            Content="&#xE8C8;" 
                                             Command="{Binding CloneCommand}"
-                                            Background="Transparent"
-                                            Foreground="#CCCCCC"
-                                            BorderBrush="#3E3E42"
-                                            BorderThickness="1"
-                                            Padding="8,6"
-                                            FontSize="14"
-                                            CornerRadius="4"
                                             ToolTip.Tip="Clone" />
+
+                                    <!-- Export Cookies -->
+                                    <Button Classes="SecondaryAction"
+                                            Content="&#xE896;" 
+                                            Command="{Binding ExportCookiesCommand}"
+                                            ToolTip.Tip="Export Cookies" />
+
+                                    <!-- Import Cookies -->
+                                    <Button Classes="SecondaryAction"
+                                            Content="&#xE898;" 
+                                            Command="{Binding ImportCookiesCommand}"
+                                            ToolTip.Tip="Import Cookies" />
+
+                                    <!-- View Log -->
+                                    <Button Classes="SecondaryAction"
+                                            Content="&#xE8A5;"
+                                            Command="{Binding ViewLogCommand}"
+                                            ToolTip.Tip="Open Profile Log" />
                                     
                                     <!-- Delete Button -->
-                                    <Button Content="🗑️" 
+                                    <Button Classes="SecondaryAction"
+                                            Content="&#xE74D;" 
                                             Command="{Binding DeleteCommand}"
-                                            Background="Transparent"
                                             Foreground="#F44336"
-                                            BorderBrush="#3E3E42"
-                                            BorderThickness="1"
-                                            Padding="8,6"
-                                            FontSize="14"
-                                            CornerRadius="4"
                                             ToolTip.Tip="Delete" />
                                 </StackPanel>
-                            </Grid>
-                        </Border>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
-        </ScrollViewer>
+                        </Grid>
+                    </Border>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
         
         <!-- Empty State -->
         <Panel IsVisible="{Binding !Profiles.Count}">
