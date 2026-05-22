@@ -8,19 +8,15 @@ YellowFox is a desktop application for managing multiple CamouFox browser profil
 - ✅ **Fingerprint Configuration**: Configure OS and screen resolution (auto-generates other fingerprint data via BrowserForge)
 - ✅ **Browser Control**: Start/Stop CamouFox browsers with isolated profiles
 - ✅ **Profile Isolation**: Each profile has its own user data directory
-
-## Coming Soon
-
-- 🌐 **Proxy Management**: SOCKS5/HTTP/HTTPS proxy configuration per profile
-- 🧩 **Extensions Management**: Shared extensions across all profiles
-- 🔖 **Bookmarks Management**: Shared bookmarks with folder support
+- ✅ **Proxy Management**: HTTP and SOCKS5 proxy configuration per profile
+- ✅ **Agent CLI**: JSON CLI that talks to a running YellowFox Desktop instance
 
 ## Architecture
 
 - **Frontend**: Avalonia UI (cross-platform .NET desktop)
 - **Backend**: Python microservice for CamouFox control
 - **Database**: SQLite for profile storage
-- **Browser**: CamouFox (portable installation)
+- **Browser**: CamouFox/Clover 142 target build (portable installation)
 
 ## Prerequisites
 
@@ -34,25 +30,19 @@ YellowFox is a desktop application for managing multiple CamouFox browser profil
 
 ```bash
 cd python
+pip uninstall -y camoufox
 pip install -r requirements.txt
 ```
 
 ### 2. Install CamouFox
 
-Download portable CamouFox and extract to `camoufox/` folder in the project root:
+Install the YellowFox target Camoufox browser build. This pins the active browser
+to the fresh CoryKing/Clover 142 line and uses a resumable download because the
+stock `camoufox fetch` can stall on large GitHub assets:
 
-```
-YellowFox/
-├── camoufox/          # CamouFox portable installation
-│   └── (browser files)
-├── python/
-├── YellowFox.Desktop/
-└── ...
-```
-
-Or install via pip (will download automatically):
 ```bash
-pip install camoufox
+python install-camoufox-browser.py
+camoufox version
 ```
 
 ### 3. Build .NET Application
@@ -71,6 +61,15 @@ dotnet run
 Or run the compiled executable:
 ```bash
 YellowFox.Desktop\bin\Debug\net8.0\YellowFox.Desktop.exe
+```
+
+### Agent CLI
+
+The CLI requires YellowFox Desktop to be running:
+
+```bash
+dotnet run --project YellowFox.Cli -- profile list --json
+dotnet run --project YellowFox.Cli -- proxy list --json
 ```
 
 ## Usage

@@ -1,4 +1,5 @@
 using System.IO;
+using System.IO.Compression;
 using YellowFox.Desktop.Models;
 using YellowFox.Desktop.Services;
 
@@ -68,6 +69,47 @@ public class DatabaseServiceTests : IDisposable
     }
 
     [Fact]
+    public void CreateAndReadProxy_ShouldPreserveSocks5Type()
+    {
+        var database = new DatabaseService(_testDataDir, disablePooling: true);
+        var proxy = new Proxy
+        {
+            Name = "SOCKS Proxy",
+            Type = "socks5",
+            Host = "5.6.7.8",
+            Port = 1080,
+            Username = "user",
+            Password = "pass"
+        };
+
+        database.CreateProxy(proxy);
+        var saved = database.GetProxy(proxy.Id);
+
+        Assert.NotNull(saved);
+        Assert.Equal("socks5", saved!.Type);
+        Assert.Equal("user", saved.Username);
+        Assert.Equal("pass", saved.Password);
+        Assert.True(saved.IsEnabled);
+    }
+
+    [Fact]
+    public void CreateAndReadProfile_ShouldStoreNotesAsPlainText()
+    {
+        var database = new DatabaseService(_testDataDir, disablePooling: true);
+        var profile = new Profile
+        {
+            Name = "Profile Notes",
+            Notes = "<p>First <strong>line</strong></p><p>Second&nbsp;line</p>"
+        };
+
+        database.CreateProfile(profile);
+        var saved = database.GetProfile(profile.Id);
+
+        Assert.NotNull(saved);
+        Assert.Equal($"First line{Environment.NewLine}Second line", saved!.Notes);
+    }
+
+    [Fact]
     public void CreateAndReadExtension_ShouldPersist()
     {
         var database = new DatabaseService(_testDataDir, disablePooling: true);
@@ -83,6 +125,26 @@ public class DatabaseServiceTests : IDisposable
 
         Assert.Single(all);
         Assert.Equal("uBlock", all[0].Name);
+    }
+
+    [Fact]
+    public void ImportArchive_ShouldExtractExtensionIntoDataDirectory()
+    {
+        var database = new DatabaseService(_testDataDir, disablePooling: true);
+        var archivePath = Path.Combine(_testDataDir, "ublock.xpi");
+        using (var archive = ZipFile.Open(archivePath, ZipArchiveMode.Create))
+        {
+            var manifest = archive.CreateEntry("manifest.json");
+            using var writer = new StreamWriter(manifest.Open());
+            writer.Write("{}");
+        }
+
+        var storage = new ExtensionStorageService(database);
+        var extension = storage.ImportArchive(archivePath, "uBlock");
+
+        Assert.StartsWith(database.GetExtensionsDataDirectory(), extension.Path);
+        Assert.True(File.Exists(Path.Combine(extension.Path, "manifest.json")));
+        Assert.True(BrowserService.IsExtensionPathUsable(extension.Path));
     }
 
     [Fact]

@@ -19,10 +19,20 @@ REM Activate and install dependencies
 echo Installing dependencies...
 call venv\Scripts\activate.bat
 python -m pip install --upgrade pip
+python -m pip uninstall -y camoufox
 pip install -r requirements.txt
 
 if errorlevel 1 (
     echo Error: Failed to install dependencies
+    pause
+    exit /b 1
+)
+
+echo Installing YellowFox target Camoufox browser...
+python install-camoufox-browser.py
+
+if errorlevel 1 (
+    echo Error: Failed to fetch Camoufox browser
     pause
     exit /b 1
 )

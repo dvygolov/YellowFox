@@ -54,7 +54,7 @@ public partial class ProfileEditorViewModel : ViewModelBase
         {
             // For clone mode, append " (Copy)" to the name
             Name = _isCloneMode ? $"{existingProfile.Name} (Copy)" : existingProfile.Name;
-            Notes = existingProfile.Notes ?? string.Empty;
+            Notes = TextSanitizer.HtmlToPlainText(existingProfile.Notes);
             SelectedOs = existingProfile.FingerprintConfig.Os;
             
             var preset = ScreenPreset.Presets.FirstOrDefault(p =>
@@ -84,7 +84,8 @@ public partial class ProfileEditorViewModel : ViewModelBase
         // For clone mode, always create a new profile
         var profile = (_existingProfile != null && !_isCloneMode) ? _existingProfile : new Profile();
         profile.Name = Name.Trim();
-        profile.Notes = string.IsNullOrWhiteSpace(Notes) ? null : Notes.Trim();
+        var plainNotes = TextSanitizer.HtmlToPlainText(Notes);
+        profile.Notes = string.IsNullOrWhiteSpace(plainNotes) ? null : plainNotes.Trim();
         profile.ProxyId = SelectedProxyOption?.Id;
         profile.FingerprintConfig = new FingerprintConfig
         {

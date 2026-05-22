@@ -47,21 +47,11 @@
                 BorderBrush="#3E3E42"
                 BorderThickness="0,0,0,1"
                 Padding="20,12">
-            <DockPanel>
-                <TextBlock Text="Proxy Management"
-                           Foreground="#CCCCCC"
-                           FontSize="18"
-                           FontWeight="SemiBold"
-                           VerticalAlignment="Center" />
-                <Button DockPanel.Dock="Right"
-                        Content="Refresh"
-                        Command="{Binding RefreshCommand}"
-                        Padding="16,8"
-                        Background="#3E3E42"
-                        Foreground="#CCCCCC"
-                        BorderThickness="0"
-                        CornerRadius="6" />
-            </DockPanel>
+            <TextBlock Text="Proxy Management"
+                       Foreground="#CCCCCC"
+                       FontSize="18"
+                       FontWeight="SemiBold"
+                       VerticalAlignment="Center" />
         </Border>
 
         <Border Grid.Row="1"
@@ -71,6 +61,7 @@
             <DockPanel>
                 <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="12">
                     <Button Content="New"
+                            AutomationProperties.AutomationId="NewProxyButton"
                             Command="{Binding NewProxyCommand}"
                             Padding="14,6"
                             Background="#4CAF50"
@@ -78,6 +69,7 @@
                             BorderThickness="0"
                             CornerRadius="5" />
                     <Button Content="Delete"
+                            AutomationProperties.AutomationId="DeleteProxyButton"
                             Command="{Binding DeleteProxyCommand}"
                             Padding="14,6"
                             Background="#A33A3A"
@@ -85,21 +77,39 @@
                             BorderThickness="0"
                             CornerRadius="5"
                             IsEnabled="{Binding IsEditMode}" />
+                    <Button Content="Refresh"
+                            AutomationProperties.AutomationId="ProxiesRefreshButton"
+                            Command="{Binding RefreshCommand}"
+                            Padding="14,6"
+                            Background="#3E3E42"
+                            Foreground="#CCCCCC"
+                            BorderThickness="0"
+                            CornerRadius="5" />
                 </StackPanel>
 
                 <ListBox ItemsSource="{Binding Proxies}"
+                         AutomationProperties.AutomationId="ProxiesList"
                          SelectedItem="{Binding SelectedProxy}"
                          Margin="12,0,12,12"
                          Background="#1E1E1E"
                          BorderBrush="#3E3E42">
                     <ListBox.ItemTemplate>
                         <DataTemplate x:DataType="vm:ProxyItemViewModel">
-                            <Grid ColumnDefinitions="*,Auto" Margin="8,6">
-                                <StackPanel Grid.Column="0" Spacing="2">
+                            <Grid ColumnDefinitions="Auto,*,Auto" Margin="8,6" ColumnSpacing="10">
+                                <Border Grid.Column="0"
+                                        Width="10"
+                                        Height="10"
+                                        CornerRadius="5"
+                                        Background="{Binding StatusColor}"
+                                        BorderBrush="{Binding StatusBorderColor}"
+                                        BorderThickness="1"
+                                        VerticalAlignment="Center"
+                                        ToolTip.Tip="{Binding ValidationMessage}" />
+                                <StackPanel Grid.Column="1" Spacing="2">
                                     <TextBlock Text="{Binding Proxy.Name}" Foreground="#CCCCCC" FontWeight="SemiBold" />
                                     <TextBlock Text="{Binding Endpoint}" Foreground="#858585" FontSize="12" />
                                 </StackPanel>
-                                <TextBlock Grid.Column="1"
+                                <TextBlock Grid.Column="2"
                                            Text="{Binding TypeDisplay}"
                                            Foreground="#AAAAAA"
                                            VerticalAlignment="Center" />
@@ -118,25 +128,30 @@
                                FontSize="20"
                                FontWeight="Bold" />
 
-                    <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,6,0,4">
-                        <Button Content="HTTP"
-                                Command="{Binding SetHttpTypeCommand}"
-                                Classes="TypeActive" />
-
-                        <Button Content="SOCKS5"
-                                IsEnabled="False"
-                                Classes="TypeDisabled"
-                                ToolTip.Tip="SOCKS5 temporarily disabled. Use HTTP proxy." />
+                    <StackPanel Spacing="6" Margin="0,6,0,4">
+                        <TextBlock Text="Type" Foreground="#AAAAAA" />
+                        <ComboBox ItemsSource="{Binding TypeOptions}"
+                                  SelectedItem="{Binding Type}"
+                                  HorizontalAlignment="Left"
+                                  MinWidth="160"
+                                  Background="#252526"
+                                  Foreground="#CCCCCC"
+                                  BorderBrush="#3E3E42" />
                     </StackPanel>
 
                     <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
                         <StackPanel>
                             <TextBlock Text="Host" Foreground="#AAAAAA" />
-                            <TextBox Text="{Binding Host}" Background="#252526" Foreground="#CCCCCC" BorderBrush="#3E3E42" />
+                            <TextBox AutomationProperties.AutomationId="ProxyHostInput"
+                                     Text="{Binding Host, UpdateSourceTrigger=PropertyChanged}"
+                                     Background="#252526"
+                                     Foreground="#CCCCCC"
+                                     BorderBrush="#3E3E42" />
                         </StackPanel>
                         <StackPanel Grid.Column="1">
                             <TextBlock Text="Port" Foreground="#AAAAAA" />
                             <NumericUpDown Value="{Binding Port}"
+                                           AutomationProperties.AutomationId="ProxyPortInput"
                                            Minimum="1"
                                            Maximum="65535"
                                            Background="#252526"
@@ -148,22 +163,40 @@
                     <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
                         <StackPanel>
                             <TextBlock Text="Login" Foreground="#AAAAAA" />
-                            <TextBox Text="{Binding Username}" Background="#252526" Foreground="#CCCCCC" BorderBrush="#3E3E42" />
+                            <TextBox AutomationProperties.AutomationId="ProxyUsernameInput"
+                                     Text="{Binding Username, UpdateSourceTrigger=PropertyChanged}"
+                                     Background="#252526"
+                                     Foreground="#CCCCCC"
+                                     BorderBrush="#3E3E42" />
                         </StackPanel>
                         <StackPanel Grid.Column="1">
                             <TextBlock Text="Password" Foreground="#AAAAAA" />
-                            <TextBox Text="{Binding Password}" Background="#252526" Foreground="#CCCCCC" BorderBrush="#3E3E42" />
+                            <TextBox AutomationProperties.AutomationId="ProxyPasswordInput"
+                                     Text="{Binding Password, UpdateSourceTrigger=PropertyChanged}"
+                                     Background="#252526"
+                                     Foreground="#CCCCCC"
+                                     BorderBrush="#3E3E42" />
                         </StackPanel>
                     </Grid>
 
                     <TextBlock Text="Name" Foreground="#AAAAAA" />
-                    <TextBox Text="{Binding Name}" Background="#252526" Foreground="#CCCCCC" BorderBrush="#3E3E42" />
+                    <TextBox AutomationProperties.AutomationId="ProxyNameInput"
+                             Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
+                             Background="#252526"
+                             Foreground="#CCCCCC"
+                             BorderBrush="#3E3E42" />
 
                     <TextBlock Text="IP change link (optional)" Foreground="#8C8C8C" />
-                    <TextBox Text="{Binding IpChangeLink}" Watermark="Optional" Background="#252526" Foreground="#CCCCCC" BorderBrush="#3E3E42" />
+                    <TextBox AutomationProperties.AutomationId="ProxyIpChangeInput"
+                             Text="{Binding IpChangeLink, UpdateSourceTrigger=PropertyChanged}"
+                             Watermark="Optional"
+                             Background="#252526"
+                             Foreground="#CCCCCC"
+                             BorderBrush="#3E3E42" />
 
                     <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,8,0,0">
                         <Button Grid.Column="0"
+                                AutomationProperties.AutomationId="TestProxyButton"
                                 Content="Check Connection"
                                 Command="{Binding TestProxyCommand}"
                                 Padding="18,8"
@@ -188,6 +221,7 @@
 
                     <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,8,0,0">
                         <Button Content="Save"
+                                AutomationProperties.AutomationId="SaveProxyButton"
                                 Command="{Binding SaveProxyCommand}"
                                 Padding="20,8"
                                 Background="#4CAF50"

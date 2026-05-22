@@ -53,7 +53,8 @@ public partial class ProxiesViewModel : ViewModelBase
 
     public ObservableCollection<string> TypeOptions { get; } = new()
     {
-        "http"
+        Proxy.HttpType,
+        Proxy.Socks5Type
     };
 
     public bool IsEditMode => SelectedProxy != null;
@@ -81,7 +82,7 @@ public partial class ProxiesViewModel : ViewModelBase
         else
         {
             Name = value.Proxy.Name;
-            Type = "http";
+            Type = Proxy.NormalizeType(value.Proxy.Type);
             Host = value.Proxy.Host;
             Port = value.Proxy.Port;
             Username = value.Proxy.Username ?? string.Empty;
@@ -116,7 +117,13 @@ public partial class ProxiesViewModel : ViewModelBase
     [RelayCommand]
     private void SetHttpType()
     {
-        Type = "http";
+        Type = Proxy.HttpType;
+    }
+
+    [RelayCommand]
+    private void SetSocks5Type()
+    {
+        Type = Proxy.Socks5Type;
     }
 
     [RelayCommand]
@@ -143,7 +150,7 @@ public partial class ProxiesViewModel : ViewModelBase
                 StatusMessage = $"Updated proxy: {proxy.Name}";
             }
 
-            LoadProxies();
+            await RefreshAndCheckAsync();
             ResetForm();
             SelectedProxy = null;
         }
@@ -166,7 +173,7 @@ public partial class ProxiesViewModel : ViewModelBase
         _databaseService.DeleteProxy(SelectedProxy.Proxy.Id);
         StatusMessage = $"Deleted proxy: {SelectedProxy.Proxy.Name}";
 
-        LoadProxies();
+        await RefreshAndCheckAsync();
         ResetForm();
         SelectedProxy = null;
     }
@@ -197,10 +204,27 @@ public partial class ProxiesViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void Refresh()
+    private async Task Refresh()
+    {
+        await RefreshAndCheckAsync();
+    }
+
+    public async Task RefreshAndCheckAsync()
     {
         LoadProxies();
-        StatusMessage = "Refreshed";
+        if (Proxies.Count == 0)
+        {
+            StatusMessage = "No proxies";
+            return;
+        }
+
+        StatusMessage = $"Checking {Proxies.Count} proxies...";
+        var tasks = Proxies.Select(CheckProxyItemAsync).ToArray();
+        await Task.WhenAll(tasks);
+
+        var ok = Proxies.Count(proxy => proxy.ValidationState == ProxyValidationState.Success);
+        var failed = Proxies.Count(proxy => proxy.ValidationState == ProxyValidationState.Failed);
+        StatusMessage = $"Checked proxies: {ok} OK, {failed} failed";
     }
 
     private void LoadProxies()
@@ -213,10 +237,29 @@ public partial class ProxiesViewModel : ViewModelBase
         }
     }
 
+    private async Task CheckProxyItemAsync(ProxyItemViewModel item)
+    {
+        item.SetChecking();
+        var validationTask = _proxyValidatorService.ValidateAsync(item.Proxy);
+        var completedTask = await Task.WhenAny(validationTask, Task.Delay(TimeSpan.FromSeconds(15)));
+
+        if (completedTask != validationTask)
+        {
+            item.SetFailed("Timeout");
+            return;
+        }
+
+        var result = await validationTask;
+        if (result.IsSuccess)
+            item.SetSuccess(result.ExternalIp, result.LatencyMs);
+        else
+            item.SetFailed(result.Error);
+    }
+
     private void ResetForm()
     {
         Name = string.Empty;
-        Type = "http";
+        Type = Proxy.HttpType;
         Host = string.Empty;
         Port = 0;
         Username = string.Empty;
@@ -247,7 +290,7 @@ public partial class ProxiesViewModel : ViewModelBase
 
         if (!TypeOptions.Contains(Type, StringComparer.OrdinalIgnoreCase))
         {
-            validationError = "Only HTTP proxy type is currently supported.";
+            validationError = "Proxy type must be http or socks5.";
             return false;
         }
 
@@ -258,7 +301,7 @@ public partial class ProxiesViewModel : ViewModelBase
     private Proxy BuildProxy(Proxy proxy)
     {
         proxy.Name = Name.Trim();
-        proxy.Type = Type.Trim().ToLowerInvariant();
+        proxy.Type = Proxy.NormalizeType(Type);
         proxy.Host = Host.Trim();
         proxy.Port = Port;
         proxy.Username = string.IsNullOrWhiteSpace(Username) ? null : Username.Trim();
@@ -320,13 +363,68 @@ public partial class ProxyItemViewModel : ViewModelBase
 {
     public Proxy Proxy { get; }
 
+    [ObservableProperty]
+    private ProxyValidationState _validationState = ProxyValidationState.Unknown;
+
+    [ObservableProperty]
+    private string _validationMessage = "Not checked";
+
     public string TypeDisplay => Proxy.Type.ToUpperInvariant();
     public string Endpoint => $"{Proxy.Host}:{Proxy.Port}";
     public string AuthDisplay => string.IsNullOrWhiteSpace(Proxy.Username) ? "No auth" : Proxy.Username!;
     public string EnabledDisplay => Proxy.IsEnabled ? "Enabled" : "Disabled";
+    public string StatusColor => ValidationState switch
+    {
+        ProxyValidationState.Success => "#6EDB76",
+        ProxyValidationState.Failed => "#FF5F5F",
+        ProxyValidationState.Checking => "#4FA8FF",
+        _ => "#777D84"
+    };
+
+    public string StatusBorderColor => ValidationState switch
+    {
+        ProxyValidationState.Success => "#2E7D32",
+        ProxyValidationState.Failed => "#A33A3A",
+        ProxyValidationState.Checking => "#1F5C92",
+        _ => "#55595E"
+    };
 
     public ProxyItemViewModel(Proxy proxy)
     {
         Proxy = proxy;
     }
+
+    partial void OnValidationStateChanged(ProxyValidationState value)
+    {
+        OnPropertyChanged(nameof(StatusColor));
+        OnPropertyChanged(nameof(StatusBorderColor));
+    }
+
+    public void SetChecking()
+    {
+        ValidationState = ProxyValidationState.Checking;
+        ValidationMessage = "Checking...";
+    }
+
+    public void SetSuccess(string? externalIp, long latencyMs)
+    {
+        ValidationState = ProxyValidationState.Success;
+        ValidationMessage = string.IsNullOrWhiteSpace(externalIp)
+            ? $"OK | {latencyMs}ms"
+            : $"OK | {externalIp} | {latencyMs}ms";
+    }
+
+    public void SetFailed(string? error)
+    {
+        ValidationState = ProxyValidationState.Failed;
+        ValidationMessage = string.IsNullOrWhiteSpace(error) ? "Failed" : error;
+    }
+}
+
+public enum ProxyValidationState
+{
+    Unknown,
+    Checking,
+    Success,
+    Failed
 }

@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using System.Threading.Tasks;
 using YellowFox.Desktop.Services;
 
 namespace YellowFox.Desktop.ViewModels;
@@ -54,9 +55,10 @@ public partial class MainWindowViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void ShowProxies()
+    private async Task ShowProxies()
     {
         CurrentSection = "proxies";
+        await ProxiesViewModel.RefreshAndCheckAsync();
     }
 
     [RelayCommand]

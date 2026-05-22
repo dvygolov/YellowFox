@@ -27,8 +27,19 @@ public partial class ExtensionsViewModel : ViewModelBase
     [ObservableProperty]
     private string _statusMessage = "Ready";
 
+    [ObservableProperty]
+    private string _name = string.Empty;
+
+    [ObservableProperty]
+    private string _extensionPath = string.Empty;
+
+    [ObservableProperty]
+    private bool _isExtensionEnabled = true;
+
     public ObservableCollection<ExtensionItemViewModel> Extensions { get; } = new();
     public bool HasSelection => SelectedExtension != null;
+    public bool IsEditMode => SelectedExtension != null;
+    public string FormTitle => IsEditMode ? "Edit Extension" : "New Extension";
 
     public ExtensionsViewModel(DatabaseService databaseService, ExtensionStorageService extensionStorageService)
     {
@@ -39,7 +50,20 @@ public partial class ExtensionsViewModel : ViewModelBase
 
     partial void OnSelectedExtensionChanged(ExtensionItemViewModel? value)
     {
+        if (value == null)
+        {
+            ResetForm();
+        }
+        else
+        {
+            Name = value.Extension.Name;
+            ExtensionPath = value.Extension.Path;
+            IsExtensionEnabled = value.Extension.IsEnabled;
+        }
+
         OnPropertyChanged(nameof(HasSelection));
+        OnPropertyChanged(nameof(IsEditMode));
+        OnPropertyChanged(nameof(FormTitle));
     }
 
     [RelayCommand]
@@ -47,6 +71,13 @@ public partial class ExtensionsViewModel : ViewModelBase
     {
         Load();
         StatusMessage = "Refreshed";
+    }
+
+    [RelayCommand]
+    private void NewExtension()
+    {
+        SelectedExtension = null;
+        ResetForm();
     }
 
     [RelayCommand]
@@ -69,14 +100,86 @@ public partial class ExtensionsViewModel : ViewModelBase
 
         try
         {
-            var fileName = Path.GetFileNameWithoutExtension(file.Name);
+            var fileName = System.IO.Path.GetFileNameWithoutExtension(file.Name);
             var extension = _extensionStorageService.ImportArchive(file.Path.LocalPath, fileName);
             StatusMessage = $"Imported: {extension.Name}";
             Load();
+            SelectedExtension = Extensions.FirstOrDefault(e => e.Extension.Id == extension.Id);
         }
         catch (Exception ex)
         {
             await ShowMessage("Import Error", ex.Message);
+        }
+    }
+
+    [RelayCommand]
+    private async Task BrowseExtensionFile()
+    {
+        var mainWindow = GetMainWindow();
+        var files = await mainWindow.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Select Extension Archive",
+            AllowMultiple = false,
+            FileTypeFilter = new[]
+            {
+                new FilePickerFileType("Extension Archive") { Patterns = new[] { "*.zip", "*.xpi" } }
+            }
+        });
+
+        var file = files.FirstOrDefault();
+        if (file == null)
+            return;
+
+        ExtensionPath = file.Path.LocalPath;
+        if (string.IsNullOrWhiteSpace(Name))
+            Name = System.IO.Path.GetFileNameWithoutExtension(file.Name);
+    }
+
+    [RelayCommand]
+    private async Task Save()
+    {
+        if (!ValidateForm(out var validationError))
+        {
+            await ShowMessage("Validation", validationError);
+            return;
+        }
+
+        try
+        {
+            if (SelectedExtension == null)
+            {
+                var extension = new ExtensionItem
+                {
+                    Name = Name.Trim(),
+                    IsEnabled = IsExtensionEnabled
+                };
+
+                extension.Path = _extensionStorageService.IsArchivePath(ExtensionPath.Trim())
+                    ? _extensionStorageService.StoreArchive(ExtensionPath.Trim(), extension.Id)
+                    : ExtensionPath.Trim();
+
+                _databaseService.CreateExtension(extension);
+                StatusMessage = $"Created: {extension.Name}";
+            }
+            else
+            {
+                var extension = SelectedExtension.Extension;
+                extension.Name = Name.Trim();
+                extension.Path = _extensionStorageService.IsArchivePath(ExtensionPath.Trim())
+                    ? _extensionStorageService.StoreArchive(ExtensionPath.Trim(), extension.Id)
+                    : ExtensionPath.Trim();
+                extension.IsEnabled = IsExtensionEnabled;
+                _databaseService.UpdateExtension(extension);
+                StatusMessage = $"Updated: {extension.Name}";
+            }
+
+            Load();
+            SelectedExtension = null;
+            ResetForm();
+        }
+        catch (Exception ex)
+        {
+            await ShowMessage("Error", ex.Message);
         }
     }
 
@@ -107,6 +210,32 @@ public partial class ExtensionsViewModel : ViewModelBase
         _databaseService.UpdateExtension(ext);
         StatusMessage = $"{ext.Name}: {(ext.IsEnabled ? "enabled" : "disabled")}";
         Load();
+    }
+
+    private bool ValidateForm(out string validationError)
+    {
+        if (string.IsNullOrWhiteSpace(Name))
+        {
+            validationError = "Name is required.";
+            return false;
+        }
+
+        var path = ExtensionPath.Trim();
+        if (!BrowserService.IsExtensionPathUsable(path) && !_extensionStorageService.IsArchivePath(path))
+        {
+            validationError = "Path must point to an unpacked extension folder with manifest.json, or to a .zip/.xpi archive.";
+            return false;
+        }
+
+        validationError = string.Empty;
+        return true;
+    }
+
+    private void ResetForm()
+    {
+        Name = string.Empty;
+        ExtensionPath = string.Empty;
+        IsExtensionEnabled = true;
     }
 
     private void Load()

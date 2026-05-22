@@ -22,6 +22,7 @@
                 
                 <!-- Profiles -->
                 <Button Content="📋 Profiles"
+                        AutomationProperties.AutomationId="NavProfilesButton"
                         Command="{Binding ShowProfilesCommand}"
                         IsVisible="{Binding IsProfilesSection}"
                         HorizontalAlignment="Stretch"
@@ -33,6 +34,7 @@
                         HorizontalContentAlignment="Left"
                         FontWeight="SemiBold" />
                 <Button Content="📋 Profiles"
+                        AutomationProperties.AutomationId="NavProfilesButton"
                         Command="{Binding ShowProfilesCommand}"
                         IsVisible="{Binding IsNotProfilesSection}"
                         HorizontalAlignment="Stretch"
@@ -45,6 +47,7 @@
 
                 <!-- Proxies -->
                 <Button Content="🌐 Proxies"
+                        AutomationProperties.AutomationId="NavProxiesButton"
                         Command="{Binding ShowProxiesCommand}"
                         IsVisible="{Binding IsProxiesSection}"
                         HorizontalAlignment="Stretch"
@@ -56,6 +59,7 @@
                         HorizontalContentAlignment="Left"
                         FontWeight="SemiBold" />
                 <Button Content="🌐 Proxies"
+                        AutomationProperties.AutomationId="NavProxiesButton"
                         Command="{Binding ShowProxiesCommand}"
                         IsVisible="{Binding IsNotProxiesSection}"
                         HorizontalAlignment="Stretch"
@@ -68,6 +72,7 @@
 
                 <!-- Extensions -->
                 <Button Content="🧩 Extensions"
+                        AutomationProperties.AutomationId="NavExtensionsButton"
                         Command="{Binding ShowExtensionsCommand}"
                         IsVisible="{Binding IsExtensionsSection}"
                         HorizontalAlignment="Stretch"
@@ -79,6 +84,7 @@
                         HorizontalContentAlignment="Left"
                         FontWeight="SemiBold" />
                 <Button Content="🧩 Extensions"
+                        AutomationProperties.AutomationId="NavExtensionsButton"
                         Command="{Binding ShowExtensionsCommand}"
                         IsVisible="{Binding IsNotExtensionsSection}"
                         HorizontalAlignment="Stretch"
@@ -91,6 +97,7 @@
 
                 <!-- Bookmarks -->
                 <Button Content="🔖 Bookmarks"
+                        AutomationProperties.AutomationId="NavBookmarksButton"
                         Command="{Binding ShowBookmarksCommand}"
                         IsVisible="{Binding IsBookmarksSection}"
                         HorizontalAlignment="Stretch"
@@ -101,6 +108,7 @@
                         HorizontalContentAlignment="Left"
                         FontWeight="SemiBold" />
                 <Button Content="🔖 Bookmarks"
+                        AutomationProperties.AutomationId="NavBookmarksButton"
                         Command="{Binding ShowBookmarksCommand}"
                         IsVisible="{Binding IsNotBookmarksSection}"
                         HorizontalAlignment="Stretch"

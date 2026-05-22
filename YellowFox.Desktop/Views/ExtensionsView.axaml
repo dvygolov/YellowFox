@@ -10,39 +10,170 @@
              x:DataType="vm:ExtensionsViewModel"
              Background="#1E1E1E">
 
-    <DockPanel Margin="20">
-        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="10" Margin="0,0,0,12">
-            <Button Content="Import Archive" Command="{Binding ImportArchiveCommand}" />
-            <Button Content="Toggle Enabled" Command="{Binding ToggleEnabledCommand}" IsEnabled="{Binding HasSelection}" />
-            <Button Content="Delete" Command="{Binding DeleteSelectedCommand}" IsEnabled="{Binding HasSelection}" />
-            <Button Content="Refresh" Command="{Binding RefreshCommand}" />
-        </StackPanel>
+    <Grid ColumnDefinitions="2*,3*" RowDefinitions="Auto,*,Auto">
+        <Border Grid.ColumnSpan="2"
+                Background="#2D2D2D"
+                BorderBrush="#3E3E42"
+                BorderThickness="0,0,0,1"
+                Padding="20,12">
+            <DockPanel>
+                <TextBlock Text="Extension Management"
+                           Foreground="#CCCCCC"
+                           FontSize="18"
+                           FontWeight="SemiBold"
+                           VerticalAlignment="Center" />
+                <Button DockPanel.Dock="Right"
+                        AutomationProperties.AutomationId="ExtensionsRefreshButton"
+                        Content="Refresh"
+                        Command="{Binding RefreshCommand}"
+                        Padding="16,8"
+                        Background="#3E3E42"
+                        Foreground="#CCCCCC"
+                        BorderThickness="0"
+                        CornerRadius="6" />
+            </DockPanel>
+        </Border>
 
-        <Border DockPanel.Dock="Bottom"
+        <Border Grid.Row="1"
+                Background="#252526"
+                BorderBrush="#3E3E42"
+                BorderThickness="0,0,1,0">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="12">
+                    <Button AutomationProperties.AutomationId="NewExtensionButton"
+                            Content="New"
+                            Command="{Binding NewExtensionCommand}"
+                            Padding="14,6"
+                            Background="#4CAF50"
+                            Foreground="White"
+                            BorderThickness="0"
+                            CornerRadius="5" />
+                    <Button AutomationProperties.AutomationId="ImportExtensionArchiveButton"
+                            Content="Import Archive"
+                            Command="{Binding ImportArchiveCommand}"
+                            Padding="14,6"
+                            Background="#235A8F"
+                            Foreground="White"
+                            BorderThickness="0"
+                            CornerRadius="5" />
+                    <Button AutomationProperties.AutomationId="ToggleExtensionEnabledButton"
+                            Content="Toggle"
+                            Command="{Binding ToggleEnabledCommand}"
+                            Padding="14,6"
+                            Background="#3E3E42"
+                            Foreground="#CCCCCC"
+                            BorderThickness="0"
+                            CornerRadius="5"
+                            IsEnabled="{Binding HasSelection}" />
+                    <Button AutomationProperties.AutomationId="DeleteExtensionButton"
+                            Content="Delete"
+                            Command="{Binding DeleteSelectedCommand}"
+                            Padding="14,6"
+                            Background="#A33A3A"
+                            Foreground="White"
+                            BorderThickness="0"
+                            CornerRadius="5"
+                            IsEnabled="{Binding HasSelection}" />
+                </StackPanel>
+
+                <ListBox AutomationProperties.AutomationId="ExtensionsList"
+                         ItemsSource="{Binding Extensions}"
+                         SelectedItem="{Binding SelectedExtension}"
+                         Margin="12,0,12,12"
+                         Background="#1E1E1E"
+                         BorderBrush="#3E3E42">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:ExtensionItemViewModel">
+                            <Grid ColumnDefinitions="220,100,*" Margin="8,7" ColumnSpacing="12">
+                                <TextBlock Grid.Column="0"
+                                           Text="{Binding Name}"
+                                           Foreground="#CCCCCC"
+                                           FontWeight="SemiBold"
+                                           TextTrimming="CharacterEllipsis" />
+                                <TextBlock Grid.Column="1"
+                                           Text="{Binding Status}"
+                                           Foreground="#AAAAAA"
+                                           VerticalAlignment="Center" />
+                                <TextBlock Grid.Column="2"
+                                           Text="{Binding Path}"
+                                           Foreground="#858585"
+                                           TextTrimming="CharacterEllipsis"
+                                           VerticalAlignment="Center" />
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </DockPanel>
+        </Border>
+
+        <Border Grid.Row="1" Grid.Column="1" Padding="24" Background="#1E1E1E">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="{Binding FormTitle}"
+                               Foreground="#F0F0F0"
+                               FontSize="20"
+                               FontWeight="Bold" />
+
+                    <TextBlock Text="Name" Foreground="#AAAAAA" />
+                    <TextBox AutomationProperties.AutomationId="ExtensionNameInput"
+                             Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
+                             Watermark="Extension name"
+                             Background="#252526"
+                             Foreground="#CCCCCC"
+                             BorderBrush="#3E3E42" />
+
+                    <TextBlock Text="Path" Foreground="#AAAAAA" />
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                        <TextBox Grid.Column="0"
+                                 AutomationProperties.AutomationId="ExtensionPathInput"
+                                 Text="{Binding ExtensionPath, UpdateSourceTrigger=PropertyChanged}"
+                                 Watermark="Folder with manifest.json, or .xpi/.zip file"
+                                 Background="#252526"
+                                 Foreground="#CCCCCC"
+                                 BorderBrush="#3E3E42"
+                                 TextWrapping="NoWrap" />
+                        <Button Grid.Column="1"
+                                AutomationProperties.AutomationId="BrowseExtensionFileButton"
+                                Content="Browse..."
+                                Command="{Binding BrowseExtensionFileCommand}"
+                                Padding="14,7"
+                                Background="#3E3E42"
+                                Foreground="#CCCCCC"
+                                BorderThickness="0"
+                                CornerRadius="5" />
+                    </Grid>
+
+                    <CheckBox AutomationProperties.AutomationId="ExtensionEnabledCheckbox"
+                              Content="Enabled"
+                              IsChecked="{Binding IsExtensionEnabled}"
+                              Foreground="#CCCCCC"
+                              Margin="0,4,0,0" />
+
+                    <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,8,0,0">
+                        <Button AutomationProperties.AutomationId="SaveExtensionButton"
+                                Content="Save"
+                                Command="{Binding SaveCommand}"
+                                Padding="20,8"
+                                Background="#4CAF50"
+                                Foreground="White"
+                                BorderThickness="0"
+                                CornerRadius="5"
+                                FontWeight="SemiBold" />
+                    </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
+
+        <Border Grid.Row="2"
+                Grid.ColumnSpan="2"
                 Background="#252526"
                 BorderBrush="#3E3E42"
                 BorderThickness="0,1,0,0"
-                Padding="12,10"
-                Margin="0,12,0,0">
-            <TextBlock Foreground="#AAAAAA">
+                Padding="12,10">
+            <TextBlock Foreground="#AAAAAA" TextWrapping="Wrap">
                 <Run Text="Status: " />
                 <Run Text="{Binding StatusMessage}" />
             </TextBlock>
         </Border>
-
-        <ListBox ItemsSource="{Binding Extensions}"
-                 SelectedItem="{Binding SelectedExtension}"
-                 Background="#252526"
-                 BorderBrush="#3E3E42">
-            <ListBox.ItemTemplate>
-                <DataTemplate x:DataType="vm:ExtensionItemViewModel">
-                    <Grid ColumnDefinitions="220,120,*" Margin="8,6">
-                        <TextBlock Grid.Column="0" Text="{Binding Name}" Foreground="#CCCCCC" />
-                        <TextBlock Grid.Column="1" Text="{Binding Status}" Foreground="#AAAAAA" />
-                        <TextBlock Grid.Column="2" Text="{Binding Path}" Foreground="#858585" TextTrimming="CharacterEllipsis" />
-                    </Grid>
-                </DataTemplate>
-            </ListBox.ItemTemplate>
-        </ListBox>
-    </DockPanel>
+    </Grid>
 </UserControl>

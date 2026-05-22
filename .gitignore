@@ -34,6 +34,9 @@ build/
 
 # Runtime data
 data/
+artifacts/
+.playwright-desktop/
+.claude/
 *.db
 *.db-shm
 *.db-wal
@@ -56,3 +59,7 @@ desktop.ini
 # Logs
 *.log
 *.tmp
+
+# Local agent tooling caches/binaries
+.agents/skills/playwright-wpf-desktop/
+.agents/skills/playwright-wpf-desktop/tools/

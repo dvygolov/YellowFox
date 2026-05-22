@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MsBox.Avalonia;
@@ -39,6 +40,7 @@ public partial class ProfilesViewModel : ViewModelBase
     {
         _databaseService = databaseService;
         _browserService = browserService;
+        _browserService.ProfileRunningStateChanged += OnProfileRunningStateChanged;
         LoadProfiles();
     }
     
@@ -55,6 +57,7 @@ public partial class ProfilesViewModel : ViewModelBase
         foreach (var profile in profiles)
         {
             var vm = new ProfileItemViewModel(profile, this, _databaseService);
+            vm.UpdateRunningStatus(_browserService.IsRunning(profile.Id));
             vm.PropertyChanged += OnProfileItemPropertyChanged;
             Profiles.Add(vm);
         }
@@ -92,6 +95,7 @@ public partial class ProfilesViewModel : ViewModelBase
         foreach (var profile in filtered)
         {
             var vm = new ProfileItemViewModel(profile, this, _databaseService);
+            vm.UpdateRunningStatus(_browserService.IsRunning(profile.Id));
             Profiles.Add(vm);
         }
     }
@@ -320,6 +324,15 @@ public partial class ProfilesViewModel : ViewModelBase
 
         await box.ShowWindowDialogAsync(mainWindow!);
     }
+
+    private void OnProfileRunningStateChanged(object? sender, ProfileRunningStateChangedEventArgs e)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            var profileVm = Profiles.FirstOrDefault(p => p.Profile.Id == e.ProfileId);
+            profileVm?.UpdateRunningStatus(e.IsRunning);
+        });
+    }
 }
 
 public partial class ProfileItemViewModel : ViewModelBase
@@ -345,6 +358,8 @@ public partial class ProfileItemViewModel : ViewModelBase
             return proxy?.Name ?? "Unknown proxy";
         }
     }
+
+    public string NotesDisplay => TextSanitizer.HtmlToPlainText(Profile.Notes);
     
     public string StatusIcon => IsRunning ? "🟢" : "⚫";
     public bool IsNotRunning => !IsRunning;

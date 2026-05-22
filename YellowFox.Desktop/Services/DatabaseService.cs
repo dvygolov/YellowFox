@@ -51,6 +51,7 @@ public class DatabaseService
                 name TEXT NOT NULL UNIQUE,
                 notes TEXT,
                 proxy_id TEXT,
+                dolphin_profile_id TEXT,
                 fingerprint_config TEXT NOT NULL
             )";
         profilesCommand.ExecuteNonQuery();
@@ -66,6 +67,7 @@ public class DatabaseService
                 port INTEGER NOT NULL,
                 username TEXT,
                 password TEXT,
+                dolphin_proxy_id TEXT,
                 is_enabled INTEGER NOT NULL DEFAULT 1
             )";
         proxiesCommand.ExecuteNonQuery();
@@ -100,19 +102,36 @@ public class DatabaseService
             alterTableCommand.ExecuteNonQuery();
         }
 
+        if (!ColumnExists(connection, transaction, "profiles", "dolphin_profile_id"))
+        {
+            var alterTableCommand = connection.CreateCommand();
+            alterTableCommand.Transaction = transaction;
+            alterTableCommand.CommandText = "ALTER TABLE profiles ADD COLUMN dolphin_profile_id TEXT";
+            alterTableCommand.ExecuteNonQuery();
+        }
+
+        if (!ColumnExists(connection, transaction, "proxies", "dolphin_proxy_id"))
+        {
+            var alterTableCommand = connection.CreateCommand();
+            alterTableCommand.Transaction = transaction;
+            alterTableCommand.CommandText = "ALTER TABLE proxies ADD COLUMN dolphin_proxy_id TEXT";
+            alterTableCommand.ExecuteNonQuery();
+        }
+
         var indexCommand = connection.CreateCommand();
         indexCommand.Transaction = transaction;
         indexCommand.CommandText = "CREATE INDEX IF NOT EXISTS idx_profiles_proxy_id ON profiles(proxy_id)";
         indexCommand.ExecuteNonQuery();
 
-        // Project policy: HTTP-only proxies. Normalize any existing records.
-        var normalizeProxyTypeCommand = connection.CreateCommand();
-        normalizeProxyTypeCommand.Transaction = transaction;
-        normalizeProxyTypeCommand.CommandText = @"
-            UPDATE proxies
-            SET type = 'http'
-            WHERE lower(type) <> 'http'";
-        normalizeProxyTypeCommand.ExecuteNonQuery();
+        var dolphinProfileIndexCommand = connection.CreateCommand();
+        dolphinProfileIndexCommand.Transaction = transaction;
+        dolphinProfileIndexCommand.CommandText = "CREATE UNIQUE INDEX IF NOT EXISTS idx_profiles_dolphin_profile_id ON profiles(dolphin_profile_id) WHERE dolphin_profile_id IS NOT NULL";
+        dolphinProfileIndexCommand.ExecuteNonQuery();
+
+        var dolphinProxyIndexCommand = connection.CreateCommand();
+        dolphinProxyIndexCommand.Transaction = transaction;
+        dolphinProxyIndexCommand.CommandText = "CREATE UNIQUE INDEX IF NOT EXISTS idx_proxies_dolphin_proxy_id ON proxies(dolphin_proxy_id) WHERE dolphin_proxy_id IS NOT NULL";
+        dolphinProxyIndexCommand.ExecuteNonQuery();
 
         transaction.Commit();
     }
@@ -125,7 +144,7 @@ public class DatabaseService
         connection.Open();
         
         var command = connection.CreateCommand();
-        command.CommandText = "SELECT id, name, notes, proxy_id, fingerprint_config FROM profiles ORDER BY name";
+        command.CommandText = "SELECT id, name, notes, proxy_id, dolphin_profile_id, fingerprint_config FROM profiles ORDER BY name";
         
         using var reader = command.ExecuteReader();
         while (reader.Read())
@@ -134,9 +153,10 @@ public class DatabaseService
             {
                 Id = reader.GetString(0),
                 Name = reader.GetString(1),
-                Notes = reader.IsDBNull(2) ? null : reader.GetString(2),
+                Notes = reader.IsDBNull(2) ? null : TextSanitizer.HtmlToPlainText(reader.GetString(2)),
                 ProxyId = reader.IsDBNull(3) ? null : reader.GetString(3),
-                FingerprintConfig = JsonSerializer.Deserialize<FingerprintConfig>(reader.GetString(4))
+                DolphinProfileId = reader.IsDBNull(4) ? null : reader.GetString(4),
+                FingerprintConfig = JsonSerializer.Deserialize<FingerprintConfig>(reader.GetString(5))
                     ?? new FingerprintConfig()
             };
             profiles.Add(profile);
@@ -151,7 +171,7 @@ public class DatabaseService
         connection.Open();
         
         var command = connection.CreateCommand();
-        command.CommandText = "SELECT id, name, notes, proxy_id, fingerprint_config FROM profiles WHERE id = @id";
+        command.CommandText = "SELECT id, name, notes, proxy_id, dolphin_profile_id, fingerprint_config FROM profiles WHERE id = @id";
         command.Parameters.AddWithValue("@id", id);
         
         using var reader = command.ExecuteReader();
@@ -161,9 +181,10 @@ public class DatabaseService
             {
                 Id = reader.GetString(0),
                 Name = reader.GetString(1),
-                Notes = reader.IsDBNull(2) ? null : reader.GetString(2),
+                Notes = reader.IsDBNull(2) ? null : TextSanitizer.HtmlToPlainText(reader.GetString(2)),
                 ProxyId = reader.IsDBNull(3) ? null : reader.GetString(3),
-                FingerprintConfig = JsonSerializer.Deserialize<FingerprintConfig>(reader.GetString(4))
+                DolphinProfileId = reader.IsDBNull(4) ? null : reader.GetString(4),
+                FingerprintConfig = JsonSerializer.Deserialize<FingerprintConfig>(reader.GetString(5))
                     ?? new FingerprintConfig()
             };
         }
@@ -178,13 +199,14 @@ public class DatabaseService
         
         var command = connection.CreateCommand();
         command.CommandText = @"
-            INSERT INTO profiles (id, name, notes, proxy_id, fingerprint_config)
-            VALUES (@id, @name, @notes, @proxy_id, @config)";
+            INSERT INTO profiles (id, name, notes, proxy_id, dolphin_profile_id, fingerprint_config)
+            VALUES (@id, @name, @notes, @proxy_id, @dolphin_profile_id, @config)";
         
         command.Parameters.AddWithValue("@id", profile.Id);
         command.Parameters.AddWithValue("@name", profile.Name);
-        command.Parameters.AddWithValue("@notes", (object?)profile.Notes ?? DBNull.Value);
+        command.Parameters.AddWithValue("@notes", ToDbNotesValue(profile.Notes));
         command.Parameters.AddWithValue("@proxy_id", (object?)profile.ProxyId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@dolphin_profile_id", (object?)profile.DolphinProfileId ?? DBNull.Value);
         command.Parameters.AddWithValue("@config", JsonSerializer.Serialize(profile.FingerprintConfig));
         
         try
@@ -205,13 +227,14 @@ public class DatabaseService
         var command = connection.CreateCommand();
         command.CommandText = @"
             UPDATE profiles
-            SET name = @name, notes = @notes, proxy_id = @proxy_id, fingerprint_config = @config
+            SET name = @name, notes = @notes, proxy_id = @proxy_id, dolphin_profile_id = @dolphin_profile_id, fingerprint_config = @config
             WHERE id = @id";
         
         command.Parameters.AddWithValue("@id", profile.Id);
         command.Parameters.AddWithValue("@name", profile.Name);
-        command.Parameters.AddWithValue("@notes", (object?)profile.Notes ?? DBNull.Value);
+        command.Parameters.AddWithValue("@notes", ToDbNotesValue(profile.Notes));
         command.Parameters.AddWithValue("@proxy_id", (object?)profile.ProxyId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@dolphin_profile_id", (object?)profile.DolphinProfileId ?? DBNull.Value);
         command.Parameters.AddWithValue("@config", JsonSerializer.Serialize(profile.FingerprintConfig));
         
         try
@@ -248,6 +271,7 @@ public class DatabaseService
             Name = newName,
             Notes = source.Notes,
             ProxyId = source.ProxyId,
+            DolphinProfileId = null,
             FingerprintConfig = new FingerprintConfig
             {
                 Os = source.FingerprintConfig.Os,
@@ -285,6 +309,24 @@ public class DatabaseService
         return Path.Combine(logsDir, $"{safeName}.log");
     }
 
+    public string GetProfileTabsStateFilePath(string profileId)
+    {
+        var profileDir = GetProfileDataDirectory(profileId);
+        return Path.Combine(profileDir, "tabs-state.json");
+    }
+
+    public string GetProfileImportedCookiesFilePath(string profileId)
+    {
+        var profileDir = GetProfileDataDirectory(profileId);
+        return Path.Combine(profileDir, "imported-cookies.json");
+    }
+
+    public string GetProfileImportedLocalStorageFilePath(string profileId)
+    {
+        var profileDir = GetProfileDataDirectory(profileId);
+        return Path.Combine(profileDir, "imported-local-storage.json");
+    }
+
     public string GetExtensionsDataDirectory()
     {
         var extensionsDir = Path.Combine(_dataDirectory, "extensions");
@@ -301,7 +343,7 @@ public class DatabaseService
 
         var command = connection.CreateCommand();
         command.CommandText = @"
-            SELECT id, name, type, host, port, username, password, is_enabled
+            SELECT id, name, type, host, port, username, password, dolphin_proxy_id, is_enabled
             FROM proxies
             ORDER BY name";
 
@@ -317,7 +359,8 @@ public class DatabaseService
                 Port = reader.GetInt32(4),
                 Username = reader.IsDBNull(5) ? null : reader.GetString(5),
                 Password = reader.IsDBNull(6) ? null : reader.GetString(6),
-                IsEnabled = reader.GetInt32(7) == 1
+                DolphinProxyId = reader.IsDBNull(7) ? null : reader.GetString(7),
+                IsEnabled = reader.GetInt32(8) == 1
             });
         }
 
@@ -331,7 +374,7 @@ public class DatabaseService
 
         var command = connection.CreateCommand();
         command.CommandText = @"
-            SELECT id, name, type, host, port, username, password, is_enabled
+            SELECT id, name, type, host, port, username, password, dolphin_proxy_id, is_enabled
             FROM proxies
             WHERE id = @id";
         command.Parameters.AddWithValue("@id", id);
@@ -349,8 +392,19 @@ public class DatabaseService
             Port = reader.GetInt32(4),
             Username = reader.IsDBNull(5) ? null : reader.GetString(5),
             Password = reader.IsDBNull(6) ? null : reader.GetString(6),
-            IsEnabled = reader.GetInt32(7) == 1
+            DolphinProxyId = reader.IsDBNull(7) ? null : reader.GetString(7),
+            IsEnabled = reader.GetInt32(8) == 1
         };
+    }
+
+    public Profile? GetProfileByDolphinProfileId(string dolphinProfileId)
+    {
+        return GetAllProfiles().Find(p => string.Equals(p.DolphinProfileId, dolphinProfileId, StringComparison.Ordinal));
+    }
+
+    public Proxy? GetProxyByDolphinProxyId(string dolphinProxyId)
+    {
+        return GetAllProxies().Find(p => string.Equals(p.DolphinProxyId, dolphinProxyId, StringComparison.Ordinal));
     }
 
     public void CreateProxy(Proxy proxy)
@@ -360,16 +414,17 @@ public class DatabaseService
 
         var command = connection.CreateCommand();
         command.CommandText = @"
-            INSERT INTO proxies (id, name, type, host, port, username, password, is_enabled)
-            VALUES (@id, @name, @type, @host, @port, @username, @password, @is_enabled)";
+            INSERT INTO proxies (id, name, type, host, port, username, password, dolphin_proxy_id, is_enabled)
+            VALUES (@id, @name, @type, @host, @port, @username, @password, @dolphin_proxy_id, @is_enabled)";
 
         command.Parameters.AddWithValue("@id", proxy.Id);
         command.Parameters.AddWithValue("@name", proxy.Name.Trim());
-        command.Parameters.AddWithValue("@type", proxy.Type.Trim().ToLowerInvariant());
+        command.Parameters.AddWithValue("@type", Proxy.NormalizeType(proxy.Type));
         command.Parameters.AddWithValue("@host", proxy.Host.Trim());
         command.Parameters.AddWithValue("@port", proxy.Port);
         command.Parameters.AddWithValue("@username", (object?)proxy.Username ?? DBNull.Value);
         command.Parameters.AddWithValue("@password", (object?)proxy.Password ?? DBNull.Value);
+        command.Parameters.AddWithValue("@dolphin_proxy_id", (object?)proxy.DolphinProxyId ?? DBNull.Value);
         command.Parameters.AddWithValue("@is_enabled", proxy.IsEnabled ? 1 : 0);
 
         try
@@ -396,16 +451,18 @@ public class DatabaseService
                 port = @port,
                 username = @username,
                 password = @password,
+                dolphin_proxy_id = @dolphin_proxy_id,
                 is_enabled = @is_enabled
             WHERE id = @id";
 
         command.Parameters.AddWithValue("@id", proxy.Id);
         command.Parameters.AddWithValue("@name", proxy.Name.Trim());
-        command.Parameters.AddWithValue("@type", proxy.Type.Trim().ToLowerInvariant());
+        command.Parameters.AddWithValue("@type", Proxy.NormalizeType(proxy.Type));
         command.Parameters.AddWithValue("@host", proxy.Host.Trim());
         command.Parameters.AddWithValue("@port", proxy.Port);
         command.Parameters.AddWithValue("@username", (object?)proxy.Username ?? DBNull.Value);
         command.Parameters.AddWithValue("@password", (object?)proxy.Password ?? DBNull.Value);
+        command.Parameters.AddWithValue("@dolphin_proxy_id", (object?)proxy.DolphinProxyId ?? DBNull.Value);
         command.Parameters.AddWithValue("@is_enabled", proxy.IsEnabled ? 1 : 0);
 
         try
@@ -660,5 +717,11 @@ public class DatabaseService
 
         var result = sb.ToString().Trim();
         return string.IsNullOrWhiteSpace(result) ? "profile" : result;
+    }
+
+    private static object ToDbNotesValue(string? notes)
+    {
+        var plainText = TextSanitizer.HtmlToPlainText(notes);
+        return string.IsNullOrWhiteSpace(plainText) ? DBNull.Value : plainText;
     }
 }

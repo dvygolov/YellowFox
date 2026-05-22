@@ -18,6 +18,7 @@
         <!-- Buttons at bottom -->
         <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Center" Spacing="15" Margin="0,30,0,0">
             <Button Content="Save" 
+                    AutomationProperties.AutomationId="ProfileEditorSaveButton"
                     Width="140" 
                     Height="42"
                     Click="SaveButton_Click"
@@ -38,6 +39,7 @@
                 </Button.Styles>
             </Button>
             <Button Content="Cancel" 
+                    AutomationProperties.AutomationId="ProfileEditorCancelButton"
                     Width="140" 
                     Height="42"
                     Click="CancelButton_Click"
@@ -75,7 +77,8 @@
                            FontWeight="SemiBold"
                            Foreground="#CCCCCC"
                            FontSize="13" />
-                <TextBox Text="{Binding Name}" 
+                <TextBox Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
+                         AutomationProperties.AutomationId="ProfileNameInput"
                          Watermark="Enter profile name..."
                          Background="#1E1E1E"
                          Foreground="#CCCCCC"
@@ -90,11 +93,13 @@
                            FontWeight="SemiBold"
                            Foreground="#CCCCCC"
                            FontSize="13" />
-                <TextBox Text="{Binding Notes}" 
+                <TextBox Text="{Binding Notes, UpdateSourceTrigger=PropertyChanged}"
+                         AutomationProperties.AutomationId="ProfileNotesInput"
                          Watermark="Optional notes..."
                          AcceptsReturn="True"
                          TextWrapping="Wrap"
-                         Height="80"
+                         Height="170"
+                         MinHeight="140"
                          Background="#1E1E1E"
                          Foreground="#CCCCCC"
                          BorderBrush="#3E3E42"
@@ -109,6 +114,7 @@
                            Foreground="#CCCCCC"
                            FontSize="13" />
                 <ComboBox ItemsSource="{Binding OsOptions}"
+                          AutomationProperties.AutomationId="ProfileOsCombo"
                           SelectedItem="{Binding SelectedOs}"
                           HorizontalAlignment="Stretch"
                           Background="#1E1E1E"
@@ -125,6 +131,7 @@
                            Foreground="#CCCCCC"
                            FontSize="13" />
                 <ComboBox ItemsSource="{Binding ScreenPresets}"
+                          AutomationProperties.AutomationId="ProfileScreenCombo"
                           SelectedItem="{Binding SelectedScreenPreset}"
                           HorizontalAlignment="Stretch"
                           Background="#1E1E1E"
@@ -141,6 +148,7 @@
                            Foreground="#CCCCCC"
                            FontSize="13" />
                 <ComboBox ItemsSource="{Binding ProxyOptions}"
+                          AutomationProperties.AutomationId="ProfileProxyCombo"
                           SelectedItem="{Binding SelectedProxyOption}"
                           HorizontalAlignment="Stretch"
                           Background="#1E1E1E"

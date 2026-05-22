@@ -13,6 +13,7 @@ namespace YellowFox.Desktop;
 public partial class App : Application
 {
     private BrowserService? _browserService;
+    private AgentPipeServer? _agentPipeServer;
     
     public override void Initialize()
     {
@@ -33,6 +34,9 @@ public partial class App : Application
             var proxyValidatorService = new ProxyValidatorService();
             var extensionStorageService = new ExtensionStorageService(databaseService);
             _browserService = new BrowserService(databaseService, settingsService, proxyValidatorService);
+            var dolphinImportService = new DolphinImportService(databaseService, _browserService);
+            _agentPipeServer = new AgentPipeServer(databaseService, _browserService, proxyValidatorService, dolphinImportService);
+            _agentPipeServer.Start();
             
             desktop.MainWindow = new MainWindow
             {
@@ -52,6 +56,11 @@ public partial class App : Application
         if (_browserService != null)
         {
             await _browserService.StopAllAsync();
+        }
+
+        if (_agentPipeServer != null)
+        {
+            await _agentPipeServer.DisposeAsync();
         }
     }
 

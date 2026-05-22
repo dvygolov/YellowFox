@@ -22,12 +22,21 @@ winget install Microsoft.DotNet.SDK.8
 
 ```powershell
 cd python
+pip uninstall -y camoufox
 pip install -r requirements.txt
 ```
 
 This will install:
-- `camoufox` - The anti-detect browser
+- `cloverlabs-camoufox[geoip]` - The anti-detect browser package
 - `playwright` - Browser automation framework
+
+Then install the YellowFox target Camoufox browser build. This pins the active
+browser to `coryking/stable/142.0.1-fork.26` and supports resumable downloads:
+
+```powershell
+python install-camoufox-browser.py
+camoufox version
+```
 
 ### 3. Verify Installation
 
@@ -39,7 +48,8 @@ python --version  # Should be 3.8+
 dotnet --version  # Should be 8.0+
 
 # Check CamouFox
-pip show camoufox
+pip show cloverlabs-camoufox
+camoufox version
 ```
 
 ### 4. Build the Application

@@ -17,5 +17,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\YellowFox.Desktop\YellowFox.Desktop.csproj" />
+    <ProjectReference Include="..\YellowFox.Cli\YellowFox.Cli.csproj" />
   </ItemGroup>
 </Project>

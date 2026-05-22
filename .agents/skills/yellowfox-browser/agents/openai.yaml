@@ -1,0 +1,4 @@
+interface:
+  display_name: "YellowFox Browser"
+  short_description: "Control YellowFox browser profiles"
+  default_prompt: "Use YellowFox to launch a profile and open a site."

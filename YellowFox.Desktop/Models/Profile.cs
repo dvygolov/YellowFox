@@ -9,6 +9,7 @@ public class Profile
     public string Name { get; set; } = string.Empty;
     public string? Notes { get; set; }
     public string? ProxyId { get; set; }
+    public string? DolphinProfileId { get; set; }
     public FingerprintConfig FingerprintConfig { get; set; } = new();
 }
 

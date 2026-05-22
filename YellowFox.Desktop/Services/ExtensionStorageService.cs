@@ -21,41 +21,49 @@ public class ExtensionStorageService
 
         var extension = new ExtensionItem
         {
-            Name = extensionName.Trim()
+            Name = extensionName.Trim(),
+            IsEnabled = true
         };
 
-        var extensionsRoot = _databaseService.GetExtensionsDataDirectory();
-        var extensionFolder = Path.Combine(extensionsRoot, extension.Id);
-        Directory.CreateDirectory(extensionFolder);
-
-        var extensionLower = Path.GetExtension(sourceFilePath).ToLowerInvariant();
-        if (extensionLower == ".zip")
-        {
-            ZipFile.ExtractToDirectory(sourceFilePath, extensionFolder, overwriteFiles: true);
-            extension.Path = extensionFolder;
-        }
-        else if (extensionLower == ".xpi")
-        {
-            var targetFile = Path.Combine(extensionFolder, Path.GetFileName(sourceFilePath));
-            File.Copy(sourceFilePath, targetFile, overwrite: true);
-            extension.Path = targetFile;
-        }
-        else
-        {
-            throw new InvalidOperationException("Only .zip or .xpi archives are supported.");
-        }
+        extension.Path = StoreArchive(sourceFilePath, extension.Id);
 
         _databaseService.CreateExtension(extension);
         return extension;
+    }
+
+    public string StoreArchive(string sourceFilePath, string extensionId)
+    {
+        if (!File.Exists(sourceFilePath))
+            throw new FileNotFoundException("Extension archive not found.", sourceFilePath);
+
+        var extensionLower = Path.GetExtension(sourceFilePath).ToLowerInvariant();
+        if (extensionLower != ".zip" && extensionLower != ".xpi")
+            throw new InvalidOperationException("Only .zip or .xpi archives are supported.");
+
+        var extensionsRoot = _databaseService.GetExtensionsDataDirectory();
+        var extensionFolder = Path.Combine(extensionsRoot, extensionId);
+        if (Directory.Exists(extensionFolder))
+            Directory.Delete(extensionFolder, recursive: true);
+        Directory.CreateDirectory(extensionFolder);
+
+        ZipFile.ExtractToDirectory(sourceFilePath, extensionFolder, overwriteFiles: true);
+        return extensionFolder;
+    }
+
+    public bool IsArchivePath(string path)
+    {
+        if (!File.Exists(path))
+            return false;
+
+        var extensionLower = Path.GetExtension(path).ToLowerInvariant();
+        return extensionLower == ".zip" || extensionLower == ".xpi";
     }
 
     public void DeleteExtensionWithFiles(ExtensionItem extension)
     {
         _databaseService.DeleteExtension(extension.Id);
 
-        var directory = File.Exists(extension.Path)
-            ? Path.GetDirectoryName(extension.Path)
-            : extension.Path;
+        var directory = extension.Path;
 
         if (!string.IsNullOrWhiteSpace(directory) && Directory.Exists(directory))
         {

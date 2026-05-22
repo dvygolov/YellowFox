@@ -20,7 +20,7 @@ public class ProxyModelTests
     }
 
     [Fact]
-    public void ToProxyUrl_ShouldNormalizeToHttpWithCredentials()
+    public void ToProxyUrl_ShouldPreserveSocks5WithCredentials()
     {
         var proxy = new Proxy
         {
@@ -33,6 +33,6 @@ public class ProxyModelTests
 
         var url = proxy.ToProxyUrl();
 
-        Assert.Equal("http://user:pass@proxy.local:1080", url);
+        Assert.Equal("socks5://user:pass@proxy.local:1080", url);
     }
 }
