@@ -106,4 +106,9 @@ public partial class MainWindowViewModel : ViewModelBase
     {
         CamoufoxVersionStatus = await _browserService.GetCamoufoxVersionDisplayAsync();
     }
+
+    public Task RefreshCamoufoxVersionAsync()
+    {
+        return LoadCamoufoxVersionAsync();
+    }
 }
