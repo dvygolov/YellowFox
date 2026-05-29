@@ -2,7 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
+using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -10,6 +12,7 @@ using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Data.Sqlite;
 using Microsoft.Playwright;
 using YellowFox.Desktop.Models;
 using ModelProxy = YellowFox.Desktop.Models.Proxy;
@@ -18,12 +21,17 @@ namespace YellowFox.Desktop.Services;
 
 public class BrowserService
 {
-    private static readonly TimeSpan TabsSnapshotInterval = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan TabsSnapshotInterval = TimeSpan.FromSeconds(15);
+    private static readonly HttpClient BrokerHttpClient = new()
+    {
+        Timeout = TimeSpan.FromSeconds(15)
+    };
 
     private readonly DatabaseService _databaseService;
     private readonly SettingsService _settingsService;
     private readonly ProxyValidatorService _proxyValidatorService;
     private readonly Dictionary<string, RunningInstance> _runningInstances = new();
+    private readonly HashSet<string> _startingProfiles = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _runningInstancesLock = new();
 
     public event EventHandler<ProfileRunningStateChangedEventArgs>? ProfileRunningStateChanged;
@@ -53,20 +61,98 @@ public class BrowserService
         }
     }
 
+    public async Task<string> GetCamoufoxVersionDisplayAsync()
+    {
+        try
+        {
+            var pythonDir = ResolvePythonScriptsPath();
+            var launcher = ResolvePythonLauncher(pythonDir);
+            using var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = launcher,
+                Arguments = "-c \"from camoufox.pkgman import installed_verstr; print(installed_verstr())\"",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            });
+
+            if (process == null)
+                return "Camoufox: unavailable";
+
+            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+            var stderrTask = process.StandardError.ReadToEndAsync();
+            var waitTask = process.WaitForExitAsync();
+            var completed = await Task.WhenAny(waitTask, Task.Delay(TimeSpan.FromSeconds(8)));
+            if (completed != waitTask)
+            {
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                    // Best effort cleanup only.
+                }
+
+                return "Camoufox: version timeout";
+            }
+
+            var version = (await stdoutTask).Trim();
+            _ = await stderrTask;
+            return process.ExitCode == 0 && !string.IsNullOrWhiteSpace(version)
+                ? $"Camoufox: {version}"
+                : "Camoufox: unavailable";
+        }
+        catch
+        {
+            return "Camoufox: unavailable";
+        }
+    }
+
     public async Task<bool> StartProfileAsync(string profileId)
     {
-        if (IsRunning(profileId))
-            return false;
+        lock (_runningInstancesLock)
+        {
+            if (_runningInstances.ContainsKey(profileId) || _startingProfiles.Contains(profileId))
+                return false;
 
-        var profile = _databaseService.GetProfile(profileId);
+            _startingProfiles.Add(profileId);
+        }
+
+        Profile? profile;
+        try
+        {
+            profile = _databaseService.GetProfile(profileId);
+        }
+        catch
+        {
+            lock (_runningInstancesLock)
+            {
+                _startingProfiles.Remove(profileId);
+            }
+
+            throw;
+        }
+
         if (profile == null)
+        {
+            lock (_runningInstancesLock)
+            {
+                _startingProfiles.Remove(profileId);
+            }
+
             throw new InvalidOperationException($"Profile {profileId} not found");
+        }
 
         var logPath = _databaseService.GetProfileLogFilePath(profileId, profile.Name);
         await WriteLogAsync(logPath, "INFO", $"Start requested for profile '{profile.Name}' ({profile.Id}).");
 
         Process? proxyBridgeProcess = null;
         string? proxyBridgeConfigPath = null;
+        Process? process = null;
+        string? tempConfigPath = null;
+        var existingCamoufoxPids = new HashSet<int>();
 
         try
         {
@@ -95,18 +181,15 @@ public class BrowserService
 
             var userDataDir = _databaseService.GetProfileDataDirectory(profileId);
             var sharedBookmarks = _databaseService.GetAllBookmarks();
-            var sharedBookmarksExtensionPath = PrepareSharedBookmarks(userDataDir, sharedBookmarks);
+            _ = PrepareSharedBookmarks(userDataDir, sharedBookmarks);
+            WriteProfileIdentityPrefs(userDataDir, profile.Name);
             await WriteLogAsync(logPath, "INFO", $"Prepared profile directory and shared bookmarks: {userDataDir}");
 
-            var enabledExtensions = _databaseService.GetEnabledExtensions()
-                .Select(e => e.Path)
-                .Where(IsExtensionPathUsable)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-            if (IsExtensionPathUsable(sharedBookmarksExtensionPath))
-                enabledExtensions.Add(sharedBookmarksExtensionPath);
-            await WriteLogAsync(logPath, "INFO", $"Enabled extensions attached: {enabledExtensions.Count}");
+            var extensionSync = PrepareSharedExtensions(userDataDir, _databaseService.GetEnabledExtensions());
+            await WriteLogAsync(logPath, "INFO", $"Synced shared extensions. Installed={extensionSync.InstalledCount}, removed={extensionSync.RemovedCount}, skipped={extensionSync.SkippedCount}.");
+            var enabledExtensions = Array.Empty<string>();
             var contextFingerprint = await GenerateCamoufoxContextFingerprintAsync(profile, browserProxy, logPath);
+            var initialUrls = ReadTabsSnapshotUrls(profileId);
 
             var config = new
             {
@@ -120,6 +203,9 @@ public class BrowserService
                 proxy = BuildCamoufoxProxy(browserProxy),
                 geoip = contextFingerprint.UseCamoufoxGeoIp ? contextFingerprint.GeoIp : null,
                 camoufox_config = contextFingerprint.CamoufoxConfig,
+                profile_id = profile.Id,
+                profile_name = profile.Name,
+                initial_urls = initialUrls,
                 addons = enabledExtensions,
                 bookmarks = sharedBookmarks.Select(b => new
                 {
@@ -130,22 +216,22 @@ public class BrowserService
             };
 
             var configJson = JsonSerializer.Serialize(config);
-            var tempConfigPath = Path.GetTempFileName();
+            tempConfigPath = Path.GetTempFileName();
             await File.WriteAllTextAsync(tempConfigPath, configJson);
             await WriteLogAsync(logPath, "INFO", $"Generated temporary launch config: {tempConfigPath}");
 
             var pythonDir = ResolvePythonScriptsPath();
 
             var launcher = ResolvePythonLauncher(pythonDir);
-            var serverScript = Path.Combine(pythonDir, "camoufox-server.py");
+            var serverScript = Path.Combine(pythonDir, "camoufox-native-broker.py");
             if (!File.Exists(serverScript))
-                throw new FileNotFoundException($"Camoufox server script not found: {serverScript}");
+                throw new FileNotFoundException($"Camoufox broker script not found: {serverScript}");
 
             var fileName = launcher;
             var arguments = $"\"{serverScript}\" \"{tempConfigPath}\"";
-            var existingCamoufoxPids = GetCamoufoxProcessIds();
+            existingCamoufoxPids = GetCamoufoxProcessIds();
 
-            var processStartInfo = new ProcessStartInfo
+            process = Process.Start(new ProcessStartInfo
             {
                 FileName = fileName,
                 Arguments = arguments,
@@ -153,86 +239,13 @@ public class BrowserService
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 CreateNoWindow = true
-            };
-
-            var process = Process.Start(processStartInfo);
+            });
             if (process == null)
-                throw new InvalidOperationException("Failed to start Python process");
-            await WriteLogAsync(logPath, "INFO", $"Python launcher process started. PID={process.Id}");
+                throw new InvalidOperationException("Failed to start Python broker process");
+            await WriteLogAsync(logPath, "INFO", $"Python broker process started. PID={process.Id}");
 
-            string? cdpUrl = null;
-            var timeout = TimeSpan.FromSeconds(75);
-            var startTime = DateTime.Now;
-            Task<string?>? stdoutReadTask = null;
-
-            while (cdpUrl == null && (DateTime.Now - startTime) < timeout)
-            {
-                if (process.HasExited)
-                {
-                    var errorOutput = await process.StandardError.ReadToEndAsync();
-                    throw new InvalidOperationException($"Python process exited unexpectedly. Error: {errorOutput}");
-                }
-
-                stdoutReadTask ??= process.StandardOutput.ReadLineAsync();
-                var remaining = timeout - (DateTime.Now - startTime);
-                if (remaining <= TimeSpan.Zero)
-                    break;
-
-                var wait = remaining < TimeSpan.FromMilliseconds(250)
-                    ? remaining
-                    : TimeSpan.FromMilliseconds(250);
-                var completed = await Task.WhenAny(stdoutReadTask, Task.Delay(wait));
-                if (completed != stdoutReadTask)
-                    continue;
-
-                var line = await stdoutReadTask;
-                stdoutReadTask = null;
-                if (line == null)
-                {
-                    await Task.Delay(100);
-                    continue;
-                }
-
-                if (line.Contains("ws://") || line.Contains("http://"))
-                {
-                    var match = Regex.Match(line, @"(wss?://[^\s\[\]]+|https?://[^\s\[\]]+)");
-                    if (match.Success)
-                    {
-                        cdpUrl = match.Groups[1].Value.Trim();
-                        break;
-                    }
-                }
-            }
-
-            if (string.IsNullOrEmpty(cdpUrl))
-            {
-                if (!process.HasExited)
-                {
-                    try
-                    {
-                        process.Kill(entireProcessTree: true);
-                        await process.WaitForExitAsync();
-                    }
-                    catch
-                    {
-                        // The process may exit between timeout detection and kill.
-                    }
-                }
-
-                var errorOutput = await process.StandardError.ReadToEndAsync();
-
-                var errorMessage = string.IsNullOrWhiteSpace(errorOutput)
-                    ? "Failed to get CDP URL from Python process (no error details available)"
-                    : $"Failed to get CDP URL from Python process. Error: {errorOutput.Trim()}";
-
-                throw new InvalidOperationException(errorMessage);
-            }
-            await WriteLogAsync(logPath, "INFO", $"Received CDP endpoint: {cdpUrl}");
-
-            var playwright = await Playwright.CreateAsync();
-            var browser = await playwright.Firefox.ConnectAsync(cdpUrl);
-            await WriteLogAsync(logPath, "INFO", "Playwright connected to browser.");
-            browser.Disconnected += (_, _) => _ = HandleBrowserDisconnectedAsync(profileId);
+            var brokerUrl = await WaitForBrokerUrlAsync(process, TimeSpan.FromSeconds(120));
+            await WriteLogAsync(logPath, "INFO", $"Received broker endpoint: {brokerUrl}");
             var browserProcessIds = GetCamoufoxProcessIds()
                 .Except(existingCamoufoxPids)
                 .ToList();
@@ -241,10 +254,9 @@ public class BrowserService
             var instance = new RunningInstance
             {
                 Process = process,
-                CdpUrl = cdpUrl,
+                CdpUrl = string.Empty,
+                BrokerUrl = brokerUrl,
                 TempConfigPath = tempConfigPath,
-                Playwright = playwright,
-                Browser = browser,
                 SnapshotCts = new CancellationTokenSource(),
                 BrowserProcessIds = browserProcessIds,
                 ProxyBridgeProcess = proxyBridgeProcess,
@@ -256,20 +268,20 @@ public class BrowserService
                 IsPersistentServer = true
             };
 
-            await EnsureVisibleWindowAsync(instance, logPath);
-
-            process.EnableRaisingEvents = true;
-            process.Exited += (_, _) => _ = HandleProcessExitedAsync(profileId);
-
             lock (_runningInstancesLock)
             {
                 _runningInstances[profileId] = instance;
             }
 
+            process.EnableRaisingEvents = true;
+            process.Exited += (_, _) => _ = HandleProcessExitedAsync(profileId);
+
+            if (initialUrls.Count == 0)
+                await RestoreTabsAsync(profileId, instance, logPath);
+            else
+                await WriteLogAsync(logPath, "INFO", $"Restored tabs from native launch arguments. Requested={initialUrls.Count}.");
             _ = RunTabsSnapshotLoopAsync(profileId, instance, logPath);
-            await ImportStoredCookiesAsync(profileId, instance, logPath);
-            await AddStoredLocalStorageInitScriptAsync(profileId, instance, logPath);
-            await RestoreTabsAsync(profileId, instance, logPath);
+            _ = RunBrowserWindowMonitorAsync(profileId, instance, logPath);
 
             await WriteLogAsync(logPath, "INFO", $"Profile '{profile.Name}' started successfully.");
             NotifyProfileRunningStateChanged(profileId, true);
@@ -277,11 +289,28 @@ public class BrowserService
         }
         catch (Exception ex)
         {
+            if (process != null && !process.HasExited)
+                await KillProcessTreeAsync(process.Id, logPath);
+
+            var spawnedCamoufoxPids = GetCamoufoxProcessIds()
+                .Except(existingCamoufoxPids)
+                .ToList();
+            await KillTrackedBrowserProcessesAsync(spawnedCamoufoxPids, logPath);
+
             if (proxyBridgeProcess != null)
                 await StopProxyBridgeAsync(proxyBridgeProcess, proxyBridgeConfigPath, logPath);
+            if (!string.IsNullOrWhiteSpace(tempConfigPath) && File.Exists(tempConfigPath))
+                File.Delete(tempConfigPath);
             await WriteLogAsync(logPath, "ERROR", $"Start failed: {ex.Message}");
             Debug.WriteLine($"Error starting profile: {ex.Message}");
             return false;
+        }
+        finally
+        {
+            lock (_runningInstancesLock)
+            {
+                _startingProfiles.Remove(profileId);
+            }
         }
     }
 
@@ -299,7 +328,7 @@ public class BrowserService
         {
             instance.IsStopping = true;
             instance.SnapshotCts?.Cancel();
-            await PersistTabsSnapshotAsync(profileId, instance, logPath, writeInfoLog: true);
+            await TryPersistTabsSnapshotAsync(profileId, instance, logPath, writeInfoLog: true);
             await RequestGracefulBrowserShutdownAsync(instance, logPath);
             instance.Playwright?.Dispose();
 
@@ -464,7 +493,17 @@ public class BrowserService
 
         try
         {
-            if (!TryGetRunningInstance(profileId, out var instance) || instance?.Browser == null)
+            if (!TryGetRunningInstance(profileId, out var instance) || instance == null)
+                return (false, null, null, "No running browser instance found.");
+
+            if (!string.IsNullOrWhiteSpace(instance.BrokerUrl))
+            {
+                var opened = await BrokerPostAsync<BrokerOpenResponse>(instance.BrokerUrl, "open", new { url });
+                await WriteLogAsync(logPath, "INFO", $"Opened URL from broker CLI: {opened.Url}");
+                return (true, opened.Url, opened.Title, "URL opened.");
+            }
+
+            if (instance.Browser == null)
                 return (false, null, null, "No running browser instance found.");
 
             var context = await GetOrCreateContextAsync(instance, logPath);
@@ -495,12 +534,26 @@ public class BrowserService
 
     public async Task<IReadOnlyList<OpenPageSnapshot>> GetOpenPagesAsync(string profileId, bool includeText)
     {
-        if (!TryGetRunningInstance(profileId, out var instance) || instance?.Browser == null)
+        if (!TryGetRunningInstance(profileId, out var instance) || instance == null)
             return Array.Empty<OpenPageSnapshot>();
 
         var profile = _databaseService.GetProfile(profileId);
         var profileName = profile?.Name ?? profileId;
         var logPath = _databaseService.GetProfileLogFilePath(profileId, profileName);
+        if (!string.IsNullOrWhiteSpace(instance.BrokerUrl))
+        {
+            var response = await BrokerGetAsync<BrokerPagesResponse>(instance.BrokerUrl, $"pages?text={includeText.ToString().ToLowerInvariant()}");
+            return response.Pages.Select(page => new OpenPageSnapshot
+            {
+                Url = page.Url ?? string.Empty,
+                Title = page.Title,
+                Text = page.Text
+            }).ToList();
+        }
+
+        if (instance.Browser == null)
+            return Array.Empty<OpenPageSnapshot>();
+
         var context = await GetOrCreateContextAsync(instance, logPath);
         if (context == null)
             return Array.Empty<OpenPageSnapshot>();
@@ -537,12 +590,23 @@ public class BrowserService
         if (string.IsNullOrWhiteSpace(text))
             return (false, "Text is required.", null, null);
 
-        if (!TryGetRunningInstance(profileId, out var instance) || instance?.Browser == null)
+        if (!TryGetRunningInstance(profileId, out var instance) || instance == null)
             return (false, "No running browser instance found.", null, null);
 
         var profile = _databaseService.GetProfile(profileId);
         var profileName = profile?.Name ?? profileId;
         var logPath = _databaseService.GetProfileLogFilePath(profileId, profileName);
+        if (!string.IsNullOrWhiteSpace(instance.BrokerUrl))
+        {
+            var clicked = await BrokerPostAsync<BrokerClickResponse>(instance.BrokerUrl, "click", new { text = text.Trim() });
+            if (clicked.Success)
+                await WriteLogAsync(logPath, "INFO", $"Clicked text from broker CLI: {text}");
+            return (clicked.Success, clicked.Message ?? (clicked.Success ? "Clicked." : "Click failed."), clicked.Url, clicked.Title);
+        }
+
+        if (instance.Browser == null)
+            return (false, "No running browser instance found.", null, null);
+
         var context = await GetOrCreateContextAsync(instance, logPath);
         var page = context?.Pages.LastOrDefault();
         if (page == null)
@@ -666,9 +730,11 @@ public class BrowserService
     {
         public Process? Process { get; set; }
         public string CdpUrl { get; set; } = string.Empty;
+        public string? BrokerUrl { get; set; }
         public string TempConfigPath { get; set; } = string.Empty;
         public IPlaywright? Playwright { get; set; }
         public IBrowser? Browser { get; set; }
+        public IBrowserContext? PersistentContext { get; set; }
         public CancellationTokenSource? SnapshotCts { get; set; }
         public bool IsStopping { get; set; }
         public List<int> BrowserProcessIds { get; set; } = new();
@@ -680,6 +746,16 @@ public class BrowserService
         public string? ContextInitScriptPath { get; set; }
         public bool ContextInitScriptApplied { get; set; }
         public bool IsPersistentServer { get; set; }
+    }
+
+    internal sealed record ExtensionSyncResult(int InstalledCount, int RemovedCount, int SkippedCount);
+
+    private sealed class ManagedExtensionState
+    {
+        public string Id { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+        public string SourcePath { get; set; } = string.Empty;
+        public string SourceHash { get; set; } = string.Empty;
     }
 
     private sealed class CamoufoxContextFingerprint
@@ -727,41 +803,63 @@ public class BrowserService
         var bookmarksFilePath = Path.Combine(profileDir, "bookmarks.html");
         var bookmarksHtml = BuildBookmarksHtml(bookmarks);
         var bookmarksVersionPath = Path.Combine(profileDir, ".yellowfox-bookmarks.version");
+        var managedBookmarksStatePath = Path.Combine(profileDir, ".yellowfox-managed-bookmarks.json");
         var currentVersion = ComputeBookmarksVersion(bookmarksHtml);
-        var previousVersion = File.Exists(bookmarksVersionPath)
-            ? File.ReadAllText(bookmarksVersionPath).Trim()
-            : string.Empty;
-
-        if (!string.Equals(previousVersion, currentVersion, StringComparison.Ordinal))
-            DeletePlacesStores(profileDir);
+        var previousManagedBookmarks = ReadManagedBookmarksState(profileDir, managedBookmarksStatePath);
+        var placesPath = Path.Combine(profileDir, "places.sqlite");
+        var shouldImportBookmarksHtml = !File.Exists(placesPath);
 
         File.WriteAllText(bookmarksFilePath, bookmarksHtml);
         File.WriteAllText(bookmarksVersionPath, currentVersion);
+        WriteManagedBookmarksState(managedBookmarksStatePath, bookmarks);
+        if (!shouldImportBookmarksHtml)
+            SyncManagedBookmarksInPlaces(placesPath, bookmarks, previousManagedBookmarks);
 
         var userJsPath = Path.Combine(profileDir, "user.js");
         var userJsLines = File.Exists(userJsPath)
             ? File.ReadAllLines(userJsPath).ToList()
             : new List<string>();
 
-        EnsureUserPref(userJsLines, "browser.places.importBookmarksHTML", "true");
+        EnsureUserPref(userJsLines, "browser.places.importBookmarksHTML", shouldImportBookmarksHtml ? "true" : "false");
         EnsureUserPref(userJsLines, "browser.bookmarks.restore_default_bookmarks", "false");
         EnsureUserPref(userJsLines, "browser.toolbars.bookmarks.visibility", "\"always\"");
         EnsureUserPref(userJsLines, "browser.toolbars.bookmarks.showOtherBookmarks", "false");
         EnsureUserPref(userJsLines, "browser.toolbars.bookmarks.showInPrivateBrowsing", "true");
         EnsureUserPref(userJsLines, "browser.policies.runOncePerModification.displayBookmarksToolbar", "\"always\"");
-        EnsureUserPref(userJsLines, "toolkit.legacyUserProfileCustomizations.stylesheets", "true");
         EnsureUserPref(userJsLines, "browser.bookmarks.addedImportButton", "true");
         EnsureUserPref(userJsLines, "browser.startup.page", "0");
-        EnsureUserPref(userJsLines, "browser.sessionstore.resume_from_crash", "false");
-        EnsureUserPref(userJsLines, "browser.sessionstore.max_tabs_undo", "0");
-        EnsureUserPref(userJsLines, "browser.sessionstore.max_windows_undo", "0");
-        EnsureUserPref(userJsLines, "browser.uiCustomization.state", JsonSerializer.Serialize(BuildToolbarCustomizationState()));
+        EnsureUserPref(userJsLines, "browser.aboutwelcome.enabled", "false");
+        EnsureUserPref(userJsLines, "browser.preonboarding.enabled", "false");
+        EnsureUserPref(userJsLines, "taskbar.grouping.useprofile", "true");
+        EnsureUserPref(userJsLines, "browser.startup.blankWindow", "false");
+        EnsureUserPref(userJsLines, "extensions.autoDisableScopes", "0");
+        EnsureUserPref(userJsLines, "extensions.enabledScopes", "5");
+        EnsureUserPref(userJsLines, "datareporting.policy.dataSubmissionEnabled", "false");
+        EnsureUserPref(userJsLines, "datareporting.policy.dataSubmissionPolicyAcceptedVersion", "999");
+        EnsureUserPref(userJsLines, "datareporting.policy.dataSubmissionPolicyNotifiedTime", "\"0\"");
+        ApplyNavigationPrefs(userJsLines);
+        RemoveUserPref(userJsLines, "browser.sessionstore.resume_from_crash");
+        RemoveUserPref(userJsLines, "browser.sessionstore.max_tabs_undo");
+        RemoveUserPref(userJsLines, "browser.sessionstore.max_windows_undo");
+        RemoveUserPref(userJsLines, "browser.link.open_newwindow");
+        RemoveUserPref(userJsLines, "browser.link.open_newwindow.restriction");
+        RemoveUserPref(userJsLines, "datareporting.healthreport.uploadEnabled");
+        RemoveUserPref(userJsLines, "toolkit.telemetry.enabled");
+        RemoveUserPref(userJsLines, "toolkit.telemetry.unified");
+        RemoveUserPref(userJsLines, "toolkit.telemetry.archive.enabled");
+        RemoveUserPref(userJsLines, "toolkit.telemetry.newProfilePing.enabled");
+        RemoveUserPref(userJsLines, "toolkit.telemetry.reportingpolicy.firstRun");
+        RemoveUserPref(userJsLines, "toolkit.telemetry.shutdownPingSender.enabled");
+        RemoveUserPref(userJsLines, "app.shield.optoutstudies.enabled");
+        RemoveUserPref(userJsLines, "toolkit.legacyUserProfileCustomizations.stylesheets");
+        RemoveUserPref(userJsLines, "browser.uiCustomization.state");
 
         File.WriteAllLines(userJsPath, userJsLines);
-        WriteToolbarState(profileDir);
-        WriteUserChrome(profileDir);
+        WriteToolbarPrefs(Path.Combine(profileDir, "prefs.js"), shouldImportBookmarksHtml);
+        DeleteToolbarState(profileDir);
+        DeleteUserChrome(profileDir);
         DeleteSessionStores(profileDir);
-        return WriteSharedBookmarksExtension(profileDir, bookmarks);
+        return WriteSharedBookmarksExtension(profileDir, bookmarks, previousManagedBookmarks);
     }
 
     internal static bool IsExtensionPathUsable(string? path)
@@ -773,8 +871,266 @@ public class BrowserService
         return Directory.Exists(trimmed) && File.Exists(Path.Combine(trimmed, "manifest.json"));
     }
 
+    internal static ExtensionSyncResult PrepareSharedExtensions(string profileDir, IReadOnlyCollection<ExtensionItem> extensions)
+    {
+        Directory.CreateDirectory(profileDir);
+        var profileExtensionsDir = Path.Combine(profileDir, "extensions");
+        Directory.CreateDirectory(profileExtensionsDir);
+
+        var statePath = Path.Combine(profileDir, ".yellowfox-managed-extensions.json");
+        var previous = ReadManagedExtensionsState(statePath);
+        var previousById = previous
+            .Where(e => !string.IsNullOrWhiteSpace(e.Id))
+            .GroupBy(e => e.Id, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+        var current = new Dictionary<string, ManagedExtensionState>(StringComparer.OrdinalIgnoreCase);
+        var skipped = 0;
+
+        foreach (var extension in extensions.Where(e => e.IsEnabled))
+        {
+            if (!TryBuildManagedExtensionState(extension, out var state) || state == null)
+            {
+                skipped++;
+                continue;
+            }
+
+            current[state.Id] = state;
+        }
+
+        var removed = 0;
+        foreach (var previousItem in previous)
+        {
+            if (current.ContainsKey(previousItem.Id))
+                continue;
+
+            if (DeleteManagedProfileExtension(profileExtensionsDir, previousItem.Id))
+                removed++;
+        }
+
+        var installed = 0;
+        foreach (var item in current.Values)
+        {
+            previousById.TryGetValue(item.Id, out var previousItem);
+            if (!CopyManagedProfileExtension(profileExtensionsDir, item, previousItem))
+                continue;
+
+            installed++;
+        }
+
+        WriteManagedExtensionsState(statePath, current.Values);
+        if (installed > 0 || removed > 0 || ManagedExtensionStartupCacheNeedsReset(profileDir, current.Values))
+            DeleteExtensionStartupCaches(profileDir);
+        WriteExtensionToolbarPrefs(profileDir, current.Values);
+
+        return new ExtensionSyncResult(installed, removed, skipped);
+    }
+
+    private static bool ManagedExtensionStartupCacheNeedsReset(string profileDir, IEnumerable<ManagedExtensionState> managedExtensions)
+    {
+        var managedIds = managedExtensions
+            .Select(e => e.Id)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (managedIds.Count == 0)
+            return false;
+
+        var extensionsJsonPath = Path.Combine(profileDir, "extensions.json");
+        if (!File.Exists(extensionsJsonPath))
+            return false;
+
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(extensionsJsonPath));
+            if (!document.RootElement.TryGetProperty("addons", out var addons) || addons.ValueKind != JsonValueKind.Array)
+                return true;
+
+            foreach (var addon in addons.EnumerateArray())
+            {
+                if (!addon.TryGetProperty("id", out var idElement) || idElement.ValueKind != JsonValueKind.String)
+                    continue;
+
+                var id = idElement.GetString();
+                if (string.IsNullOrWhiteSpace(id) || !managedIds.Contains(id))
+                    continue;
+
+                if (addon.TryGetProperty("active", out var active) && active.ValueKind == JsonValueKind.False)
+                    return true;
+                if (addon.TryGetProperty("userDisabled", out var userDisabled) && userDisabled.ValueKind == JsonValueKind.True)
+                    return true;
+                if (addon.TryGetProperty("appDisabled", out var appDisabled) && appDisabled.ValueKind == JsonValueKind.True)
+                    return true;
+
+                managedIds.Remove(id);
+            }
+
+            return managedIds.Count > 0;
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    private static List<ManagedExtensionState> ReadManagedExtensionsState(string statePath)
+    {
+        try
+        {
+            if (!File.Exists(statePath))
+                return new List<ManagedExtensionState>();
+
+            return JsonSerializer.Deserialize<List<ManagedExtensionState>>(File.ReadAllText(statePath), BookmarkStateJsonOptions)
+                ?? new List<ManagedExtensionState>();
+        }
+        catch
+        {
+            return new List<ManagedExtensionState>();
+        }
+    }
+
+    private static void WriteManagedExtensionsState(string statePath, IEnumerable<ManagedExtensionState> extensions)
+    {
+        var items = extensions
+            .OrderBy(e => e.Id, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        File.WriteAllText(statePath, JsonSerializer.Serialize(items, BookmarkStateJsonOptions));
+    }
+
+    private static bool TryBuildManagedExtensionState(ExtensionItem extension, out ManagedExtensionState? state)
+    {
+        state = null;
+        if (!IsExtensionPathUsable(extension.Path))
+            return false;
+
+        var sourcePath = Path.GetFullPath(extension.Path.Trim());
+        var manifestPath = Path.Combine(sourcePath, "manifest.json");
+        string? addonId;
+        try
+        {
+            addonId = ReadExtensionId(manifestPath);
+        }
+        catch
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(addonId))
+            return false;
+
+        state = new ManagedExtensionState
+        {
+            Id = addonId.Trim(),
+            Name = extension.Name.Trim(),
+            SourcePath = sourcePath,
+            SourceHash = ComputeDirectoryHash(sourcePath)
+        };
+        return true;
+    }
+
+    private static string? ReadExtensionId(string manifestPath)
+    {
+        using var document = JsonDocument.Parse(File.ReadAllText(manifestPath));
+        var root = document.RootElement;
+        if (TryGetGeckoExtensionId(root, "browser_specific_settings", out var id))
+            return id;
+        if (TryGetGeckoExtensionId(root, "applications", out id))
+            return id;
+        return null;
+    }
+
+    private static bool TryGetGeckoExtensionId(JsonElement root, string settingsProperty, out string? id)
+    {
+        id = null;
+        if (!root.TryGetProperty(settingsProperty, out var settings) || settings.ValueKind != JsonValueKind.Object)
+            return false;
+        if (!settings.TryGetProperty("gecko", out var gecko) || gecko.ValueKind != JsonValueKind.Object)
+            return false;
+        if (!gecko.TryGetProperty("id", out var idElement) || idElement.ValueKind != JsonValueKind.String)
+            return false;
+
+        id = idElement.GetString();
+        return !string.IsNullOrWhiteSpace(id);
+    }
+
+    private static bool CopyManagedProfileExtension(string profileExtensionsDir, ManagedExtensionState extension, ManagedExtensionState? previous)
+    {
+        var targetPath = Path.Combine(profileExtensionsDir, $"{extension.Id}.xpi");
+        var legacyDirectoryPath = Path.Combine(profileExtensionsDir, extension.Id);
+        var sourcePath = extension.SourcePath;
+        if (string.IsNullOrWhiteSpace(sourcePath) || !Directory.Exists(sourcePath))
+            return false;
+        if (previous != null &&
+            string.Equals(previous.SourceHash, extension.SourceHash, StringComparison.OrdinalIgnoreCase) &&
+            File.Exists(targetPath))
+            return false;
+
+        if (Directory.Exists(targetPath))
+            Directory.Delete(targetPath, recursive: true);
+        if (File.Exists(targetPath))
+            File.Delete(targetPath);
+        if (Directory.Exists(legacyDirectoryPath))
+            Directory.Delete(legacyDirectoryPath, recursive: true);
+
+        ZipFile.CreateFromDirectory(sourcePath, targetPath, CompressionLevel.Fastest, includeBaseDirectory: false);
+        return true;
+    }
+
+    private static string ComputeDirectoryHash(string directory)
+    {
+        using var sha = SHA256.Create();
+        foreach (var file in Directory.GetFiles(directory, "*", SearchOption.AllDirectories).OrderBy(p => Path.GetRelativePath(directory, p), StringComparer.OrdinalIgnoreCase))
+        {
+            var relativePathBytes = Encoding.UTF8.GetBytes(Path.GetRelativePath(directory, file).Replace('\\', '/'));
+            sha.TransformBlock(relativePathBytes, 0, relativePathBytes.Length, null, 0);
+            var content = File.ReadAllBytes(file);
+            sha.TransformBlock(content, 0, content.Length, null, 0);
+        }
+        sha.TransformFinalBlock(Array.Empty<byte>(), 0, 0);
+        return Convert.ToHexString(sha.Hash ?? Array.Empty<byte>());
+    }
+
+    private static bool DeleteManagedProfileExtension(string profileExtensionsDir, string addonId)
+    {
+        var removed = false;
+        var directoryPath = Path.Combine(profileExtensionsDir, addonId);
+        if (Directory.Exists(directoryPath))
+        {
+            Directory.Delete(directoryPath, recursive: true);
+            removed = true;
+        }
+
+        var xpiPath = Path.Combine(profileExtensionsDir, $"{addonId}.xpi");
+        if (File.Exists(xpiPath))
+        {
+            File.Delete(xpiPath);
+            removed = true;
+        }
+
+        return removed;
+    }
+
+    private static void DeleteExtensionStartupCaches(string profileDir)
+    {
+        foreach (var fileName in new[]
+        {
+            "extensions.json",
+            "extension-settings.json",
+            "addonStartup.json.lz4",
+            "addonStartup.json.lz4.tmp"
+        })
+        {
+            var path = Path.Combine(profileDir, fileName);
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+    }
+
     private static string BuildBookmarksHtml(IReadOnlyCollection<BookmarkItem> bookmarks)
     {
+        var items = NormalizeBookmarkTreeItems(bookmarks);
+        var byParent = items
+            .GroupBy(item => item.ParentId ?? string.Empty)
+            .ToDictionary(group => group.Key, group => group.OrderByDescending(item => item.IsFolder).ThenBy(item => item.SortOrder).ThenBy(item => item.Title).ToList());
+
         var sb = new StringBuilder();
         sb.AppendLine("<!DOCTYPE NETSCAPE-Bookmark-file-1>");
         sb.AppendLine("<META HTTP-EQUIV=\"Content-Type\" CONTENT=\"text/html; charset=UTF-8\">");
@@ -783,38 +1139,119 @@ public class BrowserService
         sb.AppendLine("<DL><p>");
         sb.AppendLine("    <DT><H3 PERSONAL_TOOLBAR_FOLDER=\"true\">Bookmarks Toolbar</H3>");
         sb.AppendLine("    <DL><p>");
-        sb.AppendLine("        <DT><H3>yellowfox shared</H3>");
-        sb.AppendLine("        <DL><p>");
 
-        foreach (var group in bookmarks.GroupBy(b => string.IsNullOrWhiteSpace(b.Folder) ? null : b.Folder))
-        {
-            if (!string.IsNullOrWhiteSpace(group.Key))
-            {
-                var folder = System.Net.WebUtility.HtmlEncode(group.Key);
-                sb.AppendLine($"            <DT><H3>{folder}</H3>");
-                sb.AppendLine("            <DL><p>");
-                foreach (var bookmark in group)
-                {
-                    AppendBookmark(sb, bookmark, 16);
-                }
-                sb.AppendLine("            </DL><p>");
-            }
-            else
-            {
-                foreach (var bookmark in group)
-                {
-                    AppendBookmark(sb, bookmark, 12);
-                }
-            }
-        }
+        AppendBookmarkChildren(sb, byParent, string.Empty, 8);
 
-        sb.AppendLine("        </DL><p>");
         sb.AppendLine("    </DL><p>");
         sb.AppendLine("</DL><p>");
         return sb.ToString();
     }
 
-    private static string WriteSharedBookmarksExtension(string profileDir, IReadOnlyCollection<BookmarkItem> bookmarks)
+    private static List<BookmarkItem> NormalizeBookmarkTreeItems(IReadOnlyCollection<BookmarkItem> bookmarks)
+    {
+        var items = bookmarks.Select(item => new BookmarkItem
+        {
+            Id = item.Id,
+            Title = item.Title,
+            Url = item.Url,
+            Folder = string.IsNullOrWhiteSpace(item.Folder) ? null : item.Folder.Trim(),
+            ParentId = string.IsNullOrWhiteSpace(item.ParentId) ? null : item.ParentId,
+            IsFolder = item.IsFolder,
+            SortOrder = item.SortOrder
+        }).ToList();
+
+        AddLegacyFolderNodes(items);
+
+        var byId = items.ToDictionary(item => item.Id, StringComparer.Ordinal);
+        foreach (var item in items)
+        {
+            item.Folder = item.IsFolder
+                ? BookmarkPath(item, byId, includeSelf: true)
+                : BookmarkPath(item, byId, includeSelf: false) ?? item.Folder;
+        }
+
+        return items;
+    }
+
+    private static void AddLegacyFolderNodes(List<BookmarkItem> items)
+    {
+        var byPath = items
+            .Where(item => item.IsFolder)
+            .Select(item => new
+            {
+                Item = item,
+                Path = string.IsNullOrWhiteSpace(item.Folder) ? item.Title.Trim() : item.Folder.Trim()
+            })
+            .Where(item => !string.IsNullOrWhiteSpace(item.Path))
+            .GroupBy(item => item.Path, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().Item, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var bookmark in items.Where(item => !item.IsFolder
+                                                     && string.IsNullOrWhiteSpace(item.ParentId)
+                                                     && !string.IsNullOrWhiteSpace(item.Folder)).ToList())
+        {
+            string? parentId = null;
+            var currentPath = string.Empty;
+            foreach (var part in SplitBookmarkPath(bookmark.Folder!))
+            {
+                currentPath = string.IsNullOrWhiteSpace(currentPath) ? part : $"{currentPath}/{part}";
+                if (!byPath.TryGetValue(currentPath, out var folder))
+                {
+                    folder = new BookmarkItem
+                    {
+                        Id = LegacyFolderId(currentPath),
+                        Title = part,
+                        Url = string.Empty,
+                        ParentId = parentId,
+                        IsFolder = true,
+                        Folder = currentPath,
+                        SortOrder = 0
+                    };
+                    byPath[currentPath] = folder;
+                    items.Add(folder);
+                }
+
+                parentId = folder.Id;
+            }
+
+            bookmark.ParentId = parentId;
+        }
+    }
+
+    private static string LegacyFolderId(string path)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(path.Trim().ToUpperInvariant()));
+        return $"legacy-folder-{Convert.ToHexString(hash)[..16].ToLowerInvariant()}";
+    }
+
+    private static string? BookmarkPath(BookmarkItem item, IReadOnlyDictionary<string, BookmarkItem> byId, bool includeSelf)
+    {
+        var parts = new Stack<string>();
+        var current = includeSelf ? item : null;
+        var currentId = includeSelf ? item.Id : item.ParentId;
+
+        while (current != null || !string.IsNullOrWhiteSpace(currentId))
+        {
+            if (current == null)
+            {
+                if (currentId == null || !byId.TryGetValue(currentId, out current))
+                    break;
+            }
+
+            if (current.IsFolder && !string.IsNullOrWhiteSpace(current.Title))
+                parts.Push(current.Title.Trim());
+
+            currentId = current.ParentId;
+            current = null;
+        }
+
+        return parts.Count == 0 ? null : string.Join("/", parts);
+    }
+
+    private static string WriteSharedBookmarksExtension(
+        string profileDir,
+        IReadOnlyCollection<BookmarkItem> bookmarks,
+        IReadOnlyCollection<BookmarkItem> previousBookmarks)
     {
         var extensionDir = Path.Combine(profileDir, "yellowfox-shared-bookmarks-extension");
         Directory.CreateDirectory(extensionDir);
@@ -829,7 +1266,7 @@ public class BrowserService
               "id": "yellowfox-shared-bookmarks@yellowfox.local"
             }
           },
-          "permissions": ["bookmarks"],
+          "permissions": ["bookmarks", "storage"],
           "background": {
             "scripts": ["background.js"]
           }
@@ -837,10 +1274,20 @@ public class BrowserService
         """;
         File.WriteAllText(Path.Combine(extensionDir, "manifest.json"), manifestJson);
 
+        var normalizedBookmarks = NormalizeBookmarkTreeItems(bookmarks);
+        var normalizedPreviousBookmarks = NormalizeBookmarkTreeItems(previousBookmarks);
         var payload = new
         {
-            rootTitle = "yellowfox shared",
-            bookmarks = bookmarks.Select(b => new
+            legacyRootTitle = "yellowfox shared",
+            previousFolders = normalizedPreviousBookmarks.Where(b => b.IsFolder).Select(b => b.Folder).Where(f => !string.IsNullOrWhiteSpace(f)).ToList(),
+            folders = normalizedBookmarks.Where(b => b.IsFolder).Select(b => b.Folder).Where(f => !string.IsNullOrWhiteSpace(f)).ToList(),
+            previousBookmarks = normalizedPreviousBookmarks.Where(b => !b.IsFolder).Select(b => new
+            {
+                title = b.Title,
+                url = b.Url,
+                folder = string.IsNullOrWhiteSpace(b.Folder) ? null : b.Folder
+            }).ToList(),
+            bookmarks = normalizedBookmarks.Where(b => !b.IsFolder).Select(b => new
             {
                 title = b.Title,
                 url = b.Url,
@@ -884,23 +1331,150 @@ public class BrowserService
             }
           }
 
+          function normalizeItem(item) {
+            return {
+              title: String(item?.title || ""),
+              url: String(item?.url || ""),
+              folder: item?.folder ? String(item.folder) : null,
+            };
+          }
+
+          function itemKey(item) {
+            const normalized = normalizeItem(item);
+            return `${normalized.folder || ""}\n${normalized.title}\n${normalized.url}`;
+          }
+
+          async function findChildFolder(parentId, title) {
+            const children = await getChildren(parentId);
+            return children.find((child) => child.title === title && !child.url);
+          }
+
+          async function ensureFolder(parentId, title) {
+            const existing = await findChildFolder(parentId, title);
+            if (existing) {
+              return existing;
+            }
+            return await browser.bookmarks.create({ parentId, title });
+          }
+
+          async function ensureFolderPath(toolbar, path) {
+            let parentId = toolbar.id;
+            const parts = String(path || "").split("/").map((part) => part.trim()).filter(Boolean);
+            for (const part of parts) {
+              const folder = await ensureFolder(parentId, part);
+              parentId = folder.id;
+            }
+            return parentId;
+          }
+
+          async function findFolderPath(toolbar, path) {
+            let parentId = toolbar.id;
+            let folder = null;
+            const parts = String(path || "").split("/").map((part) => part.trim()).filter(Boolean);
+            for (const part of parts) {
+              folder = await findChildFolder(parentId, part);
+              if (!folder) {
+                return null;
+              }
+              parentId = folder.id;
+            }
+            return folder;
+          }
+
+          async function ensureBookmark(parentId, item) {
+            const children = await getChildren(parentId);
+            const existing = children.find((child) => child.url === item.url && child.title === item.title);
+            if (existing) {
+              return existing;
+            }
+            return await browser.bookmarks.create({ parentId, title: item.title, url: item.url });
+          }
+
+          async function removeBookmark(parentId, item) {
+            const normalized = normalizeItem(item);
+            const children = await getChildren(parentId);
+            for (const child of children) {
+              if (child.url === normalized.url && child.title === normalized.title) {
+                await browser.bookmarks.remove(child.id);
+              }
+            }
+          }
+
+          async function removeManagedItem(toolbar, item) {
+            const normalized = normalizeItem(item);
+            if (!normalized.title || !normalized.url) {
+              return;
+            }
+
+            if (normalized.folder) {
+              const folder = await findFolderPath(toolbar, normalized.folder);
+              if (!folder) {
+                return;
+              }
+              await removeBookmark(folder.id, normalized);
+              return;
+            }
+
+            await removeBookmark(toolbar.id, normalized);
+          }
+
+          async function removeEmptyManagedFolders(toolbar, previousItems, currentItems) {
+            const currentFolders = new Set([
+              ...(payload.folders || []),
+              ...currentItems.map((item) => normalizeItem(item).folder).filter(Boolean),
+            ]);
+            const previousFolders = new Set([
+              ...(payload.previousFolders || []),
+              ...previousItems.map((item) => normalizeItem(item).folder).filter(Boolean),
+            ]);
+            const folderPaths = Array.from(previousFolders).sort((a, b) => b.length - a.length);
+            for (const path of folderPaths) {
+              if (currentFolders.has(path)) {
+                continue;
+              }
+              const folder = await findFolderPath(toolbar, path);
+              if (!folder) {
+                continue;
+              }
+              const children = await getChildren(folder.id);
+              if (children.length === 0) {
+                await browser.bookmarks.removeTree(folder.id);
+              }
+            }
+          }
+
           async function run() {
             const toolbar = await findToolbarRoot();
-            await removeExistingFolder(toolbar.id, payload.rootTitle);
-            const root = await browser.bookmarks.create({ parentId: toolbar.id, title: payload.rootTitle });
-            const folders = new Map();
+            await removeExistingFolder(toolbar.id, payload.legacyRootTitle);
+            const stored = await browser.storage.local.get("managedBookmarks").catch(() => ({}));
+            const previousItems = (stored.managedBookmarks || payload.previousBookmarks || []).map(normalizeItem);
+            const currentItems = (payload.bookmarks || []).map(normalizeItem);
+            const currentKeys = new Set(currentItems.map(itemKey));
+            for (const item of previousItems) {
+              if (!currentKeys.has(itemKey(item))) {
+                await removeManagedItem(toolbar, item);
+              }
+            }
+            await removeEmptyManagedFolders(toolbar, previousItems, currentItems);
 
-            for (const item of payload.bookmarks) {
-              let parentId = root.id;
+            const folders = new Map();
+            for (const path of payload.folders || []) {
+              if (path) {
+                folders.set(path, await ensureFolderPath(toolbar, path));
+              }
+            }
+
+            for (const item of currentItems) {
+              let parentId = toolbar.id;
               if (item.folder) {
                 if (!folders.has(item.folder)) {
-                  const folder = await browser.bookmarks.create({ parentId: root.id, title: item.folder });
-                  folders.set(item.folder, folder.id);
+                  folders.set(item.folder, await ensureFolderPath(toolbar, item.folder));
                 }
                 parentId = folders.get(item.folder);
               }
-              await browser.bookmarks.create({ parentId, title: item.title, url: item.url });
+              await ensureBookmark(parentId, item);
             }
+            await browser.storage.local.set({ managedBookmarks: currentItems }).catch(() => {});
           }
 
           run().catch(console.error);
@@ -919,10 +1493,392 @@ public class BrowserService
         sb.AppendLine($"{spaces}<DT><A HREF=\"{url}\">{title}</A>");
     }
 
+    private static void AppendBookmarkChildren(
+        StringBuilder sb,
+        IReadOnlyDictionary<string, List<BookmarkItem>> byParent,
+        string parentId,
+        int indent)
+    {
+        if (!byParent.TryGetValue(parentId, out var children))
+            return;
+
+        foreach (var item in children)
+        {
+            if (item.IsFolder)
+            {
+                var spaces = new string(' ', indent);
+                var title = System.Net.WebUtility.HtmlEncode(item.Title);
+                sb.AppendLine($"{spaces}<DT><H3>{title}</H3>");
+                sb.AppendLine($"{spaces}<DL><p>");
+                AppendBookmarkChildren(sb, byParent, item.Id, indent + 4);
+                sb.AppendLine($"{spaces}</DL><p>");
+            }
+            else
+            {
+                AppendBookmark(sb, item, indent);
+            }
+        }
+    }
+
     private static string ComputeBookmarksVersion(string bookmarksHtml)
     {
         var bytes = Encoding.UTF8.GetBytes(bookmarksHtml);
         return Convert.ToHexString(SHA256.HashData(bytes));
+    }
+
+    private static IReadOnlyCollection<BookmarkItem> ReadManagedBookmarksState(string profileDir, string statePath)
+    {
+        try
+        {
+            if (File.Exists(statePath))
+            {
+                var items = JsonSerializer.Deserialize<List<BookmarkItem>>(File.ReadAllText(statePath), BookmarkStateJsonOptions);
+                if (items != null)
+                    return items;
+            }
+
+            var backgroundPath = Path.Combine(profileDir, "yellowfox-shared-bookmarks-extension", "background.js");
+            if (File.Exists(backgroundPath))
+            {
+                var backgroundJs = File.ReadAllText(backgroundPath);
+                var match = Regex.Match(backgroundJs, @"const\s+payload\s*=\s*(\{.*?\});", RegexOptions.Singleline);
+                if (match.Success)
+                {
+                    using var document = JsonDocument.Parse(match.Groups[1].Value);
+                    if (document.RootElement.TryGetProperty("bookmarks", out var bookmarksElement))
+                    {
+                        var items = JsonSerializer.Deserialize<List<BookmarkItem>>(bookmarksElement.GetRawText(), BookmarkStateJsonOptions);
+                        if (items != null)
+                            return items;
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Best-effort migration from older bookmark sync state.
+        }
+
+        return Array.Empty<BookmarkItem>();
+    }
+
+    private static void WriteManagedBookmarksState(string statePath, IReadOnlyCollection<BookmarkItem> bookmarks)
+    {
+        var items = NormalizeBookmarkTreeItems(bookmarks).Select(b => new BookmarkItem
+        {
+            Id = b.Id,
+            Title = b.Title,
+            Url = b.Url,
+            Folder = string.IsNullOrWhiteSpace(b.Folder) ? null : b.Folder,
+            ParentId = b.ParentId,
+            IsFolder = b.IsFolder,
+            SortOrder = b.SortOrder
+        }).ToList();
+        var json = JsonSerializer.Serialize(items, new JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(statePath, json);
+    }
+
+    private static readonly JsonSerializerOptions BookmarkStateJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
+    private static void SyncManagedBookmarksInPlaces(
+        string placesPath,
+        IReadOnlyCollection<BookmarkItem> bookmarks,
+        IReadOnlyCollection<BookmarkItem> previousBookmarks)
+    {
+        bookmarks = NormalizeBookmarkTreeItems(bookmarks);
+        previousBookmarks = NormalizeBookmarkTreeItems(previousBookmarks);
+
+        if (!IsSqliteDatabase(placesPath))
+            return;
+
+        try
+        {
+            using var connection = new SqliteConnection($"Data Source={placesPath};Pooling=False");
+            connection.Open();
+
+            var toolbarId = GetToolbarBookmarkId(connection);
+            if (toolbarId <= 0)
+                return;
+
+            var currentKeys = bookmarks.Select(ManagedBookmarkKey).ToHashSet(StringComparer.Ordinal);
+            foreach (var previous in previousBookmarks)
+            {
+                if (!currentKeys.Contains(ManagedBookmarkKey(previous)))
+                    RemoveManagedBookmark(connection, toolbarId, previous);
+            }
+
+            RemoveEmptyManagedFolders(connection, toolbarId, previousBookmarks, bookmarks);
+
+            foreach (var folder in bookmarks.Where(b => b.IsFolder && !string.IsNullOrWhiteSpace(b.Folder)))
+                EnsurePlacesFolderPath(connection, toolbarId, folder.Folder!);
+
+            foreach (var bookmark in bookmarks.Where(b => !b.IsFolder))
+            {
+                var parentId = toolbarId;
+                if (!string.IsNullOrWhiteSpace(bookmark.Folder))
+                    parentId = EnsurePlacesFolderPath(connection, toolbarId, bookmark.Folder.Trim());
+
+                EnsurePlacesBookmark(connection, parentId, bookmark.Title.Trim(), bookmark.Url.Trim());
+            }
+        }
+        catch (SqliteException)
+        {
+            // Older tests and some corrupted profiles may have a non-SQLite placeholder.
+            // Leave the file untouched instead of deleting user bookmarks.
+        }
+    }
+
+    private static bool IsSqliteDatabase(string path)
+    {
+        try
+        {
+            Span<byte> header = stackalloc byte[16];
+            using var stream = File.Open(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            return stream.Read(header) == header.Length
+                && Encoding.ASCII.GetString(header) == "SQLite format 3\0";
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string ManagedBookmarkKey(BookmarkItem bookmark)
+    {
+        return string.Join("\n", bookmark.Folder?.Trim() ?? string.Empty, bookmark.Title.Trim(), bookmark.Url.Trim());
+    }
+
+    private static long EnsurePlacesFolderPath(SqliteConnection connection, long toolbarId, string path)
+    {
+        var parentId = toolbarId;
+        foreach (var part in SplitBookmarkPath(path))
+            parentId = EnsurePlacesFolder(connection, parentId, part);
+        return parentId;
+    }
+
+    private static long FindPlacesFolderPath(SqliteConnection connection, long toolbarId, string path)
+    {
+        var parentId = toolbarId;
+        long folderId = 0;
+        foreach (var part in SplitBookmarkPath(path))
+        {
+            folderId = FindPlacesFolder(connection, parentId, part);
+            if (folderId <= 0)
+                return 0;
+            parentId = folderId;
+        }
+
+        return folderId;
+    }
+
+    private static string[] SplitBookmarkPath(string path)
+    {
+        return path
+            .Split(new[] { '/', '\\' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(part => !string.IsNullOrWhiteSpace(part))
+            .ToArray();
+    }
+
+    private static long GetToolbarBookmarkId(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT id FROM moz_bookmarks WHERE guid = 'toolbar_____' LIMIT 1";
+        var result = command.ExecuteScalar();
+        return result is long id ? id : 0;
+    }
+
+    private static long EnsurePlacesFolder(SqliteConnection connection, long toolbarId, string title)
+    {
+        using (var find = connection.CreateCommand())
+        {
+            find.CommandText = @"
+                SELECT id
+                FROM moz_bookmarks
+                WHERE parent = $parent AND type = 2 AND title = $title
+                ORDER BY id
+                LIMIT 1";
+            find.Parameters.AddWithValue("$parent", toolbarId);
+            find.Parameters.AddWithValue("$title", title);
+            var existing = find.ExecuteScalar();
+            if (existing is long id)
+                return id;
+        }
+
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() * 1000;
+        using var insert = connection.CreateCommand();
+        insert.CommandText = @"
+            INSERT INTO moz_bookmarks(type, fk, parent, position, title, dateAdded, lastModified, guid)
+            VALUES(2, NULL, $parent, $position, $title, $now, $now, $guid);
+            SELECT last_insert_rowid();";
+        insert.Parameters.AddWithValue("$parent", toolbarId);
+        insert.Parameters.AddWithValue("$position", NextBookmarkPosition(connection, toolbarId));
+        insert.Parameters.AddWithValue("$title", title);
+        insert.Parameters.AddWithValue("$now", now);
+        insert.Parameters.AddWithValue("$guid", CreatePlacesGuid());
+        return (long)insert.ExecuteScalar()!;
+    }
+
+    private static void EnsurePlacesBookmark(SqliteConnection connection, long parentId, string title, string url)
+    {
+        using (var find = connection.CreateCommand())
+        {
+            find.CommandText = @"
+                SELECT b.id
+                FROM moz_bookmarks b
+                JOIN moz_places p ON p.id = b.fk
+                WHERE b.parent = $parent AND b.type = 1 AND b.title = $title AND p.url = $url
+                LIMIT 1";
+            find.Parameters.AddWithValue("$parent", parentId);
+            find.Parameters.AddWithValue("$title", title);
+            find.Parameters.AddWithValue("$url", url);
+            if (find.ExecuteScalar() is long)
+                return;
+        }
+
+        var placeId = EnsurePlace(connection, url, title);
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() * 1000;
+        using var insert = connection.CreateCommand();
+        insert.CommandText = @"
+            INSERT INTO moz_bookmarks(type, fk, parent, position, title, dateAdded, lastModified, guid)
+            VALUES(1, $place, $parent, $position, $title, $now, $now, $guid)";
+        insert.Parameters.AddWithValue("$place", placeId);
+        insert.Parameters.AddWithValue("$parent", parentId);
+        insert.Parameters.AddWithValue("$position", NextBookmarkPosition(connection, parentId));
+        insert.Parameters.AddWithValue("$title", title);
+        insert.Parameters.AddWithValue("$now", now);
+        insert.Parameters.AddWithValue("$guid", CreatePlacesGuid());
+        insert.ExecuteNonQuery();
+    }
+
+    private static long EnsurePlace(SqliteConnection connection, string url, string title)
+    {
+        using (var find = connection.CreateCommand())
+        {
+            find.CommandText = "SELECT id FROM moz_places WHERE url = $url LIMIT 1";
+            find.Parameters.AddWithValue("$url", url);
+            if (find.ExecuteScalar() is long id)
+                return id;
+        }
+
+        using var insert = connection.CreateCommand();
+        insert.CommandText = @"
+            INSERT INTO moz_places(url, title, rev_host, visit_count, hidden, typed, frecency, guid, foreign_count, url_hash)
+            VALUES($url, $title, $revHost, 0, 0, 0, -1, $guid, 1, 0);
+            SELECT last_insert_rowid();";
+        insert.Parameters.AddWithValue("$url", url);
+        insert.Parameters.AddWithValue("$title", title);
+        insert.Parameters.AddWithValue("$revHost", BuildReverseHost(url));
+        insert.Parameters.AddWithValue("$guid", CreatePlacesGuid());
+        return (long)insert.ExecuteScalar()!;
+    }
+
+    private static void RemoveManagedBookmark(SqliteConnection connection, long toolbarId, BookmarkItem bookmark)
+    {
+        var parentId = toolbarId;
+        if (!string.IsNullOrWhiteSpace(bookmark.Folder))
+        {
+            parentId = FindPlacesFolderPath(connection, toolbarId, bookmark.Folder.Trim());
+            if (parentId <= 0)
+                return;
+        }
+
+        using var delete = connection.CreateCommand();
+        delete.CommandText = @"
+            DELETE FROM moz_bookmarks
+            WHERE id IN (
+                SELECT b.id
+                FROM moz_bookmarks b
+                JOIN moz_places p ON p.id = b.fk
+                WHERE b.parent = $parent AND b.type = 1 AND b.title = $title AND p.url = $url
+            )";
+        delete.Parameters.AddWithValue("$parent", parentId);
+        delete.Parameters.AddWithValue("$title", bookmark.Title.Trim());
+        delete.Parameters.AddWithValue("$url", bookmark.Url.Trim());
+        delete.ExecuteNonQuery();
+    }
+
+    private static void RemoveEmptyManagedFolders(
+        SqliteConnection connection,
+        long toolbarId,
+        IReadOnlyCollection<BookmarkItem> previousBookmarks,
+        IReadOnlyCollection<BookmarkItem> bookmarks)
+    {
+        var currentFolders = bookmarks
+            .Select(b => b.Folder?.Trim())
+            .Where(folder => !string.IsNullOrWhiteSpace(folder))
+            .ToHashSet(StringComparer.Ordinal);
+        var previousFolders = previousBookmarks
+            .Select(b => b.Folder?.Trim())
+            .Where(folder => !string.IsNullOrWhiteSpace(folder))
+            .Distinct(StringComparer.Ordinal)
+            .OrderByDescending(folder => folder?.Length ?? 0);
+
+        foreach (var folder in previousFolders)
+        {
+            if (folder == null || currentFolders.Contains(folder))
+                continue;
+
+            var folderId = FindPlacesFolderPath(connection, toolbarId, folder);
+            if (folderId <= 0 || CountBookmarkChildren(connection, folderId) > 0)
+                continue;
+
+            using var delete = connection.CreateCommand();
+            delete.CommandText = "DELETE FROM moz_bookmarks WHERE id = $id";
+            delete.Parameters.AddWithValue("$id", folderId);
+            delete.ExecuteNonQuery();
+        }
+    }
+
+    private static long FindPlacesFolder(SqliteConnection connection, long toolbarId, string title)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = @"
+            SELECT id
+            FROM moz_bookmarks
+            WHERE parent = $parent AND type = 2 AND title = $title
+            ORDER BY id
+            LIMIT 1";
+        command.Parameters.AddWithValue("$parent", toolbarId);
+        command.Parameters.AddWithValue("$title", title);
+        var result = command.ExecuteScalar();
+        return result is long id ? id : 0;
+    }
+
+    private static long CountBookmarkChildren(SqliteConnection connection, long parentId)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM moz_bookmarks WHERE parent = $parent";
+        command.Parameters.AddWithValue("$parent", parentId);
+        return (long)command.ExecuteScalar()!;
+    }
+
+    private static long NextBookmarkPosition(SqliteConnection connection, long parentId)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COALESCE(MAX(position) + 1, 0) FROM moz_bookmarks WHERE parent = $parent";
+        command.Parameters.AddWithValue("$parent", parentId);
+        return (long)command.ExecuteScalar()!;
+    }
+
+    private static string BuildReverseHost(string url)
+    {
+        return Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            ? new string(uri.Host.Reverse().ToArray()) + "."
+            : string.Empty;
+    }
+
+    private static string CreatePlacesGuid()
+    {
+        const string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
+        Span<byte> bytes = stackalloc byte[12];
+        RandomNumberGenerator.Fill(bytes);
+        var chars = new char[12];
+        for (var i = 0; i < chars.Length; i++)
+            chars[i] = alphabet[bytes[i] % alphabet.Length];
+        return new string(chars);
     }
 
     private static void DeletePlacesStores(string profileDir)
@@ -952,8 +1908,7 @@ public class BrowserService
             "sessionstore.jsonlz4",
             "sessionstore.js",
             "sessionstore.bak",
-            "sessionCheckpoints.json",
-            "tabs-state.json"
+            "sessionCheckpoints.json"
         };
 
         foreach (var file in files)
@@ -984,87 +1939,160 @@ public class BrowserService
         lines.Add(newLine);
     }
 
-    private static void WriteToolbarState(string profileDir)
+    private static void RemoveUserPref(List<string> lines, string key)
     {
-        var xulStorePath = Path.Combine(profileDir, "xulstore.json");
-        var state = new Dictionary<string, object>
-        {
-            ["chrome://browser/content/browser.xhtml"] = new Dictionary<string, object>
-            {
-                ["PersonalToolbar"] = new Dictionary<string, string>
-                {
-                    ["collapsed"] = "false"
-                },
-                ["toolbar-menubar"] = new Dictionary<string, string>
-                {
-                    ["autohide"] = "true"
-                }
-            }
-        };
-
-        var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = false });
-        File.WriteAllText(xulStorePath, json);
+        var prefPrefix = $"user_pref(\"{key}\"";
+        lines.RemoveAll(line => line.Contains(prefPrefix, StringComparison.Ordinal));
     }
 
-    private static string BuildToolbarCustomizationState()
+    private static void WriteToolbarPrefs(string prefsPath, bool shouldImportBookmarksHtml)
     {
+        var lines = File.Exists(prefsPath)
+            ? File.ReadAllLines(prefsPath).ToList()
+            : new List<string>();
+
+        EnsureUserPref(lines, "browser.toolbars.bookmarks.visibility", "\"always\"");
+        EnsureUserPref(lines, "browser.places.importBookmarksHTML", shouldImportBookmarksHtml ? "true" : "false");
+        EnsureUserPref(lines, "browser.toolbars.bookmarks.showOtherBookmarks", "false");
+        EnsureUserPref(lines, "browser.toolbars.bookmarks.showInPrivateBrowsing", "true");
+        EnsureUserPref(lines, "browser.aboutwelcome.enabled", "false");
+        EnsureUserPref(lines, "browser.preonboarding.enabled", "false");
+        EnsureUserPref(lines, "taskbar.grouping.useprofile", "true");
+        EnsureUserPref(lines, "browser.startup.blankWindow", "false");
+        EnsureUserPref(lines, "extensions.autoDisableScopes", "0");
+        EnsureUserPref(lines, "extensions.enabledScopes", "5");
+        EnsureUserPref(lines, "datareporting.policy.dataSubmissionEnabled", "false");
+        EnsureUserPref(lines, "datareporting.policy.dataSubmissionPolicyAcceptedVersion", "999");
+        EnsureUserPref(lines, "datareporting.policy.dataSubmissionPolicyNotifiedTime", "\"0\"");
+        ApplyNavigationPrefs(lines);
+        RemoveUserPref(lines, "browser.sessionstore.resume_from_crash");
+        RemoveUserPref(lines, "browser.sessionstore.max_tabs_undo");
+        RemoveUserPref(lines, "browser.sessionstore.max_windows_undo");
+        RemoveUserPref(lines, "browser.link.open_newwindow");
+        RemoveUserPref(lines, "browser.link.open_newwindow.restriction");
+        RemoveUserPref(lines, "datareporting.healthreport.uploadEnabled");
+        RemoveUserPref(lines, "toolkit.telemetry.enabled");
+        RemoveUserPref(lines, "toolkit.telemetry.unified");
+        RemoveUserPref(lines, "toolkit.telemetry.archive.enabled");
+        RemoveUserPref(lines, "toolkit.telemetry.newProfilePing.enabled");
+        RemoveUserPref(lines, "toolkit.telemetry.reportingpolicy.firstRun");
+        RemoveUserPref(lines, "toolkit.telemetry.shutdownPingSender.enabled");
+        RemoveUserPref(lines, "app.shield.optoutstudies.enabled");
+        RemoveUserPref(lines, "toolkit.legacyUserProfileCustomizations.stylesheets");
+        RemoveUserPref(lines, "browser.uiCustomization.state");
+
+        File.WriteAllLines(prefsPath, lines);
+    }
+
+    private static void ApplyNavigationPrefs(List<string> lines)
+    {
+        EnsureUserPref(lines, "keyword.enabled", "true");
+        EnsureUserPref(lines, "dom.event.contextmenu.enabled", "false");
+        EnsureUserPref(lines, "browser.fixup.fallback-to-https", "true");
+        EnsureUserPref(lines, "browser.fixup.upgrade_to_https", "true");
+        EnsureUserPref(lines, "dom.security.https_first", "true");
+        EnsureUserPref(lines, "dom.security.https_only_mode", "true");
+        EnsureUserPref(lines, "dom.security.https_only_mode_ever_enabled", "true");
+        EnsureUserPref(lines, "browser.search.defaultenginename", "\"Google\"");
+        EnsureUserPref(lines, "browser.search.selectedEngine", "\"Google\"");
+        EnsureUserPref(lines, "browser.search.order.1", "\"Google\"");
+        EnsureUserPref(lines, "browser.urlbar.placeholderName", "\"Google\"");
+        EnsureUserPref(lines, "browser.urlbar.placeholderName.private", "\"Google\"");
+    }
+
+    private static void WriteProfileIdentityPrefs(string profileDir, string profileName)
+    {
+        var safeName = string.IsNullOrWhiteSpace(profileName)
+            ? "YellowFox"
+            : profileName.Trim();
+        var escapedName = JsonSerializer.Serialize(safeName);
+
+        foreach (var fileName in new[] { "user.js", "prefs.js" })
+        {
+            var path = Path.Combine(profileDir, fileName);
+            var lines = File.Exists(path)
+                ? File.ReadAllLines(path).ToList()
+                : new List<string>();
+            EnsureUserPref(lines, "yellowfox.profile.name", escapedName);
+            File.WriteAllLines(path, lines);
+        }
+    }
+
+    private static void DeleteToolbarState(string profileDir)
+    {
+        var xulStorePath = Path.Combine(profileDir, "xulstore.json");
+        if (File.Exists(xulStorePath))
+            File.Delete(xulStorePath);
+    }
+
+    private static void WriteExtensionToolbarPrefs(string profileDir, IEnumerable<ManagedExtensionState> extensions)
+    {
+        var toolbarState = JsonSerializer.Serialize(BuildToolbarCustomizationState(extensions));
+        var toolbarPrefValue = JsonSerializer.Serialize(toolbarState);
+        foreach (var fileName in new[] { "user.js", "prefs.js" })
+        {
+            var path = Path.Combine(profileDir, fileName);
+            var lines = File.Exists(path)
+                ? File.ReadAllLines(path).ToList()
+                : new List<string>();
+            EnsureUserPref(lines, "browser.uiCustomization.state", toolbarPrefValue);
+            File.WriteAllLines(path, lines);
+        }
+    }
+
+    private static object BuildToolbarCustomizationState(IEnumerable<ManagedExtensionState> extensions)
+    {
+        var extensionWidgets = extensions
+            .Select(e => ExtensionActionWidgetId(e.Id))
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(id => id, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var navBarItems = new List<string>
+        {
+            "back-button",
+            "forward-button",
+            "stop-reload-button",
+            "bookmarks-menu-button",
+            "urlbar-container"
+        };
+        navBarItems.AddRange(extensionWidgets);
+        navBarItems.Add("unified-extensions-button");
+
         var state = new
         {
             placements = new Dictionary<string, string[]>
             {
                 ["widget-overflow-fixed-list"] = Array.Empty<string>(),
                 ["unified-extensions-area"] = Array.Empty<string>(),
-                ["nav-bar"] = new[]
-                {
-                    "back-button",
-                    "forward-button",
-                    "stop-reload-button",
-                    "bookmarks-menu-button",
-                    "managed-bookmarks",
-                    "personal-bookmarks",
-                    "urlbar-container",
-                    "unified-extensions-button"
-                },
+                ["nav-bar"] = navBarItems.ToArray(),
                 ["toolbar-menubar"] = new[] { "menubar-items" },
                 ["TabsToolbar"] = new[] { "tabbrowser-tabs", "new-tab-button", "alltabs-button" },
                 ["vertical-tabs"] = Array.Empty<string>(),
-                ["PersonalToolbar"] = new[] { "managed-bookmarks", "personal-bookmarks" }
+                ["PersonalToolbar"] = new[] { "personal-bookmarks" }
             },
-            seen = new[] { "developer-button" },
-            dirtyAreaCache = new[] { "nav-bar", "vertical-tabs", "toolbar-menubar", "TabsToolbar", "PersonalToolbar" },
+            seen = extensionWidgets.Concat(new[] { "developer-button", "screenshot-button", "unified-extensions-button" }).ToArray(),
+            dirtyAreaCache = new[] { "nav-bar", "vertical-tabs", "toolbar-menubar", "TabsToolbar", "PersonalToolbar", "unified-extensions-area" },
             currentVersion = 22,
             newElementCount = 2
         };
 
-        return JsonSerializer.Serialize(state);
+        return state;
     }
 
-    private static void WriteUserChrome(string profileDir)
+    private static string ExtensionActionWidgetId(string addonId)
     {
-        var chromeDir = Path.Combine(profileDir, "chrome");
-        Directory.CreateDirectory(chromeDir);
-        var css = """
-        #PersonalToolbar,
-        #PersonalToolbar[collapsed="true"],
-        #PersonalToolbar[hidden="true"] {
-          visibility: visible !important;
-          display: flex !important;
-          height: 30px !important;
-          min-height: 28px !important;
-          max-height: 32px !important;
-          padding-block: 2px !important;
-          opacity: 1 !important;
-        }
+        var builder = new StringBuilder();
+        foreach (var ch in addonId.Trim().ToLowerInvariant())
+            builder.Append(char.IsLetterOrDigit(ch) || ch is '-' or '_' ? ch : '_');
+        return $"{builder}-browser-action";
+    }
 
-        #PersonalToolbar > toolbaritem,
-        #PlacesToolbarItems,
-        #PlacesToolbarItems > .bookmark-item {
-          display: flex !important;
-          visibility: visible !important;
-          align-items: center !important;
-        }
-        """;
-        File.WriteAllText(Path.Combine(chromeDir, "userChrome.css"), css);
+    private static void DeleteUserChrome(string profileDir)
+    {
+        var userChromePath = Path.Combine(profileDir, "chrome", "userChrome.css");
+        if (File.Exists(userChromePath))
+            File.Delete(userChromePath);
     }
 
     internal static List<Cookie> ParseCookiesForImport(string json)
@@ -1523,6 +2551,113 @@ public class BrowserService
         }
     }
 
+    private static async Task<BrowserTypeLaunchPersistentContextOptions> GenerateCamoufoxLaunchOptionsAsync(string launcher, string script, string configPath, string logPath)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = launcher,
+            Arguments = $"\"{script}\" --print-options \"{configPath}\"",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        startInfo.Environment["PYTHONUTF8"] = "1";
+
+        using var process = Process.Start(startInfo);
+        if (process == null)
+            throw new InvalidOperationException("Failed to start Camoufox launch options generator.");
+
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
+        var exited = await WaitForProcessExitAsync(process, TimeSpan.FromSeconds(30));
+        if (!exited)
+        {
+            process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync();
+            throw new InvalidOperationException("Camoufox launch options generator timed out.");
+        }
+
+        var stdout = await stdoutTask;
+        var stderr = await stderrTask;
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException($"Camoufox launch options generator failed: {stderr.Trim()}");
+
+        using var document = JsonDocument.Parse(stdout);
+        var root = document.RootElement;
+        var options = new BrowserTypeLaunchPersistentContextOptions
+        {
+            Headless = false
+        };
+
+        if (TryGetJsonString(root, "executablePath", out var executablePath))
+            options.ExecutablePath = executablePath;
+
+        if (root.TryGetProperty("args", out var argsElement) && argsElement.ValueKind == JsonValueKind.Array)
+        {
+            options.Args = argsElement
+                .EnumerateArray()
+                .Where(value => value.ValueKind == JsonValueKind.String)
+                .Select(value => value.GetString()!)
+                .ToArray();
+        }
+
+        if (root.TryGetProperty("timeout", out var timeoutElement) && timeoutElement.TryGetDouble(out var timeout))
+            options.Timeout = (float)timeout;
+
+        if (root.TryGetProperty("env", out var envElement) && envElement.ValueKind == JsonValueKind.Object)
+        {
+            options.Env = envElement.EnumerateObject()
+                .Where(property => property.Value.ValueKind != JsonValueKind.Null && property.Value.ValueKind != JsonValueKind.Undefined)
+                .ToDictionary(property => property.Name, property => JsonValueToString(property.Value));
+        }
+
+        if (root.TryGetProperty("firefoxUserPrefs", out var prefsElement) && prefsElement.ValueKind == JsonValueKind.Object)
+        {
+            options.FirefoxUserPrefs = prefsElement.EnumerateObject()
+                .ToDictionary(property => property.Name, property => JsonValueToObject(property.Value));
+        }
+
+        if (root.TryGetProperty("proxy", out var proxyElement) && proxyElement.ValueKind == JsonValueKind.Object &&
+            TryGetJsonString(proxyElement, "server", out var proxyServer))
+        {
+            var proxy = new Microsoft.Playwright.Proxy { Server = proxyServer };
+            if (TryGetJsonString(proxyElement, "username", out var username))
+                proxy.Username = username;
+            if (TryGetJsonString(proxyElement, "password", out var password))
+                proxy.Password = password;
+            options.Proxy = proxy;
+        }
+
+        await WriteLogAsync(logPath, "INFO", $"Generated direct Camoufox launch options. Executable={(string.IsNullOrWhiteSpace(options.ExecutablePath) ? "default" : options.ExecutablePath)}.");
+        return options;
+    }
+
+    private static string JsonValueToString(JsonElement value)
+    {
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString() ?? string.Empty,
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            JsonValueKind.Number => value.GetRawText(),
+            _ => value.GetRawText()
+        };
+    }
+
+    private static object JsonValueToObject(JsonElement value)
+    {
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString() ?? string.Empty,
+            JsonValueKind.True => true,
+            JsonValueKind.False => false,
+            JsonValueKind.Number when value.TryGetInt32(out var integer) => integer,
+            JsonValueKind.Number when value.TryGetDouble(out var number) => number,
+            _ => value.GetRawText()
+        };
+    }
+
     private static BrowserNewContextOptions BuildBrowserNewContextOptions(JsonElement contextOptions)
     {
         var options = new BrowserNewContextOptions();
@@ -1713,7 +2848,7 @@ public class BrowserService
         try
         {
             instance.SnapshotCts?.Cancel();
-            await PersistTabsSnapshotAsync(profileId, instance, logPath, writeInfoLog: true);
+            await TryPersistTabsSnapshotAsync(profileId, instance, logPath, writeInfoLog: true);
             instance.Playwright?.Dispose();
             if (instance.Process != null)
             {
@@ -1760,7 +2895,7 @@ public class BrowserService
         try
         {
             instance.SnapshotCts?.Cancel();
-            await PersistTabsSnapshotAsync(profileId, instance, logPath, writeInfoLog: true);
+            await TryPersistTabsSnapshotAsync(profileId, instance, logPath, writeInfoLog: true);
             instance.Playwright?.Dispose();
             if (instance.Process != null)
             {
@@ -1783,6 +2918,91 @@ public class BrowserService
         finally
         {
             NotifyProfileRunningStateChanged(profileId, false);
+        }
+    }
+
+    private async Task HandleBrowserWindowClosedAsync(string profileId)
+    {
+        RunningInstance? instance;
+        lock (_runningInstancesLock)
+        {
+            if (!_runningInstances.TryGetValue(profileId, out instance) || instance == null)
+                return;
+
+            _runningInstances.Remove(profileId);
+        }
+
+        if (instance.IsStopping)
+            return;
+
+        var profile = _databaseService.GetProfile(profileId);
+        var profileName = profile?.Name ?? profileId;
+        var logPath = _databaseService.GetProfileLogFilePath(profileId, profileName);
+
+        try
+        {
+            instance.IsStopping = true;
+            instance.SnapshotCts?.Cancel();
+            await TryPersistTabsSnapshotAsync(profileId, instance, logPath, writeInfoLog: true);
+            await RequestGracefulBrowserShutdownAsync(instance, logPath);
+            instance.Playwright?.Dispose();
+            if (instance.Process != null)
+            {
+                var exited = await WaitForProcessExitAsync(instance.Process, TimeSpan.FromSeconds(3));
+                if (!exited)
+                    await KillProcessTreeAsync(instance.Process.Id, logPath);
+            }
+            await KillTrackedBrowserProcessesAsync(instance.BrowserProcessIds, logPath);
+            await StopProxyBridgeAsync(instance.ProxyBridgeProcess, instance.ProxyBridgeConfigPath, logPath);
+
+            if (File.Exists(instance.TempConfigPath))
+                File.Delete(instance.TempConfigPath);
+
+            await WriteLogAsync(logPath, "INFO", $"Browser window closed for profile '{profileName}'. Marked as stopped.");
+        }
+        catch (Exception ex)
+        {
+            await WriteLogAsync(logPath, "WARN", $"Browser-window-close handling warning: {ex.Message}");
+        }
+        finally
+        {
+            NotifyProfileRunningStateChanged(profileId, false);
+        }
+    }
+
+    private async Task RunBrowserWindowMonitorAsync(string profileId, RunningInstance instance, string logPath)
+    {
+        var cts = instance.SnapshotCts;
+        if (cts == null)
+            return;
+
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(5), cts.Token);
+            var missingVisibleWindowCount = 0;
+            while (!cts.IsCancellationRequested)
+            {
+                if (HasVisibleTrackedBrowserWindow(instance))
+                {
+                    missingVisibleWindowCount = 0;
+                }
+                else if (++missingVisibleWindowCount >= 3)
+                {
+                    await WriteLogAsync(logPath, "INFO", "No visible Camoufox window detected. Treating profile as stopped.");
+                    await HandleBrowserWindowClosedAsync(profileId);
+                    return;
+                }
+
+                await Task.Delay(TimeSpan.FromSeconds(2), cts.Token);
+            }
+        }
+        catch (TaskCanceledException)
+        {
+            // Expected on stop.
+        }
+        catch (Exception ex)
+        {
+            await WriteLogAsync(logPath, "WARN", $"Browser window monitor warning: {ex.Message}");
         }
     }
 
@@ -1810,18 +3030,42 @@ public class BrowserService
         }
     }
 
+    private async Task TryPersistTabsSnapshotAsync(string profileId, RunningInstance instance, string logPath, bool writeInfoLog)
+    {
+        try
+        {
+            await PersistTabsSnapshotAsync(profileId, instance, logPath, writeInfoLog);
+        }
+        catch (Exception ex)
+        {
+            await WriteLogAsync(logPath, "WARN", $"Tabs snapshot skipped: {ex.Message}");
+        }
+    }
+
     private async Task PersistTabsSnapshotAsync(string profileId, RunningInstance instance, string logPath, bool writeInfoLog)
     {
-        var context = instance.Browser?.Contexts.FirstOrDefault();
-        if (context == null)
-            return;
+        List<string> urls;
+        if (!string.IsNullOrWhiteSpace(instance.BrokerUrl))
+        {
+            var response = await BrokerGetAsync<BrokerPagesResponse>(instance.BrokerUrl, "pages?text=false");
+            urls = response.Pages
+                .Select(p => p.Url?.Trim())
+                .Where(IsRestorableUrl)
+                .Select(url => url!)
+                .ToList();
+        }
+        else
+        {
+            var context = instance.Browser?.Contexts.FirstOrDefault();
+            if (context == null)
+                return;
 
-        var urls = context.Pages
-            .Select(p => p.Url?.Trim())
-            .Where(IsRestorableUrl)
-            .Select(url => url!)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
+            urls = context.Pages
+                .Select(p => p.Url?.Trim())
+                .Where(IsRestorableUrl)
+                .Select(url => url!)
+                .ToList();
+        }
 
         var snapshot = new TabsSnapshot
         {
@@ -1830,6 +3074,24 @@ public class BrowserService
         };
 
         var snapshotPath = _databaseService.GetProfileTabsStateFilePath(profileId);
+        if (urls.Count == 0 && File.Exists(snapshotPath))
+        {
+            try
+            {
+                var previous = JsonSerializer.Deserialize<TabsSnapshot>(await File.ReadAllTextAsync(snapshotPath));
+                if (previous?.Urls?.Any(IsRestorableUrl) == true)
+                {
+                    if (writeInfoLog)
+                        await WriteLogAsync(logPath, "WARN", "Skipped empty tabs snapshot to keep previous restorable tabs.");
+                    return;
+                }
+            }
+            catch
+            {
+                // If the existing snapshot is unreadable, replace it below.
+            }
+        }
+
         var json = JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true });
         await File.WriteAllTextAsync(snapshotPath, json);
 
@@ -1849,6 +3111,24 @@ public class BrowserService
             var snapshot = JsonSerializer.Deserialize<TabsSnapshot>(json);
             if (snapshot?.Urls == null || snapshot.Urls.Count == 0)
                 return;
+
+            if (!string.IsNullOrWhiteSpace(instance.BrokerUrl))
+            {
+                var current = await BrokerGetAsync<BrokerPagesResponse>(instance.BrokerUrl, "pages?text=false");
+                var brokerCurrentUrls = current.Pages
+                    .Select(p => p.Url?.Trim())
+                    .Where(IsRestorableUrl)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var brokerTabsToRestore = snapshot.Urls
+                    .Where(IsRestorableUrl)
+                    .Where(url => !brokerCurrentUrls.Contains(url))
+                    .ToList();
+                foreach (var url in brokerTabsToRestore)
+                    await BrokerPostAsync<BrokerOpenResponse>(instance.BrokerUrl, "open", new { url });
+                if (brokerTabsToRestore.Count > 0)
+                    await WriteLogAsync(logPath, "INFO", $"Restored tabs from broker history. Restored={brokerTabsToRestore.Count}, requested={brokerTabsToRestore.Count}.");
+                return;
+            }
 
             var context = instance.Browser?.Contexts.FirstOrDefault();
             if (context == null)
@@ -1872,7 +3152,8 @@ public class BrowserService
             {
                 try
                 {
-                    var page = await context.NewPageAsync();
+                    var page = context.Pages.FirstOrDefault(p => !IsRestorableUrl(p.Url))
+                        ?? await context.NewPageAsync();
                     await page.GotoAsync(url, new PageGotoOptions
                     {
                         WaitUntil = WaitUntilState.DOMContentLoaded,
@@ -1886,11 +3167,48 @@ public class BrowserService
                 }
             }
 
+            if (context.Pages.Any(p => IsRestorableUrl(p.Url)))
+            {
+                foreach (var blankPage in context.Pages.Where(p => !IsRestorableUrl(p.Url)).ToList())
+                {
+                    try
+                    {
+                        await blankPage.CloseAsync();
+                    }
+                    catch
+                    {
+                        // Blank pages may already be gone while restore is settling.
+                    }
+                }
+            }
+
             await WriteLogAsync(logPath, "INFO", $"Restored tabs from history. Restored={restored}, requested={tabsToRestore.Count}.");
         }
         catch (Exception ex)
         {
             await WriteLogAsync(logPath, "WARN", $"Tab restore warning: {ex.Message}");
+        }
+    }
+
+    private IReadOnlyList<string> ReadTabsSnapshotUrls(string profileId)
+    {
+        try
+        {
+            var snapshotPath = _databaseService.GetProfileTabsStateFilePath(profileId);
+            if (!File.Exists(snapshotPath))
+                return Array.Empty<string>();
+
+            var snapshot = JsonSerializer.Deserialize<TabsSnapshot>(File.ReadAllText(snapshotPath));
+            var urls = snapshot?.Urls?
+                .Where(IsRestorableUrl)
+                .Select(url => url.Trim())
+                .Where(url => !string.IsNullOrWhiteSpace(url))
+                .ToList();
+            return urls ?? (IReadOnlyList<string>)Array.Empty<string>();
+        }
+        catch
+        {
+            return Array.Empty<string>();
         }
     }
 
@@ -1902,7 +3220,24 @@ public class BrowserService
         if (url.StartsWith("about:blank", StringComparison.OrdinalIgnoreCase))
             return false;
 
-        return Uri.TryCreate(url, UriKind.Absolute, out _);
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            return false;
+
+        if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+            return false;
+
+        if (System.Net.IPAddress.TryParse(uri.Host, out var address))
+        {
+            var bytes = address.GetAddressBytes();
+            if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork &&
+                bytes.Length == 4 &&
+                bytes[0] == 0)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static bool TryNormalizeUrl(string rawUrl, out string url, out string error)
@@ -1993,13 +3328,13 @@ public class BrowserService
     private static HashSet<int> GetCamoufoxProcessIds()
     {
         var ids = new HashSet<int>();
-        foreach (var process in Process.GetProcessesByName("camoufox"))
+        foreach (var process in Process.GetProcesses())
         {
             using (process)
             {
                 try
                 {
-                    if (!process.HasExited)
+                    if (string.Equals(process.ProcessName, "camoufox", StringComparison.OrdinalIgnoreCase) && !process.HasExited)
                         ids.Add(process.Id);
                 }
                 catch
@@ -2010,6 +3345,25 @@ public class BrowserService
         }
 
         return ids;
+    }
+
+    private static bool HasVisibleTrackedBrowserWindow(RunningInstance instance)
+    {
+        foreach (var processId in instance.BrowserProcessIds.Distinct())
+        {
+            try
+            {
+                using var process = Process.GetProcessById(processId);
+                if (!process.HasExited && process.MainWindowHandle != IntPtr.Zero)
+                    return true;
+            }
+            catch
+            {
+                // PID may already be gone.
+            }
+        }
+
+        return false;
     }
 
     private static async Task KillTrackedBrowserProcessesAsync(IReadOnlyCollection<int> processIds, string logPath)
@@ -2052,21 +3406,27 @@ public class BrowserService
     {
         try
         {
+            if (!string.IsNullOrWhiteSpace(instance.BrokerUrl))
+            {
+                try
+                {
+                    await BrokerPostAsync<BrokerOkResponse>(instance.BrokerUrl, "stop", new { });
+                }
+                catch (Exception ex)
+                {
+                    await WriteLogAsync(logPath, "WARN", $"Broker shutdown warning: {ex.Message}");
+                }
+                return;
+            }
+
             var browser = instance.Browser;
             if (browser == null)
                 return;
 
-            var contexts = browser.Contexts.ToList();
-            foreach (var context in contexts)
+            if (instance.PersistentContext != null)
             {
-                try
-                {
-                    await context.CloseAsync();
-                }
-                catch
-                {
-                    // Continue trying to close other contexts.
-                }
+                await instance.PersistentContext.CloseAsync();
+                return;
             }
 
             if (browser.IsConnected)
@@ -2078,6 +3438,103 @@ public class BrowserService
         {
             await WriteLogAsync(logPath, "WARN", $"Graceful browser shutdown warning: {ex.Message}");
         }
+    }
+
+    private static async Task<string> WaitForBrokerUrlAsync(Process process, TimeSpan timeout)
+    {
+        var startedAt = DateTime.UtcNow;
+        Task<string?>? stdoutReadTask = null;
+        while (DateTime.UtcNow - startedAt < timeout)
+        {
+            if (process.HasExited)
+            {
+                var error = await process.StandardError.ReadToEndAsync();
+                throw new InvalidOperationException(string.IsNullOrWhiteSpace(error)
+                    ? "Camoufox broker exited before it reported an endpoint."
+                    : $"Camoufox broker exited before it reported an endpoint: {error.Trim()}");
+            }
+
+            stdoutReadTask ??= process.StandardOutput.ReadLineAsync();
+            var completed = await Task.WhenAny(stdoutReadTask, Task.Delay(250));
+            if (completed != stdoutReadTask)
+                continue;
+
+            var line = await stdoutReadTask;
+            stdoutReadTask = null;
+            if (line == null)
+                continue;
+
+            var match = Regex.Match(line, @"YELLOWFOX_BROKER\s+(https?://[^\s]+)");
+            if (match.Success)
+                return match.Groups[1].Value.TrimEnd('/');
+        }
+
+        throw new TimeoutException("Timed out waiting for Camoufox broker endpoint.");
+    }
+
+    private static async Task<T> BrokerGetAsync<T>(string brokerUrl, string path)
+    {
+        using var response = await BrokerHttpClient.GetAsync($"{brokerUrl.TrimEnd('/')}/{path.TrimStart('/')}");
+        var json = await response.Content.ReadAsStringAsync();
+        response.EnsureSuccessStatusCode();
+        var payload = JsonSerializer.Deserialize<T>(json, BrokerJsonOptions)
+            ?? throw new InvalidOperationException("Broker returned an empty response.");
+        ThrowIfBrokerError(payload, json);
+        return payload;
+    }
+
+    private static async Task<T> BrokerPostAsync<T>(string brokerUrl, string path, object body)
+    {
+        var jsonBody = JsonSerializer.Serialize(body);
+        using var content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
+        using var response = await BrokerHttpClient.PostAsync($"{brokerUrl.TrimEnd('/')}/{path.TrimStart('/')}", content);
+        var json = await response.Content.ReadAsStringAsync();
+        response.EnsureSuccessStatusCode();
+        var payload = JsonSerializer.Deserialize<T>(json, BrokerJsonOptions)
+            ?? throw new InvalidOperationException("Broker returned an empty response.");
+        ThrowIfBrokerError(payload, json);
+        return payload;
+    }
+
+    private static readonly JsonSerializerOptions BrokerJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
+    private static void ThrowIfBrokerError<T>(T payload, string json)
+    {
+        if (payload is BrokerOkResponse ok && !ok.Ok)
+            throw new InvalidOperationException(ok.Error ?? json);
+    }
+
+    private class BrokerOkResponse
+    {
+        public bool Ok { get; set; }
+        public string? Error { get; set; }
+    }
+
+    private class BrokerOpenResponse : BrokerOkResponse
+    {
+        public string? Url { get; set; }
+        public string? Title { get; set; }
+    }
+
+    private sealed class BrokerClickResponse : BrokerOpenResponse
+    {
+        public bool Success { get; set; }
+        public string? Message { get; set; }
+    }
+
+    private sealed class BrokerPagesResponse : BrokerOkResponse
+    {
+        public List<BrokerPage> Pages { get; set; } = new();
+    }
+
+    private sealed class BrokerPage
+    {
+        public string? Url { get; set; }
+        public string? Title { get; set; }
+        public string? Text { get; set; }
     }
 
     private static async Task<bool> WaitForProcessExitAsync(Process process, TimeSpan timeout)
@@ -2152,8 +3609,11 @@ public class BrowserService
 
             foreach (var candidate in candidates)
             {
-                if (candidate.Equals("python", StringComparison.OrdinalIgnoreCase) || File.Exists(candidate))
+                if ((candidate.Equals("python", StringComparison.OrdinalIgnoreCase) || File.Exists(candidate)) &&
+                    IsPythonLauncherUsable(candidate))
+                {
                     return candidate;
+                }
             }
         }
         else
@@ -2168,12 +3628,40 @@ public class BrowserService
 
             foreach (var candidate in candidates)
             {
-                if (candidate.StartsWith("python", StringComparison.Ordinal) || File.Exists(candidate))
+                if ((candidate.StartsWith("python", StringComparison.Ordinal) || File.Exists(candidate)) &&
+                    IsPythonLauncherUsable(candidate))
+                {
                     return candidate;
+                }
             }
         }
 
         throw new FileNotFoundException($"Python launcher not found for scripts directory: {pythonDir}");
+    }
+
+    private static bool IsPythonLauncherUsable(string candidate)
+    {
+        try
+        {
+            using var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = candidate,
+                Arguments = "--version",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            });
+
+            if (process == null)
+                return false;
+
+            return process.WaitForExit(3000) && process.ExitCode == 0;
+        }
+        catch
+        {
+            return false;
+        }
     }
 }
 

@@ -2,7 +2,9 @@ using System;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
+using Avalonia.Media.Imaging;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -13,6 +15,7 @@ using MsBox.Avalonia.Enums;
 using MsBox.Avalonia.Models;
 using YellowFox.Desktop.Models;
 using YellowFox.Desktop.Services;
+using YellowFox.Desktop.Views;
 
 namespace YellowFox.Desktop.ViewModels;
 
@@ -74,10 +77,48 @@ public partial class ExtensionsViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void NewExtension()
+    private async Task NewExtension()
     {
-        SelectedExtension = null;
-        ResetForm();
+        var editor = new ExtensionEditorViewModel(_extensionStorageService);
+        if (!await ShowExtensionEditorAsync(editor))
+            return;
+
+        try
+        {
+            var extension = editor.BuildExtension(new ExtensionItem());
+            _databaseService.CreateExtension(extension);
+            StatusMessage = $"Created: {extension.Name}";
+            Load();
+            SelectedExtension = Extensions.FirstOrDefault(item => item.Extension.Id == extension.Id);
+        }
+        catch (Exception ex)
+        {
+            await ShowMessage("Error", ex.Message);
+        }
+    }
+
+    [RelayCommand]
+    private async Task EditExtension()
+    {
+        if (SelectedExtension == null)
+            return;
+
+        var editor = new ExtensionEditorViewModel(_extensionStorageService, SelectedExtension.Extension);
+        if (!await ShowExtensionEditorAsync(editor))
+            return;
+
+        try
+        {
+            var extension = editor.BuildExtension(SelectedExtension.Extension);
+            _databaseService.UpdateExtension(extension);
+            StatusMessage = $"Updated: {extension.Name}";
+            Load();
+            SelectedExtension = Extensions.FirstOrDefault(item => item.Extension.Id == extension.Id);
+        }
+        catch (Exception ex)
+        {
+            await ShowMessage("Error", ex.Message);
+        }
     }
 
     [RelayCommand]
@@ -288,6 +329,16 @@ public partial class ExtensionsViewModel : ViewModelBase
         await box.ShowWindowDialogAsync(mainWindow!);
     }
 
+    private async Task<bool> ShowExtensionEditorAsync(ExtensionEditorViewModel editor)
+    {
+        var window = new ExtensionEditorWindow
+        {
+            DataContext = editor
+        };
+
+        return await window.ShowDialog<bool>(GetMainWindow());
+    }
+
     private Window GetMainWindow()
     {
         return Avalonia.Application.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop
@@ -302,9 +353,102 @@ public class ExtensionItemViewModel : ViewModelBase
     public string Name => Extension.Name;
     public string Path => Extension.Path;
     public string Status => Extension.IsEnabled ? "Enabled" : "Disabled";
+    public Bitmap? Icon { get; }
+    public bool HasIcon => Icon != null;
+    public bool HasNoIcon => Icon == null;
+    public string Initial => string.IsNullOrWhiteSpace(Name) ? "?" : Name.Trim()[0].ToString().ToUpperInvariant();
 
     public ExtensionItemViewModel(ExtensionItem extension)
     {
         Extension = extension;
+        Icon = LoadIcon(extension.Path);
+    }
+
+    private static Bitmap? LoadIcon(string extensionPath)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(extensionPath) || !Directory.Exists(extensionPath))
+                return null;
+
+            var manifestPath = System.IO.Path.Combine(extensionPath, "manifest.json");
+            if (!File.Exists(manifestPath))
+                return null;
+
+            using var document = JsonDocument.Parse(File.ReadAllText(manifestPath));
+            var iconPath = FindIconPath(document.RootElement, extensionPath);
+            return iconPath == null ? null : new Bitmap(iconPath);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? FindIconPath(JsonElement manifest, string extensionPath)
+    {
+        var icon = FindIconInProperty(manifest, "icons", extensionPath);
+        if (icon != null)
+            return icon;
+
+        if (manifest.TryGetProperty("browser_action", out var browserAction) && browserAction.ValueKind == JsonValueKind.Object)
+        {
+            icon = FindDefaultIcon(browserAction, extensionPath);
+            if (icon != null)
+                return icon;
+        }
+
+        if (manifest.TryGetProperty("action", out var action) && action.ValueKind == JsonValueKind.Object)
+            return FindDefaultIcon(action, extensionPath);
+
+        return null;
+    }
+
+    private static string? FindDefaultIcon(JsonElement owner, string extensionPath)
+    {
+        if (!owner.TryGetProperty("default_icon", out var icon))
+            return null;
+
+        if (icon.ValueKind == JsonValueKind.String)
+            return ResolveIconPath(extensionPath, icon.GetString());
+
+        return icon.ValueKind == JsonValueKind.Object
+            ? FindIconInObject(icon, extensionPath)
+            : null;
+    }
+
+    private static string? FindIconInProperty(JsonElement owner, string propertyName, string extensionPath)
+    {
+        return owner.TryGetProperty(propertyName, out var icons) && icons.ValueKind == JsonValueKind.Object
+            ? FindIconInObject(icons, extensionPath)
+            : null;
+    }
+
+    private static string? FindIconInObject(JsonElement icons, string extensionPath)
+    {
+        return icons.EnumerateObject()
+            .Select(property => new
+            {
+                Size = int.TryParse(property.Name, out var size) ? size : 0,
+                Path = property.Value.ValueKind == JsonValueKind.String
+                    ? ResolveIconPath(extensionPath, property.Value.GetString())
+                    : null
+            })
+            .Where(item => item.Path != null)
+            .OrderByDescending(item => item.Size)
+            .Select(item => item.Path)
+            .FirstOrDefault();
+    }
+
+    private static string? ResolveIconPath(string extensionPath, string? relativePath)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath))
+            return null;
+
+        var path = System.IO.Path.GetFullPath(System.IO.Path.Combine(extensionPath, relativePath.Replace('/', System.IO.Path.DirectorySeparatorChar)));
+        var root = System.IO.Path.GetFullPath(extensionPath);
+        return path.StartsWith(root, StringComparison.OrdinalIgnoreCase) && File.Exists(path)
+            ? path
+            : null;
     }
 }

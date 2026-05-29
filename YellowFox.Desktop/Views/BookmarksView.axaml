@@ -10,130 +10,110 @@
              x:DataType="vm:BookmarksViewModel"
              Background="#1E1E1E">
 
-    <Grid ColumnDefinitions="2*,3*" RowDefinitions="Auto,*,Auto">
-        <Border Grid.ColumnSpan="2"
-                Background="#2D2D2D"
+    <Grid RowDefinitions="Auto,*,Auto">
+        <Border Background="#2D2D2D"
                 BorderBrush="#3E3E42"
                 BorderThickness="0,0,0,1"
                 Padding="20,12">
             <DockPanel>
-                <TextBlock Text="Shared Bookmarks"
-                           Foreground="#CCCCCC"
-                           FontSize="18"
-                           FontWeight="SemiBold"
-                           VerticalAlignment="Center" />
-                <Button DockPanel.Dock="Right"
-                        AutomationProperties.AutomationId="BookmarksRefreshButton"
-                        Content="Refresh"
-                        Command="{Binding RefreshCommand}"
-                        Padding="16,8"
-                        Background="#3E3E42"
-                        Foreground="#CCCCCC"
-                        BorderThickness="0"
-                        CornerRadius="6" />
-            </DockPanel>
-        </Border>
-
-        <Border Grid.Row="1"
-                Background="#252526"
-                BorderBrush="#3E3E42"
-                BorderThickness="0,0,1,0">
-            <DockPanel>
-                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="12">
+                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" Spacing="8">
                     <Button AutomationProperties.AutomationId="NewBookmarkButton"
-                            Content="New"
+                            Content="New Bookmark"
                             Command="{Binding NewBookmarkCommand}"
-                            Padding="14,6"
+                            Padding="14,7"
                             Background="#4CAF50"
                             Foreground="White"
                             BorderThickness="0"
                             CornerRadius="5" />
+                    <Button AutomationProperties.AutomationId="NewFolderButton"
+                            Content="New Folder"
+                            Command="{Binding NewFolderCommand}"
+                            Padding="14,7"
+                            Background="#357ABD"
+                            Foreground="White"
+                            BorderThickness="0"
+                            CornerRadius="5" />
+                    <Button AutomationProperties.AutomationId="EditBookmarkButton"
+                            Content="Edit"
+                            Command="{Binding EditBookmarkCommand}"
+                            Padding="14,7"
+                            Background="#3E3E42"
+                            Foreground="#CCCCCC"
+                            BorderThickness="0"
+                            CornerRadius="5"
+                            IsEnabled="{Binding IsEditMode}" />
                     <Button AutomationProperties.AutomationId="DeleteBookmarkButton"
                             Content="Delete"
                             Command="{Binding DeleteCommand}"
-                            Padding="14,6"
+                            Padding="14,7"
                             Background="#A33A3A"
                             Foreground="White"
                             BorderThickness="0"
                             CornerRadius="5"
                             IsEnabled="{Binding IsEditMode}" />
+                    <Button AutomationProperties.AutomationId="BookmarksRefreshButton"
+                            Content="Refresh"
+                            Command="{Binding RefreshCommand}"
+                            Padding="14,7"
+                            Background="#3E3E42"
+                            Foreground="#CCCCCC"
+                            BorderThickness="0"
+                            CornerRadius="5" />
                 </StackPanel>
 
-                <ListBox AutomationProperties.AutomationId="BookmarksList"
-                         ItemsSource="{Binding Bookmarks}"
-                         SelectedItem="{Binding SelectedBookmark}"
-                         Margin="12,0,12,12"
-                         Background="#1E1E1E"
-                         BorderBrush="#3E3E42">
-                    <ListBox.ItemTemplate>
-                        <DataTemplate x:DataType="vm:BookmarkItemViewModel">
-                            <Grid ColumnDefinitions="*,160" Margin="8,7" ColumnSpacing="12">
-                                <TextBlock Grid.Column="0"
-                                           Text="{Binding Title}"
-                                           Foreground="#CCCCCC"
-                                           FontWeight="SemiBold"
-                                           TextTrimming="CharacterEllipsis" />
-                                <TextBlock Grid.Column="1"
-                                           Text="{Binding Folder}"
-                                           Foreground="#AAAAAA"
-                                           TextTrimming="CharacterEllipsis"
-                                           VerticalAlignment="Center" />
-                            </Grid>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
+                <TextBlock DockPanel.Dock="Right"
+                           Text="{Binding CurrentLevel}"
+                           Foreground="#9E9E9E"
+                           VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis"
+                           Margin="16,0,0,0" />
             </DockPanel>
         </Border>
 
-        <Border Grid.Row="1" Grid.Column="1" Padding="24" Background="#1E1E1E">
-            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                <StackPanel Spacing="12">
-                    <TextBlock Text="{Binding FormTitle}"
-                               FontSize="20"
-                               FontWeight="Bold"
-                               Foreground="#F0F0F0" />
-
-                    <TextBlock Text="Title" Foreground="#AAAAAA" />
-                    <TextBox AutomationProperties.AutomationId="BookmarkTitleInput"
-                             Text="{Binding Title, UpdateSourceTrigger=PropertyChanged}"
-                             Watermark="Bookmark title"
-                             Background="#252526"
-                             Foreground="#CCCCCC"
-                             BorderBrush="#3E3E42" />
-
-                    <TextBlock Text="URL" Foreground="#AAAAAA" />
-                    <TextBox AutomationProperties.AutomationId="BookmarkUrlInput"
-                             Text="{Binding Url, UpdateSourceTrigger=PropertyChanged}"
-                             Watermark="https://example.com"
-                             Background="#252526"
-                             Foreground="#CCCCCC"
-                             BorderBrush="#3E3E42" />
-
-                    <TextBlock Text="Folder" Foreground="#AAAAAA" />
-                    <TextBox AutomationProperties.AutomationId="BookmarkFolderInput"
-                             Text="{Binding Folder, UpdateSourceTrigger=PropertyChanged}"
-                             Watermark="Optional folder"
-                             Background="#252526"
-                             Foreground="#CCCCCC"
-                             BorderBrush="#3E3E42" />
-
-                    <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,8,0,0">
-                        <Button AutomationProperties.AutomationId="SaveBookmarkButton"
-                                Content="Save"
-                                Command="{Binding SaveCommand}"
-                                Padding="20,8"
-                                Background="#4CAF50"
-                                Foreground="White"
-                                BorderThickness="0"
-                                CornerRadius="5"
-                                FontWeight="SemiBold" />
-                    </StackPanel>
-                </StackPanel>
-            </ScrollViewer>
+        <Border Grid.Row="1"
+                Background="#1E1E1E"
+                BorderBrush="#3E3E42"
+                BorderThickness="0,0,0,1">
+            <TreeView AutomationProperties.AutomationId="BookmarksTree"
+                      ItemsSource="{Binding Bookmarks}"
+                      SelectedItem="{Binding SelectedBookmark}"
+                      Background="#1E1E1E"
+                      Foreground="#CCCCCC"
+                      Padding="12">
+                <TreeView.ItemTemplate>
+                    <TreeDataTemplate DataType="vm:BookmarkNodeViewModel" ItemsSource="{Binding Children}">
+                        <Grid ColumnDefinitions="Auto,*,Auto"
+                              ColumnSpacing="10"
+                              MinHeight="42"
+                              Margin="4,3">
+                            <TextBlock Text="{Binding Icon}"
+                                       FontSize="18"
+                                       VerticalAlignment="Center" />
+                            <StackPanel Grid.Column="1"
+                                        Spacing="2"
+                                        VerticalAlignment="Center">
+                                <TextBlock Text="{Binding Title}"
+                                           Foreground="#DDDDDD"
+                                           FontWeight="SemiBold"
+                                           TextTrimming="CharacterEllipsis" />
+                                <TextBlock Text="{Binding Url}"
+                                           IsVisible="{Binding HasUrl}"
+                                           Foreground="#858585"
+                                           FontSize="12"
+                                           TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                            <TextBlock Grid.Column="2"
+                                       Text="{Binding Kind}"
+                                       Foreground="#858585"
+                                       FontSize="12"
+                                       VerticalAlignment="Center" />
+                        </Grid>
+                    </TreeDataTemplate>
+                </TreeView.ItemTemplate>
+            </TreeView>
         </Border>
 
         <Border Grid.Row="2"
-                Grid.ColumnSpan="2"
                 Background="#252526"
                 BorderBrush="#3E3E42"
                 BorderThickness="0,1,0,0"

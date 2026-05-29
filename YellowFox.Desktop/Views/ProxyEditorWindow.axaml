@@ -1,0 +1,119 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:YellowFox.Desktop.ViewModels"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="500" d:DesignHeight="520"
+        x:Class="YellowFox.Desktop.Views.ProxyEditorWindow"
+        x:DataType="vm:ProxyEditorViewModel"
+        Icon="/Assets/yellowfox.ico"
+        Width="500" Height="540"
+        MinWidth="460" MinHeight="500"
+        Title="{Binding Title}"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="#252526">
+
+    <DockPanel Margin="24">
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Center" Spacing="15" Margin="0,24,0,0">
+            <Button Content="Save"
+                    AutomationProperties.AutomationId="ProxyEditorSaveButton"
+                    Width="140" Height="42"
+                    Click="SaveButton_Click"
+                    Background="#4CAF50"
+                    Foreground="White"
+                    BorderThickness="0"
+                    CornerRadius="8"
+                    FontWeight="SemiBold" />
+            <Button Content="Cancel"
+                    AutomationProperties.AutomationId="ProxyEditorCancelButton"
+                    Width="140" Height="42"
+                    Click="CancelButton_Click"
+                    Background="#3E3E42"
+                    Foreground="#CCCCCC"
+                    BorderThickness="0"
+                    CornerRadius="8"
+                    FontWeight="SemiBold" />
+        </StackPanel>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Spacing="14">
+                <TextBlock Text="{Binding Title}" FontSize="20" FontWeight="Bold" Foreground="#CCCCCC" Margin="0,0,0,8" />
+
+                <StackPanel Spacing="6">
+                    <TextBlock Text="Name *" Foreground="#CCCCCC" FontWeight="SemiBold" />
+                    <TextBox AutomationProperties.AutomationId="ProxyNameInput"
+                             Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
+                             Background="#1E1E1E"
+                             Foreground="#CCCCCC"
+                             BorderBrush="#3E3E42"
+                             Padding="12,10"
+                             CornerRadius="6" />
+                </StackPanel>
+
+                <StackPanel Spacing="6">
+                    <TextBlock Text="Type *" Foreground="#CCCCCC" FontWeight="SemiBold" />
+                    <ComboBox AutomationProperties.AutomationId="ProxyTypeCombo"
+                              ItemsSource="{Binding TypeOptions}"
+                              SelectedItem="{Binding Type}"
+                              HorizontalAlignment="Stretch"
+                              Background="#1E1E1E"
+                              Foreground="#CCCCCC"
+                              BorderBrush="#3E3E42"
+                              Padding="12,10"
+                              CornerRadius="6" />
+                </StackPanel>
+
+                <Grid ColumnDefinitions="*,140" ColumnSpacing="12">
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="Host *" Foreground="#CCCCCC" FontWeight="SemiBold" />
+                        <TextBox AutomationProperties.AutomationId="ProxyHostInput"
+                                 Text="{Binding Host, UpdateSourceTrigger=PropertyChanged}"
+                                 Background="#1E1E1E"
+                                 Foreground="#CCCCCC"
+                                 BorderBrush="#3E3E42"
+                                 Padding="12,10"
+                                 CornerRadius="6" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Spacing="6">
+                        <TextBlock Text="Port *" Foreground="#CCCCCC" FontWeight="SemiBold" />
+                        <NumericUpDown AutomationProperties.AutomationId="ProxyPortInput"
+                                       Value="{Binding Port}"
+                                       Minimum="1"
+                                       Maximum="65535"
+                                       Background="#1E1E1E"
+                                       Foreground="#CCCCCC"
+                                       BorderBrush="#3E3E42"
+                                       Padding="12,7"
+                                       CornerRadius="6" />
+                    </StackPanel>
+                </Grid>
+
+                <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="Login" Foreground="#CCCCCC" FontWeight="SemiBold" />
+                        <TextBox AutomationProperties.AutomationId="ProxyUsernameInput"
+                                 Text="{Binding Username, UpdateSourceTrigger=PropertyChanged}"
+                                 Background="#1E1E1E"
+                                 Foreground="#CCCCCC"
+                                 BorderBrush="#3E3E42"
+                                 Padding="12,10"
+                                 CornerRadius="6" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Spacing="6">
+                        <TextBlock Text="Password" Foreground="#CCCCCC" FontWeight="SemiBold" />
+                        <TextBox AutomationProperties.AutomationId="ProxyPasswordInput"
+                                 Text="{Binding Password, UpdateSourceTrigger=PropertyChanged}"
+                                 Background="#1E1E1E"
+                                 Foreground="#CCCCCC"
+                                 BorderBrush="#3E3E42"
+                                 Padding="12,10"
+                                 CornerRadius="6" />
+                    </StackPanel>
+                </Grid>
+
+                <TextBlock Text="* Required fields" FontSize="11" Foreground="#858585" Margin="0,8,0,0" />
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</Window>

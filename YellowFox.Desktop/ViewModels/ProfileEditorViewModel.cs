@@ -57,10 +57,22 @@ public partial class ProfileEditorViewModel : ViewModelBase
             Notes = TextSanitizer.HtmlToPlainText(existingProfile.Notes);
             SelectedOs = existingProfile.FingerprintConfig.Os;
             
-            var preset = ScreenPreset.Presets.FirstOrDefault(p =>
-                p.Width == existingProfile.FingerprintConfig.Screen.MaxWidth &&
-                p.Height == existingProfile.FingerprintConfig.Screen.MaxHeight);
-            SelectedScreenPreset = preset ?? ScreenPreset.Presets[0];
+            var screen = existingProfile.FingerprintConfig.Screen;
+            var preset = ScreenPresets.FirstOrDefault(p =>
+                p.Width == screen.MaxWidth &&
+                p.Height == screen.MaxHeight);
+            if (preset == null)
+            {
+                preset = new ScreenPreset
+                {
+                    Name = $"{screen.MaxWidth}x{screen.MaxHeight} (Custom)",
+                    Width = screen.MaxWidth,
+                    Height = screen.MaxHeight
+                };
+                ScreenPresets.Add(preset);
+            }
+
+            SelectedScreenPreset = preset;
         }
         else
         {

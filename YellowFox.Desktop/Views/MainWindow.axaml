@@ -8,119 +8,190 @@
         x:Class="YellowFox.Desktop.Views.MainWindow"
         x:Name="RootWindow"
         x:DataType="vm:MainWindowViewModel"
-        Icon="/Assets/avalonia-logo.ico"
+        Icon="/Assets/yellowfox.ico"
         Title="YellowFox - Profile Manager"
         Width="1200" Height="700"
         MinWidth="900" MinHeight="500"
         WindowState="Maximized">
 
+    <Window.Styles>
+        <Style Selector="Button.NavButton">
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="Margin" Value="0,0,0,8" />
+            <Setter Property="Padding" Value="12,10" />
+            <Setter Property="Background" Value="#2E3132" />
+            <Setter Property="Foreground" Value="#CCCCCC" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="HorizontalContentAlignment" Value="Left" />
+            <Setter Property="CornerRadius" Value="5" />
+        </Style>
+        <Style Selector="Button.NavButton:pointerover">
+            <Setter Property="Background" Value="#363A3C" />
+        </Style>
+        <Style Selector="Button.NavButtonActive">
+            <Setter Property="Background" Value="#3E3E42" />
+            <Setter Property="Foreground" Value="#FFFFFF" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+        <Style Selector="Button.SidebarToggle">
+            <Setter Property="Width" Value="34" />
+            <Setter Property="Height" Value="34" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Background" Value="#2E3132" />
+            <Setter Property="Foreground" Value="#D0D0D0" />
+            <Setter Property="BorderBrush" Value="#3E3E42" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="5" />
+            <Setter Property="FontFamily" Value="Segoe MDL2 Assets" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+        <Style Selector="Button.SidebarToggle:pointerover">
+            <Setter Property="Background" Value="#3A3E40" />
+            <Setter Property="BorderBrush" Value="#5A5F63" />
+        </Style>
+    </Window.Styles>
+
     <DockPanel Background="#1E1E1E">
-        <!-- Sidebar -->
-        <Border DockPanel.Dock="Left" Width="200" BorderBrush="#3E3E42" BorderThickness="0,0,1,0" Background="#252526">
-            <StackPanel Margin="15,20">
-                <TextBlock Text="🦊 YellowFox" FontSize="18" FontWeight="Bold" Foreground="#CCCCCC" Margin="0,0,0,30" />
-                
-                <!-- Profiles -->
-                <Button Content="📋 Profiles"
-                        AutomationProperties.AutomationId="NavProfilesButton"
-                        Command="{Binding ShowProfilesCommand}"
-                        IsVisible="{Binding IsProfilesSection}"
-                        HorizontalAlignment="Stretch"
-                        Margin="0,0,0,8"
-                        Padding="12,10"
-                        Background="#3E3E42"
-                        Foreground="#FFFFFF"
-                        BorderThickness="0"
-                        HorizontalContentAlignment="Left"
-                        FontWeight="SemiBold" />
-                <Button Content="📋 Profiles"
-                        AutomationProperties.AutomationId="NavProfilesButton"
-                        Command="{Binding ShowProfilesCommand}"
-                        IsVisible="{Binding IsNotProfilesSection}"
-                        HorizontalAlignment="Stretch"
-                        Margin="0,0,0,8"
-                        Padding="12,10"
-                        Background="#2E3132"
-                        Foreground="#CCCCCC"
-                        BorderThickness="0"
-                        HorizontalContentAlignment="Left" />
-
-                <!-- Proxies -->
-                <Button Content="🌐 Proxies"
-                        AutomationProperties.AutomationId="NavProxiesButton"
-                        Command="{Binding ShowProxiesCommand}"
-                        IsVisible="{Binding IsProxiesSection}"
-                        HorizontalAlignment="Stretch"
-                        Margin="0,0,0,8"
-                        Padding="12,10"
-                        Background="#3E3E42"
-                        Foreground="#FFFFFF"
-                        BorderThickness="0"
-                        HorizontalContentAlignment="Left"
-                        FontWeight="SemiBold" />
-                <Button Content="🌐 Proxies"
-                        AutomationProperties.AutomationId="NavProxiesButton"
-                        Command="{Binding ShowProxiesCommand}"
-                        IsVisible="{Binding IsNotProxiesSection}"
-                        HorizontalAlignment="Stretch"
-                        Margin="0,0,0,8"
-                        Padding="12,10"
-                        Background="#2E3132"
-                        Foreground="#CCCCCC"
-                        BorderThickness="0"
-                        HorizontalContentAlignment="Left" />
-
-                <!-- Extensions -->
-                <Button Content="🧩 Extensions"
-                        AutomationProperties.AutomationId="NavExtensionsButton"
-                        Command="{Binding ShowExtensionsCommand}"
-                        IsVisible="{Binding IsExtensionsSection}"
-                        HorizontalAlignment="Stretch"
-                        Margin="0,0,0,8"
-                        Padding="12,10"
-                        Background="#3E3E42"
-                        Foreground="#FFFFFF"
-                        BorderThickness="0"
-                        HorizontalContentAlignment="Left"
-                        FontWeight="SemiBold" />
-                <Button Content="🧩 Extensions"
-                        AutomationProperties.AutomationId="NavExtensionsButton"
-                        Command="{Binding ShowExtensionsCommand}"
-                        IsVisible="{Binding IsNotExtensionsSection}"
-                        HorizontalAlignment="Stretch"
-                        Margin="0,0,0,8"
-                        Padding="12,10"
-                        Background="#2E3132"
-                        Foreground="#CCCCCC"
-                        BorderThickness="0"
-                        HorizontalContentAlignment="Left" />
-
-                <!-- Bookmarks -->
-                <Button Content="🔖 Bookmarks"
-                        AutomationProperties.AutomationId="NavBookmarksButton"
-                        Command="{Binding ShowBookmarksCommand}"
-                        IsVisible="{Binding IsBookmarksSection}"
-                        HorizontalAlignment="Stretch"
-                        Padding="12,10"
-                        Background="#3E3E42"
-                        Foreground="#FFFFFF"
-                        BorderThickness="0"
-                        HorizontalContentAlignment="Left"
-                        FontWeight="SemiBold" />
-                <Button Content="🔖 Bookmarks"
-                        AutomationProperties.AutomationId="NavBookmarksButton"
-                        Command="{Binding ShowBookmarksCommand}"
-                        IsVisible="{Binding IsNotBookmarksSection}"
-                        HorizontalAlignment="Stretch"
-                        Padding="12,10"
-                        Background="#2E3132"
-                        Foreground="#CCCCCC"
-                        BorderThickness="0"
-                        HorizontalContentAlignment="Left" />
-            </StackPanel>
+        <Border DockPanel.Dock="Bottom"
+                Background="#252526"
+                BorderBrush="#3E3E42"
+                BorderThickness="0,1,0,0"
+                Padding="12,6">
+            <Grid ColumnDefinitions="Auto,*">
+                <TextBlock Grid.Column="0"
+                           Text="{Binding YellowFoxVersionStatus}"
+                           Foreground="#9AA1A8"
+                           FontSize="12"
+                           HorizontalAlignment="Left"
+                           VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1"
+                           Text="{Binding CamoufoxVersionStatus}"
+                           Foreground="#9AA1A8"
+                           FontSize="12"
+                           HorizontalAlignment="Right"
+                           VerticalAlignment="Center" />
+            </Grid>
         </Border>
-        
-        <!-- Main Content -->
+
+        <Border DockPanel.Dock="Left"
+                Width="{Binding SidebarWidth}"
+                BorderBrush="#3E3E42"
+                BorderThickness="0,0,1,0"
+                Background="#252526">
+            <DockPanel Margin="15,20">
+                <Button DockPanel.Dock="Bottom"
+                        Classes="SidebarToggle"
+                        Content="{Binding SidebarToggleIcon}"
+                        Command="{Binding ToggleSidebarCommand}"
+                        ToolTip.Tip="{Binding SidebarToggleTip}"
+                        HorizontalAlignment="Left" />
+
+                <StackPanel>
+                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10" Margin="0,0,0,30">
+                        <Image Grid.Column="0"
+                               Source="/Assets/yellowfox-icon.png"
+                               Width="28"
+                               Height="28"
+                               Stretch="Uniform"
+                               VerticalAlignment="Center"
+                               ToolTip.Tip="YellowFox" />
+                        <TextBlock Grid.Column="1"
+                                   Text="YellowFox"
+                                   FontSize="18"
+                                   FontWeight="Bold"
+                                   Foreground="#CCCCCC"
+                                   VerticalAlignment="Center"
+                                   IsVisible="{Binding IsSidebarExpanded}" />
+                    </Grid>
+
+                    <Button Classes="NavButton NavButtonActive"
+                            AutomationProperties.AutomationId="NavProfilesButton"
+                            Command="{Binding ShowProfilesCommand}"
+                            IsVisible="{Binding IsProfilesSection}"
+                            ToolTip.Tip="Profiles">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <TextBlock Text="📋" FontSize="16" VerticalAlignment="Center" />
+                            <TextBlock Text="Profiles" VerticalAlignment="Center" IsVisible="{Binding IsSidebarExpanded}" />
+                        </StackPanel>
+                    </Button>
+                    <Button Classes="NavButton"
+                            AutomationProperties.AutomationId="NavProfilesButton"
+                            Command="{Binding ShowProfilesCommand}"
+                            IsVisible="{Binding IsNotProfilesSection}"
+                            ToolTip.Tip="Profiles">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <TextBlock Text="📋" FontSize="16" VerticalAlignment="Center" />
+                            <TextBlock Text="Profiles" VerticalAlignment="Center" IsVisible="{Binding IsSidebarExpanded}" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button Classes="NavButton NavButtonActive"
+                            AutomationProperties.AutomationId="NavProxiesButton"
+                            Command="{Binding ShowProxiesCommand}"
+                            IsVisible="{Binding IsProxiesSection}"
+                            ToolTip.Tip="Proxies">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <TextBlock Text="🌐" FontSize="16" VerticalAlignment="Center" />
+                            <TextBlock Text="Proxies" VerticalAlignment="Center" IsVisible="{Binding IsSidebarExpanded}" />
+                        </StackPanel>
+                    </Button>
+                    <Button Classes="NavButton"
+                            AutomationProperties.AutomationId="NavProxiesButton"
+                            Command="{Binding ShowProxiesCommand}"
+                            IsVisible="{Binding IsNotProxiesSection}"
+                            ToolTip.Tip="Proxies">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <TextBlock Text="🌐" FontSize="16" VerticalAlignment="Center" />
+                            <TextBlock Text="Proxies" VerticalAlignment="Center" IsVisible="{Binding IsSidebarExpanded}" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button Classes="NavButton NavButtonActive"
+                            AutomationProperties.AutomationId="NavExtensionsButton"
+                            Command="{Binding ShowExtensionsCommand}"
+                            IsVisible="{Binding IsExtensionsSection}"
+                            ToolTip.Tip="Extensions">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <TextBlock Text="🧩" FontSize="16" VerticalAlignment="Center" />
+                            <TextBlock Text="Extensions" VerticalAlignment="Center" IsVisible="{Binding IsSidebarExpanded}" />
+                        </StackPanel>
+                    </Button>
+                    <Button Classes="NavButton"
+                            AutomationProperties.AutomationId="NavExtensionsButton"
+                            Command="{Binding ShowExtensionsCommand}"
+                            IsVisible="{Binding IsNotExtensionsSection}"
+                            ToolTip.Tip="Extensions">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <TextBlock Text="🧩" FontSize="16" VerticalAlignment="Center" />
+                            <TextBlock Text="Extensions" VerticalAlignment="Center" IsVisible="{Binding IsSidebarExpanded}" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button Classes="NavButton NavButtonActive"
+                            AutomationProperties.AutomationId="NavBookmarksButton"
+                            Command="{Binding ShowBookmarksCommand}"
+                            IsVisible="{Binding IsBookmarksSection}"
+                            ToolTip.Tip="Bookmarks">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <TextBlock Text="🔖" FontSize="16" VerticalAlignment="Center" />
+                            <TextBlock Text="Bookmarks" VerticalAlignment="Center" IsVisible="{Binding IsSidebarExpanded}" />
+                        </StackPanel>
+                    </Button>
+                    <Button Classes="NavButton"
+                            AutomationProperties.AutomationId="NavBookmarksButton"
+                            Command="{Binding ShowBookmarksCommand}"
+                            IsVisible="{Binding IsNotBookmarksSection}"
+                            ToolTip.Tip="Bookmarks">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <TextBlock Text="🔖" FontSize="16" VerticalAlignment="Center" />
+                            <TextBlock Text="Bookmarks" VerticalAlignment="Center" IsVisible="{Binding IsSidebarExpanded}" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
         <Grid>
             <views:ProfilesView DataContext="{Binding ProfilesViewModel}"
                                 IsVisible="{Binding DataContext.IsProfilesSection, ElementName=RootWindow}" />

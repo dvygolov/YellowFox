@@ -20,7 +20,7 @@
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="CornerRadius" Value="5" />
             <Setter Property="Padding" Value="10,6" />
-            <Setter Property="MinWidth" Value="68" />
+            <Setter Property="MinWidth" Value="84" />
         </Style>
         <Style Selector="Button.PrimaryAction:pointerover">
             <Setter Property="Opacity" Value="0.9" />
@@ -42,6 +42,37 @@
         <Style Selector="Button.SecondaryAction:pointerover">
             <Setter Property="Background" Value="#3A3E40" />
             <Setter Property="BorderBrush" Value="#5A5F63" />
+        </Style>
+        <Style Selector="TextBox.ProfileNotesTextBox">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="#B6BDC4" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="8,5" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="CaretBrush" Value="#B6BDC4" />
+            <Setter Property="SelectionBrush" Value="#315E96" />
+        </Style>
+        <Style Selector="Button.NotesToggle">
+            <Setter Property="Background" Value="#34383C" />
+            <Setter Property="BorderBrush" Value="#4A5158" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Foreground" Value="#D0D6DC" />
+            <Setter Property="CornerRadius" Value="5" />
+            <Setter Property="Width" Value="28" />
+            <Setter Property="Height" Value="28" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="FontFamily" Value="Segoe MDL2 Assets" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Opacity" Value="0" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+        <Style Selector="Border.NotesHost:pointerover Button.NotesToggle">
+            <Setter Property="Opacity" Value="1" />
+        </Style>
+        <Style Selector="Button.NotesToggle:pointerover">
+            <Setter Property="Background" Value="#3E454B" />
+            <Setter Property="BorderBrush" Value="#69737C" />
         </Style>
     </UserControl.Styles>
     
@@ -99,7 +130,7 @@
                 BorderBrush="#3E3E42"
                 BorderThickness="0,0,0,1"
                 Padding="20,12">
-            <Grid ColumnDefinitions="36,20,300,170,*,Auto">
+            <Grid ColumnDefinitions="36,20,240,150,*,Auto">
                 <TextBlock Grid.Column="1" Text="" Foreground="#858585" FontSize="12" FontWeight="SemiBold" />
                 <TextBlock Grid.Column="2" Text="Name" Foreground="#858585" FontSize="12" FontWeight="SemiBold" />
                 <TextBlock Grid.Column="3" Text="Proxy" Foreground="#858585" FontSize="12" FontWeight="SemiBold" />
@@ -193,7 +224,7 @@
                             </Style>
                         </Border.Styles>
                         
-                        <Grid ColumnDefinitions="36,20,300,170,*,Auto"
+                        <Grid ColumnDefinitions="36,20,240,150,*,Auto"
                               HorizontalAlignment="Stretch">
                                 <!-- Checkbox Column -->
                                 <CheckBox Grid.Column="0" 
@@ -219,7 +250,7 @@
                                                Foreground="#CCCCCC"
                                                VerticalAlignment="Center"
                                                TextTrimming="CharacterEllipsis"
-                                               MaxWidth="220" />
+                                               MaxWidth="170" />
                                 </StackPanel>
                                 
                                 <!-- Proxy -->
@@ -231,12 +262,50 @@
                                            TextTrimming="CharacterEllipsis" />
 
                                 <!-- Notes -->
-                                <TextBlock Grid.Column="4"
-                                           Text="{Binding NotesDisplay}"
-                                           Foreground="#858585"
-                                           FontSize="13"
-                                           VerticalAlignment="Center"
-                                           TextTrimming="CharacterEllipsis" />
+                                <Border Grid.Column="4"
+                                        Classes="NotesHost"
+                                        Background="#202326"
+                                        BorderBrush="#30363D"
+                                        BorderThickness="1"
+                                        CornerRadius="5"
+                                        Padding="0"
+                                        Margin="0,0,12,0"
+                                        VerticalAlignment="Center">
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <TextBox Grid.Column="0"
+                                                 Classes="ProfileNotesTextBox"
+                                                 Text="{Binding NotesDisplay}"
+                                                 IsReadOnly="True"
+                                                 IsVisible="{Binding IsNotesCollapsed}"
+                                                 Height="34"
+                                                 TextWrapping="NoWrap"
+                                                 AcceptsReturn="False"
+                                                 VerticalContentAlignment="Center"
+                                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                                 ScrollViewer.VerticalScrollBarVisibility="Disabled" />
+
+                                        <TextBox Grid.Column="0"
+                                                 Classes="ProfileNotesTextBox"
+                                                 Text="{Binding NotesDisplay}"
+                                                 IsReadOnly="True"
+                                                 IsVisible="{Binding IsNotesExpanded}"
+                                                 MinHeight="70"
+                                                 MaxHeight="190"
+                                                 TextWrapping="Wrap"
+                                                 AcceptsReturn="True"
+                                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                                 ScrollViewer.VerticalScrollBarVisibility="Auto" />
+
+                                        <Button Grid.Column="1"
+                                                Classes="NotesToggle"
+                                                Content="{Binding NotesToggleIcon}"
+                                                Command="{Binding ToggleNotesCommand}"
+                                                IsVisible="{Binding HasNotes}"
+                                                ToolTip.Tip="{Binding NotesToggleTip}"
+                                                Margin="6,3,6,3"
+                                                VerticalAlignment="Top" />
+                                    </Grid>
+                                </Border>
                                 
                                 <!-- Action Buttons -->
                                 <StackPanel Grid.Column="5"
@@ -247,54 +316,41 @@
                                     
                                     <!-- Start Button (when not running) -->
                                     <Button Classes="PrimaryAction"
-                                            Content="Start" 
                                             Command="{Binding StartCommand}"
                                             IsVisible="{Binding IsNotRunning}"
-                                            Background="#2E7D32" />
+                                            Background="#2E7D32">
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <TextBlock Text="&#xE768;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center" />
+                                            <TextBlock Text="Start" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </Button>
                                     
                                     <!-- Stop Button (when running) -->
                                     <Button Classes="PrimaryAction"
-                                            Content="Stop" 
                                             Command="{Binding StopCommand}"
                                             IsVisible="{Binding IsRunning}"
-                                            Background="#B71C1C" />
+                                            Background="#B71C1C">
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <TextBlock Text="&#xE71A;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center" />
+                                            <TextBlock Text="Stop" VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </Button>
                                     
-                                    <!-- Edit Button -->
+                                    <!-- More Actions -->
                                     <Button Classes="SecondaryAction"
-                                            Content="&#xE70F;" 
-                                            Command="{Binding EditCommand}"
-                                            ToolTip.Tip="Edit" />
-                                    
-                                    <!-- Clone Button -->
-                                    <Button Classes="SecondaryAction"
-                                            Content="&#xE8C8;" 
-                                            Command="{Binding CloneCommand}"
-                                            ToolTip.Tip="Clone" />
-
-                                    <!-- Export Cookies -->
-                                    <Button Classes="SecondaryAction"
-                                            Content="&#xE896;" 
-                                            Command="{Binding ExportCookiesCommand}"
-                                            ToolTip.Tip="Export Cookies" />
-
-                                    <!-- Import Cookies -->
-                                    <Button Classes="SecondaryAction"
-                                            Content="&#xE898;" 
-                                            Command="{Binding ImportCookiesCommand}"
-                                            ToolTip.Tip="Import Cookies" />
-
-                                    <!-- View Log -->
-                                    <Button Classes="SecondaryAction"
-                                            Content="&#xE8A5;"
-                                            Command="{Binding ViewLogCommand}"
-                                            ToolTip.Tip="Open Profile Log" />
-                                    
-                                    <!-- Delete Button -->
-                                    <Button Classes="SecondaryAction"
-                                            Content="&#xE74D;" 
-                                            Command="{Binding DeleteCommand}"
-                                            Foreground="#F44336"
-                                            ToolTip.Tip="Delete" />
+                                            Content="&#xE712;"
+                                            ToolTip.Tip="More actions">
+                                        <Button.Flyout>
+                                            <MenuFlyout Placement="BottomEdgeAlignedRight">
+                                                <MenuItem Header="Edit" Command="{Binding EditCommand}" />
+                                                <MenuItem Header="Clone" Command="{Binding CloneCommand}" />
+                                                <MenuItem Header="Export cookies" Command="{Binding ExportCookiesCommand}" />
+                                                <MenuItem Header="Import cookies" Command="{Binding ImportCookiesCommand}" />
+                                                <MenuItem Header="Open log" Command="{Binding ViewLogCommand}" />
+                                                <MenuItem Header="Delete" Command="{Binding DeleteCommand}" Foreground="#F44336" />
+                                            </MenuFlyout>
+                                        </Button.Flyout>
+                                    </Button>
                                 </StackPanel>
                         </Grid>
                     </Border>

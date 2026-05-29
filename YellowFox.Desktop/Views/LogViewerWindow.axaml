@@ -8,7 +8,7 @@
         d:DesignHeight="640"
         x:Class="YellowFox.Desktop.Views.LogViewerWindow"
         x:DataType="vm:LogViewerViewModel"
-        Icon="/Assets/avalonia-logo.ico"
+        Icon="/Assets/yellowfox.ico"
         Width="900"
         Height="640"
         MinWidth="700"

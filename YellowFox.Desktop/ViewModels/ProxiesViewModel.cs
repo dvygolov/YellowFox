@@ -11,6 +11,7 @@ using MsBox.Avalonia.Enums;
 using MsBox.Avalonia.Models;
 using YellowFox.Desktop.Models;
 using YellowFox.Desktop.Services;
+using YellowFox.Desktop.Views;
 
 namespace YellowFox.Desktop.ViewModels;
 
@@ -108,10 +109,48 @@ public partial class ProxiesViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void NewProxy()
+    private async Task NewProxy()
     {
-        SelectedProxy = null;
-        ResetForm();
+        var editor = new ProxyEditorViewModel();
+        if (!await ShowProxyEditorAsync(editor))
+            return;
+
+        try
+        {
+            var proxy = editor.BuildProxy(new Proxy());
+            _databaseService.CreateProxy(proxy);
+            StatusMessage = $"Created proxy: {proxy.Name}";
+            await RefreshAndCheckAsync();
+            SelectedProxy = Proxies.FirstOrDefault(item => item.Proxy.Id == proxy.Id);
+        }
+        catch (Exception ex)
+        {
+            await ShowMessage("Error", ex.Message);
+        }
+    }
+
+    [RelayCommand]
+    private async Task EditProxy()
+    {
+        if (SelectedProxy == null)
+            return;
+
+        var editor = new ProxyEditorViewModel(SelectedProxy.Proxy);
+        if (!await ShowProxyEditorAsync(editor))
+            return;
+
+        try
+        {
+            var proxy = editor.BuildProxy(SelectedProxy.Proxy);
+            _databaseService.UpdateProxy(proxy);
+            StatusMessage = $"Updated proxy: {proxy.Name}";
+            await RefreshAndCheckAsync();
+            SelectedProxy = Proxies.FirstOrDefault(item => item.Proxy.Id == proxy.Id);
+        }
+        catch (Exception ex)
+        {
+            await ShowMessage("Error", ex.Message);
+        }
     }
 
     [RelayCommand]
@@ -181,14 +220,11 @@ public partial class ProxiesViewModel : ViewModelBase
     [RelayCommand]
     private async Task TestProxy()
     {
-        if (!ValidateForm(out var validationError))
-        {
-            await ShowMessage("Validation", validationError);
+        if (SelectedProxy == null)
             return;
-        }
 
         StatusMessage = "Testing proxy...";
-        var proxy = BuildProxy(SelectedProxy?.Proxy ?? new Proxy());
+        var proxy = SelectedProxy.Proxy;
         var result = await _proxyValidatorService.ValidateAsync(proxy);
 
         if (result.IsSuccess)
@@ -349,6 +385,16 @@ public partial class ProxiesViewModel : ViewModelBase
             });
 
         await box.ShowWindowDialogAsync(mainWindow!);
+    }
+
+    private async Task<bool> ShowProxyEditorAsync(ProxyEditorViewModel editor)
+    {
+        var window = new ProxyEditorWindow
+        {
+            DataContext = editor
+        };
+
+        return await window.ShowDialog<bool>(GetMainWindow());
     }
 
     private Window GetMainWindow()

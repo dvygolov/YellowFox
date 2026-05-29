@@ -345,6 +345,9 @@ public partial class ProfileItemViewModel : ViewModelBase
     
     [ObservableProperty]
     private bool _isSelected;
+
+    [ObservableProperty]
+    private bool _isNotesExpanded;
     
     public Profile Profile { get; }
     public string ProxyDisplay
@@ -360,6 +363,10 @@ public partial class ProfileItemViewModel : ViewModelBase
     }
 
     public string NotesDisplay => TextSanitizer.HtmlToPlainText(Profile.Notes);
+    public bool HasNotes => !string.IsNullOrWhiteSpace(NotesDisplay);
+    public bool IsNotesCollapsed => !IsNotesExpanded;
+    public string NotesToggleIcon => IsNotesExpanded ? "\uE70E" : "\uE70D";
+    public string NotesToggleTip => IsNotesExpanded ? "Collapse notes" : "Expand notes";
     
     public string StatusIcon => IsRunning ? "🟢" : "⚫";
     public bool IsNotRunning => !IsRunning;
@@ -418,11 +425,25 @@ public partial class ProfileItemViewModel : ViewModelBase
     {
         await _parent.OpenLog(this);
     }
+
+    [RelayCommand]
+    private void ToggleNotes()
+    {
+        if (HasNotes)
+            IsNotesExpanded = !IsNotesExpanded;
+    }
     
     partial void OnIsRunningChanged(bool value)
     {
         OnPropertyChanged(nameof(StatusIcon));
         OnPropertyChanged(nameof(IsNotRunning));
+    }
+
+    partial void OnIsNotesExpandedChanged(bool value)
+    {
+        OnPropertyChanged(nameof(IsNotesCollapsed));
+        OnPropertyChanged(nameof(NotesToggleIcon));
+        OnPropertyChanged(nameof(NotesToggleTip));
     }
     
     public void UpdateRunningStatus(bool isRunning)

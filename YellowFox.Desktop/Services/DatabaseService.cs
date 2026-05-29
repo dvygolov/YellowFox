@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
@@ -118,6 +119,32 @@ public class DatabaseService
             alterTableCommand.ExecuteNonQuery();
         }
 
+        if (!ColumnExists(connection, transaction, "bookmarks", "parent_id"))
+        {
+            var alterTableCommand = connection.CreateCommand();
+            alterTableCommand.Transaction = transaction;
+            alterTableCommand.CommandText = "ALTER TABLE bookmarks ADD COLUMN parent_id TEXT";
+            alterTableCommand.ExecuteNonQuery();
+        }
+
+        if (!ColumnExists(connection, transaction, "bookmarks", "is_folder"))
+        {
+            var alterTableCommand = connection.CreateCommand();
+            alterTableCommand.Transaction = transaction;
+            alterTableCommand.CommandText = "ALTER TABLE bookmarks ADD COLUMN is_folder INTEGER NOT NULL DEFAULT 0";
+            alterTableCommand.ExecuteNonQuery();
+        }
+
+        if (!ColumnExists(connection, transaction, "bookmarks", "sort_order"))
+        {
+            var alterTableCommand = connection.CreateCommand();
+            alterTableCommand.Transaction = transaction;
+            alterTableCommand.CommandText = "ALTER TABLE bookmarks ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0";
+            alterTableCommand.ExecuteNonQuery();
+        }
+
+        MigrateBookmarkFolders(connection, transaction);
+
         var indexCommand = connection.CreateCommand();
         indexCommand.Transaction = transaction;
         indexCommand.CommandText = "CREATE INDEX IF NOT EXISTS idx_profiles_proxy_id ON profiles(proxy_id)";
@@ -133,7 +160,113 @@ public class DatabaseService
         dolphinProxyIndexCommand.CommandText = "CREATE UNIQUE INDEX IF NOT EXISTS idx_proxies_dolphin_proxy_id ON proxies(dolphin_proxy_id) WHERE dolphin_proxy_id IS NOT NULL";
         dolphinProxyIndexCommand.ExecuteNonQuery();
 
+        var bookmarksParentIndexCommand = connection.CreateCommand();
+        bookmarksParentIndexCommand.Transaction = transaction;
+        bookmarksParentIndexCommand.CommandText = "CREATE INDEX IF NOT EXISTS idx_bookmarks_parent_id ON bookmarks(parent_id)";
+        bookmarksParentIndexCommand.ExecuteNonQuery();
+
         transaction.Commit();
+    }
+
+    private static void MigrateBookmarkFolders(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        var rows = new List<(string Id, string Folder)>();
+        using (var select = connection.CreateCommand())
+        {
+            select.Transaction = transaction;
+            select.CommandText = @"
+                SELECT id, folder
+                FROM bookmarks
+                WHERE parent_id IS NULL
+                  AND is_folder = 0
+                  AND folder IS NOT NULL
+                  AND TRIM(folder) <> ''";
+
+            using var reader = select.ExecuteReader();
+            while (reader.Read())
+                rows.Add((reader.GetString(0), reader.GetString(1)));
+        }
+
+        var folderCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in rows)
+        {
+            var parentId = EnsureBookmarkFolderPath(connection, transaction, row.Folder, folderCache);
+            using var update = connection.CreateCommand();
+            update.Transaction = transaction;
+            update.CommandText = "UPDATE bookmarks SET parent_id = @parent_id WHERE id = @id";
+            update.Parameters.AddWithValue("@parent_id", string.IsNullOrWhiteSpace(parentId) ? DBNull.Value : parentId);
+            update.Parameters.AddWithValue("@id", row.Id);
+            update.ExecuteNonQuery();
+        }
+    }
+
+    private static string EnsureBookmarkFolderPath(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string folderPath,
+        Dictionary<string, string> folderCache)
+    {
+        string? parentId = null;
+        var pathParts = folderPath
+            .Split(new[] { '/', '\\' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(part => !string.IsNullOrWhiteSpace(part))
+            .ToArray();
+
+        foreach (var part in pathParts)
+        {
+            var cacheKey = $"{parentId ?? string.Empty}/{part}";
+            if (!folderCache.TryGetValue(cacheKey, out var folderId))
+            {
+                folderId = FindBookmarkFolder(connection, transaction, parentId, part)
+                    ?? CreateBookmarkFolder(connection, transaction, parentId, part);
+                folderCache[cacheKey] = folderId;
+            }
+
+            parentId = folderId;
+        }
+
+        return parentId ?? string.Empty;
+    }
+
+    private static string? FindBookmarkFolder(SqliteConnection connection, SqliteTransaction transaction, string? parentId, string title)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = parentId == null
+            ? "SELECT id FROM bookmarks WHERE parent_id IS NULL AND is_folder = 1 AND title = @title LIMIT 1"
+            : "SELECT id FROM bookmarks WHERE parent_id = @parent_id AND is_folder = 1 AND title = @title LIMIT 1";
+        if (parentId != null)
+            command.Parameters.AddWithValue("@parent_id", parentId);
+        command.Parameters.AddWithValue("@title", title.Trim());
+        return command.ExecuteScalar() as string;
+    }
+
+    private static string CreateBookmarkFolder(SqliteConnection connection, SqliteTransaction transaction, string? parentId, string title)
+    {
+        var id = Guid.NewGuid().ToString();
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = @"
+            INSERT INTO bookmarks (id, title, url, folder, parent_id, is_folder, sort_order)
+            VALUES (@id, @title, '', NULL, @parent_id, 1, @sort_order)";
+        command.Parameters.AddWithValue("@id", id);
+        command.Parameters.AddWithValue("@title", title.Trim());
+        command.Parameters.AddWithValue("@parent_id", (object?)parentId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@sort_order", NextBookmarkSortOrder(connection, transaction, parentId));
+        command.ExecuteNonQuery();
+        return id;
+    }
+
+    private static int NextBookmarkSortOrder(SqliteConnection connection, SqliteTransaction? transaction, string? parentId)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = parentId == null
+            ? "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM bookmarks WHERE parent_id IS NULL"
+            : "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM bookmarks WHERE parent_id = @parent_id";
+        if (parentId != null)
+            command.Parameters.AddWithValue("@parent_id", parentId);
+        return Convert.ToInt32(command.ExecuteScalar());
     }
     
     public List<Profile> GetAllProfiles()
@@ -624,9 +757,9 @@ public class DatabaseService
 
         var command = connection.CreateCommand();
         command.CommandText = @"
-            SELECT id, title, url, folder
+            SELECT id, title, url, folder, parent_id, is_folder, sort_order
             FROM bookmarks
-            ORDER BY COALESCE(folder, ''), title";
+            ORDER BY COALESCE(parent_id, ''), is_folder DESC, sort_order, title";
 
         using var reader = command.ExecuteReader();
         while (reader.Read())
@@ -636,7 +769,10 @@ public class DatabaseService
                 Id = reader.GetString(0),
                 Title = reader.GetString(1),
                 Url = reader.GetString(2),
-                Folder = reader.IsDBNull(3) ? null : reader.GetString(3)
+                Folder = reader.IsDBNull(3) ? null : reader.GetString(3),
+                ParentId = reader.IsDBNull(4) ? null : reader.GetString(4),
+                IsFolder = reader.GetInt32(5) == 1,
+                SortOrder = reader.GetInt32(6)
             });
         }
 
@@ -650,13 +786,16 @@ public class DatabaseService
 
         var command = connection.CreateCommand();
         command.CommandText = @"
-            INSERT INTO bookmarks (id, title, url, folder)
-            VALUES (@id, @title, @url, @folder)";
+            INSERT INTO bookmarks (id, title, url, folder, parent_id, is_folder, sort_order)
+            VALUES (@id, @title, @url, @folder, @parent_id, @is_folder, @sort_order)";
 
         command.Parameters.AddWithValue("@id", bookmark.Id);
         command.Parameters.AddWithValue("@title", bookmark.Title.Trim());
-        command.Parameters.AddWithValue("@url", bookmark.Url.Trim());
-        command.Parameters.AddWithValue("@folder", (object?)bookmark.Folder ?? DBNull.Value);
+        command.Parameters.AddWithValue("@url", bookmark.IsFolder ? string.Empty : bookmark.Url.Trim());
+        command.Parameters.AddWithValue("@folder", (object?)BookmarkFolderPath(bookmark, GetAllBookmarks()) ?? DBNull.Value);
+        command.Parameters.AddWithValue("@parent_id", (object?)bookmark.ParentId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@is_folder", bookmark.IsFolder ? 1 : 0);
+        command.Parameters.AddWithValue("@sort_order", bookmark.SortOrder > 0 ? bookmark.SortOrder : NextBookmarkSortOrder(connection, null, bookmark.ParentId));
         command.ExecuteNonQuery();
     }
 
@@ -668,13 +807,21 @@ public class DatabaseService
         var command = connection.CreateCommand();
         command.CommandText = @"
             UPDATE bookmarks
-            SET title = @title, url = @url, folder = @folder
+            SET title = @title,
+                url = @url,
+                folder = @folder,
+                parent_id = @parent_id,
+                is_folder = @is_folder,
+                sort_order = @sort_order
             WHERE id = @id";
 
         command.Parameters.AddWithValue("@id", bookmark.Id);
         command.Parameters.AddWithValue("@title", bookmark.Title.Trim());
-        command.Parameters.AddWithValue("@url", bookmark.Url.Trim());
-        command.Parameters.AddWithValue("@folder", (object?)bookmark.Folder ?? DBNull.Value);
+        command.Parameters.AddWithValue("@url", bookmark.IsFolder ? string.Empty : bookmark.Url.Trim());
+        command.Parameters.AddWithValue("@folder", (object?)BookmarkFolderPath(bookmark, GetAllBookmarks()) ?? DBNull.Value);
+        command.Parameters.AddWithValue("@parent_id", (object?)bookmark.ParentId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@is_folder", bookmark.IsFolder ? 1 : 0);
+        command.Parameters.AddWithValue("@sort_order", bookmark.SortOrder);
         command.ExecuteNonQuery();
     }
 
@@ -682,11 +829,54 @@ public class DatabaseService
     {
         using var connection = new SqliteConnection(_connectionString);
         connection.Open();
+        using var transaction = connection.BeginTransaction();
 
-        var command = connection.CreateCommand();
-        command.CommandText = "DELETE FROM bookmarks WHERE id = @id";
-        command.Parameters.AddWithValue("@id", id);
-        command.ExecuteNonQuery();
+        DeleteBookmarkTree(connection, transaction, id);
+        transaction.Commit();
+    }
+
+    private static void DeleteBookmarkTree(SqliteConnection connection, SqliteTransaction transaction, string id)
+    {
+        var childIds = new List<string>();
+        using (var children = connection.CreateCommand())
+        {
+            children.Transaction = transaction;
+            children.CommandText = "SELECT id FROM bookmarks WHERE parent_id = @id";
+            children.Parameters.AddWithValue("@id", id);
+            using var reader = children.ExecuteReader();
+            while (reader.Read())
+                childIds.Add(reader.GetString(0));
+        }
+
+        foreach (var childId in childIds)
+            DeleteBookmarkTree(connection, transaction, childId);
+
+        using var delete = connection.CreateCommand();
+        delete.Transaction = transaction;
+        delete.CommandText = "DELETE FROM bookmarks WHERE id = @id";
+        delete.Parameters.AddWithValue("@id", id);
+        delete.ExecuteNonQuery();
+    }
+
+    private static string? BookmarkFolderPath(BookmarkItem bookmark, IReadOnlyCollection<BookmarkItem> all)
+    {
+        if (bookmark.IsFolder)
+            return null;
+
+        if (string.IsNullOrWhiteSpace(bookmark.ParentId))
+            return string.IsNullOrWhiteSpace(bookmark.Folder) ? null : bookmark.Folder.Trim();
+
+        var byId = all.ToDictionary(item => item.Id, StringComparer.Ordinal);
+        var parts = new Stack<string>();
+        var currentId = bookmark.ParentId;
+        while (!string.IsNullOrWhiteSpace(currentId) && byId.TryGetValue(currentId, out var current))
+        {
+            if (current.IsFolder && !string.IsNullOrWhiteSpace(current.Title))
+                parts.Push(current.Title.Trim());
+            currentId = current.ParentId;
+        }
+
+        return parts.Count == 0 ? null : string.Join("/", parts);
     }
 
     private static bool ColumnExists(SqliteConnection connection, SqliteTransaction transaction, string tableName, string columnName)

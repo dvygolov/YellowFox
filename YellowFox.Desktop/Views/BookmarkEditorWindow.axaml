@@ -1,0 +1,73 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:YellowFox.Desktop.ViewModels"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="500" d:DesignHeight="400"
+        x:Class="YellowFox.Desktop.Views.BookmarkEditorWindow"
+        x:DataType="vm:BookmarkEditorViewModel"
+        Icon="/Assets/yellowfox.ico"
+        Width="500" Height="380"
+        MinWidth="460" MinHeight="360"
+        Title="{Binding Title}"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="#252526">
+
+    <DockPanel Margin="24">
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Center" Spacing="15" Margin="0,24,0,0">
+            <Button Content="Save"
+                    AutomationProperties.AutomationId="BookmarkEditorSaveButton"
+                    Width="140" Height="42"
+                    Click="SaveButton_Click"
+                    Background="#4CAF50"
+                    Foreground="White"
+                    BorderThickness="0"
+                    CornerRadius="8"
+                    FontWeight="SemiBold" />
+            <Button Content="Cancel"
+                    AutomationProperties.AutomationId="BookmarkEditorCancelButton"
+                    Width="140" Height="42"
+                    Click="CancelButton_Click"
+                    Background="#3E3E42"
+                    Foreground="#CCCCCC"
+                    BorderThickness="0"
+                    CornerRadius="8"
+                    FontWeight="SemiBold" />
+        </StackPanel>
+
+        <StackPanel Spacing="14">
+            <TextBlock Text="{Binding Title}" FontSize="20" FontWeight="Bold" Foreground="#CCCCCC" Margin="0,0,0,8" />
+
+            <TextBlock Foreground="#858585" FontSize="12">
+                <Run Text="Parent: " />
+                <Run Text="{Binding ParentDisplay}" />
+            </TextBlock>
+
+            <StackPanel Spacing="6">
+                <TextBlock Text="Name *" Foreground="#CCCCCC" FontWeight="SemiBold" />
+                <TextBox AutomationProperties.AutomationId="BookmarkTitleInput"
+                         Text="{Binding TitleText, UpdateSourceTrigger=PropertyChanged}"
+                         Watermark="Name"
+                         Background="#1E1E1E"
+                         Foreground="#CCCCCC"
+                         BorderBrush="#3E3E42"
+                         Padding="12,10"
+                         CornerRadius="6" />
+            </StackPanel>
+
+            <StackPanel Spacing="6" IsVisible="{Binding IsBookmark}">
+                <TextBlock Text="URL *" Foreground="#CCCCCC" FontWeight="SemiBold" />
+                <TextBox AutomationProperties.AutomationId="BookmarkUrlInput"
+                         Text="{Binding Url, UpdateSourceTrigger=PropertyChanged}"
+                         Watermark="https://example.com"
+                         Background="#1E1E1E"
+                         Foreground="#CCCCCC"
+                         BorderBrush="#3E3E42"
+                         Padding="12,10"
+                         CornerRadius="6" />
+            </StackPanel>
+
+        </StackPanel>
+    </DockPanel>
+</Window>

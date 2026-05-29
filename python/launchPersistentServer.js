@@ -1,11 +1,4 @@
-const { createPlaywright } = require(`${process.cwd()}/lib/server/playwright.js`);
-const { PlaywrightServer } = require(`${process.cwd()}/lib/remote/playwrightServer.js`);
-const { serverSideCallMetadata } = require(`${process.cwd()}/lib/server/instrumentation.js`);
-const { helper } = require(`${process.cwd()}/lib/server/helper.js`);
-const { createGuid } = require(`${process.cwd()}/lib/server/utils/crypto.js`);
-const { DEFAULT_PLAYWRIGHT_LAUNCH_TIMEOUT } = require(`${process.cwd()}/lib/utils/isomorphic/time.js`);
-const { rewriteErrorMessage } = require(`${process.cwd()}/lib/utils/isomorphic/stackTrace.js`);
-const { EventEmitter } = require(`${process.cwd()}/lib/utilsBundle.js`).ws;
+const playwright = require(process.cwd());
 
 function collectData() {
   return new Promise((resolve) => {
@@ -20,16 +13,6 @@ function collectData() {
   });
 }
 
-function envObjectToArray(env) {
-  const result = [];
-  for (const name in env) {
-    if (!Object.is(env[name], undefined)) {
-      result.push({ name, value: String(env[name]) });
-    }
-  }
-  return result;
-}
-
 collectData().then(async (options) => {
   console.time("Server launched");
   console.info("Launching persistent server...");
@@ -42,39 +25,16 @@ collectData().then(async (options) => {
   delete options.userDataDir;
   delete options.persistentContext;
 
-  const playwright = createPlaywright({ sdkLanguage: "javascript", isServer: true });
-  const metadata = serverSideCallMetadata();
-  const context = await playwright.firefox.launchPersistentContext(metadata, userDataDir, {
+  const browserServer = await playwright.firefox.launchServer({
     ...options,
     ignoreDefaultArgs: Array.isArray(options.ignoreDefaultArgs) ? options.ignoreDefaultArgs : undefined,
     ignoreAllDefaultArgs: !!options.ignoreDefaultArgs && !Array.isArray(options.ignoreDefaultArgs),
-    env: options.env ? envObjectToArray(options.env) : undefined,
-    timeout: options.timeout ?? DEFAULT_PLAYWRIGHT_LAUNCH_TIMEOUT
+    _userDataDir: userDataDir,
+    _sharedBrowser: true
   }).catch((error) => {
-    const log = helper.formatBrowserLogs(metadata.log);
-    rewriteErrorMessage(error, `${error.message} Failed to launch persistent browser.${log}`);
+    error.message = `${error.message} Failed to launch persistent browser.`;
     throw error;
   });
-
-  const browser = context._browser;
-  const path = options.wsPath ? (options.wsPath.startsWith("/") ? options.wsPath : `/${options.wsPath}`) : `/${createGuid()}`;
-  const server = new PlaywrightServer({
-    mode: "launchServerShared",
-    path,
-    maxConnections: Infinity,
-    preLaunchedBrowser: browser,
-    preLaunchedSocksProxy: undefined
-  });
-  const wsEndpoint = await server.listen(options.port, options.host);
-  const browserServer = new EventEmitter();
-  browserServer.process = () => browser.options.browserProcess.process;
-  browserServer.wsEndpoint = () => wsEndpoint;
-  browserServer.close = () => browser.options.browserProcess.close();
-  browserServer.kill = () => browser.options.browserProcess.kill();
-  browser.options.browserProcess.onclose = (exitCode, signal) => {
-    server.close();
-    browserServer.emit("close", exitCode, signal);
-  };
 
   console.timeEnd("Server launched");
   console.log("Websocket endpoint:\x1b[93m", browserServer.wsEndpoint(), "\x1b[0m");

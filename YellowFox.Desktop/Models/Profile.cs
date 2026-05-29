@@ -54,11 +54,18 @@ public class ScreenPreset
     
     public static readonly ScreenPreset[] Presets = new[]
     {
-        new ScreenPreset { Name = "1920x1080 (Full HD)", Width = 1920, Height = 1080 },
-        new ScreenPreset { Name = "1366x768 (Laptop)", Width = 1366, Height = 768 },
+        new ScreenPreset { Name = "1280x720 (HD)", Width = 1280, Height = 720 },
         new ScreenPreset { Name = "2560x1440 (2K)", Width = 2560, Height = 1440 },
-        new ScreenPreset { Name = "3840x2160 (4K)", Width = 3840, Height = 2160 },
-        new ScreenPreset { Name = "1536x864 (HD+)", Width = 1536, Height = 864 }
+        new ScreenPreset { Name = "1366x768 (Laptop)", Width = 1366, Height = 768 },
+        new ScreenPreset { Name = "1440x900 (WXGA+)", Width = 1440, Height = 900 },
+        new ScreenPreset { Name = "1536x864 (HD+)", Width = 1536, Height = 864 },
+        new ScreenPreset { Name = "1600x900 (HD+)", Width = 1600, Height = 900 },
+        new ScreenPreset { Name = "1920x1080 (Full HD)", Width = 1920, Height = 1080 },
+        new ScreenPreset { Name = "1920x1200 (WUXGA)", Width = 1920, Height = 1200 },
+        new ScreenPreset { Name = "2048x1152 (QWXGA)", Width = 2048, Height = 1152 },
+        new ScreenPreset { Name = "2560x1600 (WQXGA)", Width = 2560, Height = 1600 },
+        new ScreenPreset { Name = "3440x1440 (Ultrawide)", Width = 3440, Height = 1440 },
+        new ScreenPreset { Name = "3840x2160 (4K)", Width = 3840, Height = 2160 }
     };
     
     public override string ToString() => Name;

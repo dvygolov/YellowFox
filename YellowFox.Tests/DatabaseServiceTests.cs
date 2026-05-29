@@ -189,6 +189,44 @@ public class DatabaseServiceTests : IDisposable
         Assert.Equal("Work", all[0].Folder);
     }
 
+    [Fact]
+    public void CreateAndDeleteBookmarkFolder_ShouldPersistTree()
+    {
+        var database = new DatabaseService(_testDataDir, disablePooling: true);
+        var rootFolder = new BookmarkItem
+        {
+            Title = "Root",
+            IsFolder = true
+        };
+        database.CreateBookmark(rootFolder);
+
+        var childFolder = new BookmarkItem
+        {
+            Title = "Child",
+            ParentId = rootFolder.Id,
+            IsFolder = true
+        };
+        database.CreateBookmark(childFolder);
+
+        var bookmark = new BookmarkItem
+        {
+            Title = "Example",
+            Url = "https://example.com",
+            ParentId = childFolder.Id
+        };
+        database.CreateBookmark(bookmark);
+
+        var all = database.GetAllBookmarks();
+        Assert.Equal(3, all.Count);
+        Assert.Contains(all, item => item.Id == rootFolder.Id && item.IsFolder && item.ParentId == null);
+        Assert.Contains(all, item => item.Id == childFolder.Id && item.IsFolder && item.ParentId == rootFolder.Id);
+        Assert.Contains(all, item => item.Id == bookmark.Id && item.ParentId == childFolder.Id && item.Folder == "Root/Child");
+
+        database.DeleteBookmark(rootFolder.Id);
+
+        Assert.Empty(database.GetAllBookmarks());
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_testDataDir))

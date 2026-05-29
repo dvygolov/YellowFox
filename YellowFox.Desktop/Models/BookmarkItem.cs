@@ -8,4 +8,7 @@ public class BookmarkItem
     public string Title { get; set; } = string.Empty;
     public string Url { get; set; } = string.Empty;
     public string? Folder { get; set; }
+    public string? ParentId { get; set; }
+    public bool IsFolder { get; set; }
+    public int SortOrder { get; set; }
 }
