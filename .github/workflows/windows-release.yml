@@ -1,0 +1,103 @@
+name: Windows release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    tags:
+      - "v*"
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Windows x64
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Restore .NET
+        run: dotnet restore YellowFox.sln
+
+      - name: Test
+        run: dotnet test YellowFox.sln --configuration Release --no-restore
+
+      - name: Publish Desktop
+        run: >
+          dotnet publish YellowFox.Desktop/YellowFox.Desktop.csproj
+          --configuration Release
+          --runtime win-x64
+          --self-contained true
+          --no-restore
+          -p:PublishSingleFile=false
+          -p:DebugType=None
+          -p:DebugSymbols=false
+          --output artifacts/publish/YellowFox.Desktop
+
+      - name: Publish CLI
+        run: >
+          dotnet publish YellowFox.Cli/YellowFox.Cli.csproj
+          --configuration Release
+          --runtime win-x64
+          --self-contained true
+          --no-restore
+          -p:PublishSingleFile=false
+          -p:DebugType=None
+          -p:DebugSymbols=false
+          --output artifacts/publish/YellowFox.Cli
+
+      - name: Add release notes
+        shell: pwsh
+        run: |
+          @"
+          YellowFox Windows x64 release.
+
+          Contents:
+          - YellowFox.Desktop
+          - YellowFox.Cli
+          - Python broker scripts copied with the desktop app
+
+          First run requirements:
+          - Install Python dependencies if the bundled publish does not include a local Python runtime.
+          - Run python/install-camoufox-browser.py to install the pinned Camoufox/Clover browser build.
+          "@ | Set-Content -Path artifacts/publish/README-RELEASE.txt -Encoding UTF8
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $version = if ("${{ github.ref_type }}" -eq "tag") { "${{ github.ref_name }}" } else { "${{ github.sha }}".Substring(0, 8) }
+          $zip = "YellowFox-windows-x64-$version.zip"
+          Compress-Archive -Path artifacts/publish/* -DestinationPath $zip -Force
+          "zip=$zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+        id: package
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: YellowFox-windows-x64
+          path: ${{ steps.package.outputs.zip }}
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.package.outputs.zip }}
+          generate_release_notes: true
