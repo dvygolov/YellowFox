@@ -1,0 +1,124 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:YellowFox.Desktop.ViewModels"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        d:DesignWidth="760"
+        d:DesignHeight="600"
+        x:Class="YellowFox.Desktop.Views.CookieImportWindow"
+        x:DataType="vm:CookieImportViewModel"
+        Icon="/Assets/yellowfox.ico"
+        Width="760"
+        Height="600"
+        MinWidth="640"
+        MinHeight="520"
+        Title="{Binding Title}"
+        WindowStartupLocation="CenterOwner"
+        CanResize="True"
+        Background="#252526">
+
+    <DockPanel Margin="24">
+        <Grid DockPanel.Dock="Bottom"
+              ColumnDefinitions="Auto,*,Auto,Auto"
+              ColumnSpacing="10"
+              Margin="0,18,0,0">
+            <Button Grid.Column="0"
+                    AutomationProperties.AutomationId="CookieImportLoadFileButton"
+                    Click="LoadFileButton_Click"
+                    Padding="14,9"
+                    Background="#3E3E42"
+                    Foreground="#CCCCCC"
+                    BorderThickness="0"
+                    CornerRadius="6"
+                    HorizontalContentAlignment="Center"
+                    VerticalContentAlignment="Center">
+                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                    <TextBlock Text="&#xE8E5;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center" />
+                    <TextBlock Text="Load from file" VerticalAlignment="Center" />
+                </StackPanel>
+            </Button>
+            <Button Grid.Column="2"
+                    AutomationProperties.AutomationId="CookieImportCancelButton"
+                    Width="120"
+                    Height="40"
+                    Click="CancelButton_Click"
+                    Background="#3E3E42"
+                    Foreground="#CCCCCC"
+                    BorderThickness="0"
+                    CornerRadius="8"
+                    FontWeight="SemiBold"
+                    HorizontalContentAlignment="Center"
+                    VerticalContentAlignment="Center">
+                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                    <TextBlock Text="&#xE711;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center" />
+                    <TextBlock Text="Cancel" VerticalAlignment="Center" />
+                </StackPanel>
+            </Button>
+            <Button Grid.Column="3"
+                    AutomationProperties.AutomationId="CookieImportImportButton"
+                    Width="120"
+                    Height="40"
+                    Click="ImportButton_Click"
+                    Background="#4CAF50"
+                    Foreground="White"
+                    BorderThickness="0"
+                    CornerRadius="8"
+                    FontWeight="SemiBold"
+                    HorizontalContentAlignment="Center"
+                    VerticalContentAlignment="Center">
+                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                    <TextBlock Text="&#xE8B5;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center" />
+                    <TextBlock Text="Import" VerticalAlignment="Center" />
+                </StackPanel>
+            </Button>
+        </Grid>
+
+        <Grid RowDefinitions="Auto,Auto,*"
+              RowSpacing="14">
+            <TextBlock Grid.Row="0"
+                       Text="{Binding Title}"
+                       Foreground="#CCCCCC"
+                       FontSize="20"
+                       FontWeight="Bold" />
+
+            <StackPanel Grid.Row="1" Spacing="6">
+                <TextBlock Text="Domain for name=value format"
+                           Foreground="#CCCCCC"
+                           FontWeight="SemiBold" />
+                <TextBox AutomationProperties.AutomationId="CookieImportDomainInput"
+                         Text="{Binding Domain, UpdateSourceTrigger=PropertyChanged}"
+                         Watermark="facebook.com"
+                         Background="#1E1E1E"
+                         Foreground="#CCCCCC"
+                         BorderBrush="#3E3E42"
+                         Padding="12,9"
+                         CornerRadius="6" />
+            </StackPanel>
+
+            <Grid Grid.Row="2"
+                  RowDefinitions="Auto,*"
+                  RowSpacing="6">
+                <TextBlock Grid.Row="0"
+                           Text="Cookies"
+                           Foreground="#CCCCCC"
+                           FontWeight="SemiBold" />
+                <TextBox Grid.Row="1"
+                         AutomationProperties.AutomationId="CookieImportTextInput"
+                         Text="{Binding CookieText, UpdateSourceTrigger=PropertyChanged}"
+                         Watermark="Paste JSON cookies or name=value; name2=value2"
+                         AcceptsReturn="True"
+                         TextWrapping="Wrap"
+                         HorizontalAlignment="Stretch"
+                         VerticalAlignment="Stretch"
+                         Background="#1E1E1E"
+                         Foreground="#CCCCCC"
+                         BorderBrush="#3E3E42"
+                         Padding="12,10"
+                         CornerRadius="6"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto" />
+            </Grid>
+        </Grid>
+    </DockPanel>
+</Window>

@@ -48,11 +48,15 @@ async def drain_reply_address(reader):
 
 async def authenticate_upstream(reader, writer, username, password):
     if username or password:
-        writer.write(b"\x05\x01\x02")
+        writer.write(b"\x05\x02\x00\x02")
         await writer.drain()
         response = await read_exact(reader, 2)
-        if response != b"\x05\x02":
-            raise ConnectionError("Upstream SOCKS5 proxy did not accept username/password auth")
+        if response[0] != 5 or response[1] == 0xFF:
+            raise ConnectionError("Upstream SOCKS5 proxy did not accept supported auth methods")
+        if response[1] == 0x00:
+            return
+        if response[1] != 0x02:
+            raise ConnectionError("Upstream SOCKS5 proxy selected an unsupported auth method")
 
         username_bytes = username.encode("utf-8")
         password_bytes = password.encode("utf-8")

@@ -4,16 +4,17 @@
 from __future__ import annotations
 
 import json
-import os
 import argparse
 import shutil
-import subprocess
-import sys
 import time
 import zipfile
 from pathlib import Path
 
 import requests
+from yellowfox_camoufox_home import configure_camoufox_home
+
+configure_camoufox_home()
+
 from camoufox.multiversion import BROWSERS_DIR, COMPAT_FLAG, CONFIG_FILE, REPO_CACHE_FILE
 
 
@@ -27,15 +28,9 @@ MAX_ATTEMPTS = 30
 
 
 def sync_repo_cache() -> None:
-    env = os.environ.copy()
-    env["PYTHONUTF8"] = "1"
-    subprocess.run(
-        [sys.executable, "-m", "camoufox", "sync"],
-        check=True,
-        env=env,
-        stdout=sys.stderr,
-        stderr=sys.stderr,
-    )
+    from camoufox.__main__ import _do_sync
+
+    _do_sync()
 
 
 def load_repo_cache(force_sync: bool = False) -> dict:

@@ -154,6 +154,29 @@ public partial class ExtensionsViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    private async Task ImportUrl()
+    {
+        var window = new ExtensionUrlImportWindow();
+        var confirmed = await window.ShowDialog<bool>(GetMainWindow());
+        if (!confirmed)
+            return;
+
+        try
+        {
+            StatusMessage = "Downloading extension...";
+            var extension = await _extensionStorageService.ImportFromUrlAsync(window.ExtensionUrl);
+            StatusMessage = $"Imported: {extension.Name}";
+            Load();
+            SelectedExtension = Extensions.FirstOrDefault(e => e.Extension.Id == extension.Id);
+        }
+        catch (Exception ex)
+        {
+            StatusMessage = "Import failed";
+            await ShowMessage("Import Error", ex.Message);
+        }
+    }
+
+    [RelayCommand]
     private async Task BrowseExtensionFile()
     {
         var mainWindow = GetMainWindow();

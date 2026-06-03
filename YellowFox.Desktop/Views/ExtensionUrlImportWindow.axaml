@@ -1,25 +1,23 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:vm="using:YellowFox.Desktop.ViewModels"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        mc:Ignorable="d" d:DesignWidth="500" d:DesignHeight="400"
-        x:Class="YellowFox.Desktop.Views.BookmarkEditorWindow"
-        x:DataType="vm:BookmarkEditorViewModel"
+        mc:Ignorable="d" d:DesignWidth="560" d:DesignHeight="250"
+        x:Class="YellowFox.Desktop.Views.ExtensionUrlImportWindow"
         Icon="/Assets/yellowfox.ico"
-        Width="500" Height="380"
-        MinWidth="460" MinHeight="360"
-        Title="{Binding Title}"
+        Width="560" Height="250"
+        MinWidth="520" MinHeight="240"
+        Title="Import Extension URL"
         WindowStartupLocation="CenterOwner"
         CanResize="False"
         Background="#252526">
 
     <DockPanel Margin="24">
         <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Center" Spacing="15" Margin="0,24,0,0">
-            <Button AutomationProperties.AutomationId="BookmarkEditorSaveButton"
+            <Button AutomationProperties.AutomationId="ExtensionUrlImportButton"
                     Width="140" Height="42"
-                    Click="SaveButton_Click"
-                    Background="#4CAF50"
+                    Click="ImportButton_Click"
+                    Background="#235A8F"
                     Foreground="White"
                     BorderThickness="0"
                     CornerRadius="8"
@@ -27,11 +25,11 @@
                     HorizontalContentAlignment="Center"
                     VerticalContentAlignment="Center">
                 <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
-                    <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center" />
-                    <TextBlock Text="Save" VerticalAlignment="Center" />
+                    <TextBlock Text="&#xE8B5;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center" />
+                    <TextBlock Text="Import" VerticalAlignment="Center" />
                 </StackPanel>
             </Button>
-            <Button AutomationProperties.AutomationId="BookmarkEditorCancelButton"
+            <Button AutomationProperties.AutomationId="ExtensionUrlCancelButton"
                     Width="140" Height="42"
                     Click="CancelButton_Click"
                     Background="#3E3E42"
@@ -49,37 +47,20 @@
         </StackPanel>
 
         <StackPanel Spacing="14">
-            <TextBlock Text="{Binding Title}" FontSize="20" FontWeight="Bold" Foreground="#CCCCCC" Margin="0,0,0,8" />
-
-            <TextBlock Foreground="#858585" FontSize="12">
-                <Run Text="Parent: " />
-                <Run Text="{Binding ParentDisplay}" />
-            </TextBlock>
+            <TextBlock Text="Import Extension URL" Foreground="#CCCCCC" FontSize="20" FontWeight="Bold" Margin="0,0,0,8" />
 
             <StackPanel Spacing="6">
-                <TextBlock Text="Name *" Foreground="#CCCCCC" FontWeight="SemiBold" />
-                <TextBox AutomationProperties.AutomationId="BookmarkTitleInput"
-                         Text="{Binding TitleText, UpdateSourceTrigger=PropertyChanged}"
-                         Watermark="Name"
-                         Background="#1E1E1E"
-                         Foreground="#CCCCCC"
-                         BorderBrush="#3E3E42"
-                         Padding="12,10"
-                         CornerRadius="6" />
-            </StackPanel>
-
-            <StackPanel Spacing="6" IsVisible="{Binding IsBookmark}">
                 <TextBlock Text="URL *" Foreground="#CCCCCC" FontWeight="SemiBold" />
-                <TextBox AutomationProperties.AutomationId="BookmarkUrlInput"
-                         Text="{Binding Url, UpdateSourceTrigger=PropertyChanged}"
-                         Watermark="https://example.com"
+                <TextBox x:Name="UrlTextBox"
+                         AutomationProperties.AutomationId="ExtensionUrlInput"
+                         Watermark="AMO add-on page, or direct .xpi/.zip URL"
                          Background="#1E1E1E"
                          Foreground="#CCCCCC"
                          BorderBrush="#3E3E42"
                          Padding="12,10"
-                         CornerRadius="6" />
+                         CornerRadius="6"
+                         TextWrapping="NoWrap" />
             </StackPanel>
-
         </StackPanel>
     </DockPanel>
 </Window>

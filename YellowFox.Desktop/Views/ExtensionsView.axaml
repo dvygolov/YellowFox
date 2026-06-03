@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:YellowFox.Desktop.ViewModels"
+             xmlns:behaviors="using:YellowFox.Desktop.Behaviors"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d"
@@ -17,7 +18,7 @@
                 Padding="20,12">
             <StackPanel Orientation="Horizontal" Spacing="8">
                     <Button AutomationProperties.AutomationId="NewExtensionButton"
-                            Content="New"
+                            Content="➕ New"
                             Command="{Binding NewExtensionCommand}"
                             Padding="14,7"
                             Background="#4CAF50"
@@ -25,7 +26,7 @@
                             BorderThickness="0"
                             CornerRadius="5" />
                     <Button AutomationProperties.AutomationId="EditExtensionButton"
-                            Content="Edit"
+                            Content="✏️ Edit"
                             Command="{Binding EditExtensionCommand}"
                             Padding="14,7"
                             Background="#3E3E42"
@@ -34,15 +35,23 @@
                             CornerRadius="5"
                             IsEnabled="{Binding HasSelection}" />
                     <Button AutomationProperties.AutomationId="ImportExtensionArchiveButton"
-                            Content="Import Archive"
+                            Content="📦 Import Archive"
                             Command="{Binding ImportArchiveCommand}"
                             Padding="14,7"
                             Background="#235A8F"
                             Foreground="White"
                             BorderThickness="0"
                             CornerRadius="5" />
+                    <Button AutomationProperties.AutomationId="ImportExtensionUrlButton"
+                            Content="🌐 Import URL"
+                            Command="{Binding ImportUrlCommand}"
+                            Padding="14,7"
+                            Background="#235A8F"
+                            Foreground="White"
+                            BorderThickness="0"
+                            CornerRadius="5" />
                     <Button AutomationProperties.AutomationId="ToggleExtensionEnabledButton"
-                            Content="Toggle"
+                            Content="🔌 Toggle"
                             Command="{Binding ToggleEnabledCommand}"
                             Padding="14,7"
                             Background="#3E3E42"
@@ -51,7 +60,7 @@
                             CornerRadius="5"
                             IsEnabled="{Binding HasSelection}" />
                     <Button AutomationProperties.AutomationId="DeleteExtensionButton"
-                            Content="Delete"
+                            Content="🗑️ Delete"
                             Command="{Binding DeleteSelectedCommand}"
                             Padding="14,7"
                             Background="#A33A3A"
@@ -60,7 +69,7 @@
                             CornerRadius="5"
                             IsEnabled="{Binding HasSelection}" />
                     <Button AutomationProperties.AutomationId="ExtensionsRefreshButton"
-                            Content="Refresh"
+                            Content="🔄 Refresh"
                             Command="{Binding RefreshCommand}"
                             Padding="14,7"
                             Background="#3E3E42"
@@ -81,38 +90,49 @@
                   Foreground="#CCCCCC"
                   BorderBrush="#3E3E42"
                   RowBackground="#1E1E1E"
-                  HeadersVisibility="Column">
+                  HeadersVisibility="Column"
+                  ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                  ScrollViewer.VerticalScrollBarVisibility="Auto"
+                  CanUserResizeColumns="True"
+                  behaviors:DataGridColumnWidthPersistence.Key="Extensions">
             <DataGrid.Columns>
-                <DataGridTemplateColumn Header="Extension" Width="260">
+                <DataGridTemplateColumn Header="" Width="54" CanUserSort="False">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate x:DataType="vm:ExtensionItemViewModel">
-                            <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                                <Border Width="28"
-                                        Height="28"
-                                        CornerRadius="5"
-                                        Background="#34373C"
-                                        VerticalAlignment="Center">
-                                    <Grid>
-                                        <Image Source="{Binding Icon}"
-                                               Width="22"
-                                               Height="22"
-                                               Stretch="Uniform"
+                            <Border Width="28"
+                                    Height="28"
+                                    CornerRadius="5"
+                                    Background="#34373C"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center"
+                                    Margin="8,2,6,2">
+                                <Grid>
+                                    <Image Source="{Binding Icon}"
+                                           Width="22"
+                                           Height="22"
+                                           Stretch="Uniform"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
+                                           IsVisible="{Binding HasIcon}" />
+                                    <TextBlock Text="{Binding Initial}"
+                                               Foreground="#CCCCCC"
+                                               FontWeight="SemiBold"
                                                HorizontalAlignment="Center"
                                                VerticalAlignment="Center"
-                                               IsVisible="{Binding HasIcon}" />
-                                        <TextBlock Text="{Binding Initial}"
-                                                   Foreground="#CCCCCC"
-                                                   FontWeight="SemiBold"
-                                                   HorizontalAlignment="Center"
-                                                   VerticalAlignment="Center"
-                                                   IsVisible="{Binding HasNoIcon}" />
-                                    </Grid>
-                                </Border>
-                                <TextBlock Text="{Binding Name}"
-                                           Foreground="#CCCCCC"
-                                           VerticalAlignment="Center"
-                                           TextTrimming="CharacterEllipsis" />
-                            </StackPanel>
+                                               IsVisible="{Binding HasNoIcon}" />
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTemplateColumn Header="Extension" Width="220" SortMemberPath="Name">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate x:DataType="vm:ExtensionItemViewModel">
+                            <TextBlock Text="{Binding Name}"
+                                       Foreground="#CCCCCC"
+                                       VerticalAlignment="Center"
+                                       Margin="8,0,10,0"
+                                       TextTrimming="CharacterEllipsis" />
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>

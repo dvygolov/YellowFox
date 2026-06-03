@@ -79,7 +79,8 @@ public class DatabaseServiceTests : IDisposable
             Host = "5.6.7.8",
             Port = 1080,
             Username = "user",
-            Password = "pass"
+            Password = "pass",
+            IpChangeUrl = "https://proxy.example/rotate"
         };
 
         database.CreateProxy(proxy);
@@ -89,6 +90,7 @@ public class DatabaseServiceTests : IDisposable
         Assert.Equal("socks5", saved!.Type);
         Assert.Equal("user", saved.Username);
         Assert.Equal("pass", saved.Password);
+        Assert.Equal("https://proxy.example/rotate", saved.IpChangeUrl);
         Assert.True(saved.IsEnabled);
     }
 
@@ -145,6 +147,17 @@ public class DatabaseServiceTests : IDisposable
         Assert.StartsWith(database.GetExtensionsDataDirectory(), extension.Path);
         Assert.True(File.Exists(Path.Combine(extension.Path, "manifest.json")));
         Assert.True(BrowserService.IsExtensionPathUsable(extension.Path));
+    }
+
+    [Fact]
+    public void TryBuildAmoApiUrl_ShouldExtractAddonSlug()
+    {
+        var ok = ExtensionStorageService.TryBuildAmoApiUrl(
+            "https://addons.mozilla.org/en-US/firefox/addon/darkreader/",
+            out var apiUrl);
+
+        Assert.True(ok);
+        Assert.Equal("https://addons.mozilla.org/api/v5/addons/addon/darkreader/?app=firefox", apiUrl);
     }
 
     [Fact]

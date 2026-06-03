@@ -56,10 +56,7 @@ public partial class ProfilesViewModel : ViewModelBase
         
         foreach (var profile in profiles)
         {
-            var vm = new ProfileItemViewModel(profile, this, _databaseService);
-            vm.UpdateRunningStatus(_browserService.IsRunning(profile.Id));
-            vm.PropertyChanged += OnProfileItemPropertyChanged;
-            Profiles.Add(vm);
+            AddProfileItem(profile);
         }
         
         UpdateSelectedCount();
@@ -94,10 +91,18 @@ public partial class ProfilesViewModel : ViewModelBase
         Profiles.Clear();
         foreach (var profile in filtered)
         {
-            var vm = new ProfileItemViewModel(profile, this, _databaseService);
-            vm.UpdateRunningStatus(_browserService.IsRunning(profile.Id));
-            Profiles.Add(vm);
+            AddProfileItem(profile);
         }
+
+        UpdateSelectedCount();
+    }
+
+    private void AddProfileItem(Profile profile)
+    {
+        var vm = new ProfileItemViewModel(profile, this, _databaseService);
+        vm.UpdateRunningStatus(_browserService.IsRunning(profile.Id));
+        vm.PropertyChanged += OnProfileItemPropertyChanged;
+        Profiles.Add(vm);
     }
     
     [RelayCommand]
@@ -217,23 +222,33 @@ public partial class ProfilesViewModel : ViewModelBase
 
     public async Task ImportCookies(ProfileItemViewModel profileVm)
     {
-        var mainWindow = GetMainWindow();
-        var files = await mainWindow.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
-        {
-            Title = $"Import cookies: {profileVm.Profile.Name}",
-            AllowMultiple = false,
-            FileTypeFilter = new[]
-            {
-                new FilePickerFileType("JSON") { Patterns = new[] { "*.json" } }
-            }
-        });
-
-        var file = files.FirstOrDefault();
-        if (file == null)
+        if (profileVm.IsImportingCookies)
             return;
 
-        var result = await _browserService.ImportCookiesAsync(profileVm.Profile.Id, file.Path.LocalPath);
-        await ShowInfo(result.Success ? "Cookies Import" : "Import Error", result.Message);
+        var importVm = new CookieImportViewModel(profileVm.Profile.Name);
+        var window = new CookieImportWindow
+        {
+            DataContext = importVm
+        };
+
+        var confirmed = await window.ShowDialog<bool>(GetMainWindow());
+        if (!confirmed)
+            return;
+
+        profileVm.IsImportingCookies = true;
+        try
+        {
+            var result = await _browserService.ImportCookiesFromTextAsync(
+                profileVm.Profile.Id,
+                importVm.CookieText,
+                importVm.Domain,
+                "manual input");
+            await ShowInfo(result.Success ? "Cookies Import" : "Import Error", result.Message);
+        }
+        finally
+        {
+            profileVm.IsImportingCookies = false;
+        }
     }
 
     public async Task OpenLog(ProfileItemViewModel profileVm)
@@ -348,6 +363,9 @@ public partial class ProfileItemViewModel : ViewModelBase
 
     [ObservableProperty]
     private bool _isNotesExpanded;
+
+    [ObservableProperty]
+    private bool _isImportingCookies;
     
     public Profile Profile { get; }
     public string ProxyDisplay
@@ -367,9 +385,16 @@ public partial class ProfileItemViewModel : ViewModelBase
     public bool IsNotesCollapsed => !IsNotesExpanded;
     public string NotesToggleIcon => IsNotesExpanded ? "\uE70E" : "\uE70D";
     public string NotesToggleTip => IsNotesExpanded ? "Collapse notes" : "Expand notes";
+    private OsOption OsOption => OsOption.FromId(Profile.FingerprintConfig.Os);
+    public string OsIconData => OsOption.IconData;
+    public string OsIconFill => OsOption.IconFill;
+    public double OsIconBoxSize => OsOption.Id == "linux" ? 16 : 17;
+    public string OsIconTip => OsOption.DisplayName;
     
     public string StatusIcon => IsRunning ? "🟢" : "⚫";
     public bool IsNotRunning => !IsRunning;
+    public bool IsRunningActionVisible => IsRunning && !IsImportingCookies;
+    public bool IsStartActionVisible => !IsRunning && !IsImportingCookies;
     
     public ProfileItemViewModel(Profile profile, ProfilesViewModel parent, DatabaseService databaseService)
     {
@@ -437,6 +462,8 @@ public partial class ProfileItemViewModel : ViewModelBase
     {
         OnPropertyChanged(nameof(StatusIcon));
         OnPropertyChanged(nameof(IsNotRunning));
+        OnPropertyChanged(nameof(IsRunningActionVisible));
+        OnPropertyChanged(nameof(IsStartActionVisible));
     }
 
     partial void OnIsNotesExpandedChanged(bool value)
@@ -444,6 +471,12 @@ public partial class ProfileItemViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsNotesCollapsed));
         OnPropertyChanged(nameof(NotesToggleIcon));
         OnPropertyChanged(nameof(NotesToggleTip));
+    }
+
+    partial void OnIsImportingCookiesChanged(bool value)
+    {
+        OnPropertyChanged(nameof(IsRunningActionVisible));
+        OnPropertyChanged(nameof(IsStartActionVisible));
     }
     
     public void UpdateRunningStatus(bool isRunning)

@@ -3,12 +3,12 @@
         xmlns:vm="using:YellowFox.Desktop.ViewModels"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        mc:Ignorable="d" d:DesignWidth="500" d:DesignHeight="520"
+        mc:Ignorable="d" d:DesignWidth="500" d:DesignHeight="600"
         x:Class="YellowFox.Desktop.Views.ProxyEditorWindow"
         x:DataType="vm:ProxyEditorViewModel"
         Icon="/Assets/yellowfox.ico"
-        Width="500" Height="540"
-        MinWidth="460" MinHeight="500"
+        Width="500" Height="620"
+        MinWidth="460" MinHeight="560"
         Title="{Binding Title}"
         WindowStartupLocation="CenterOwner"
         CanResize="False"
@@ -16,24 +16,36 @@
 
     <DockPanel Margin="24">
         <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Center" Spacing="15" Margin="0,24,0,0">
-            <Button Content="Save"
-                    AutomationProperties.AutomationId="ProxyEditorSaveButton"
+            <Button AutomationProperties.AutomationId="ProxyEditorSaveButton"
                     Width="140" Height="42"
                     Click="SaveButton_Click"
                     Background="#4CAF50"
                     Foreground="White"
                     BorderThickness="0"
                     CornerRadius="8"
-                    FontWeight="SemiBold" />
-            <Button Content="Cancel"
-                    AutomationProperties.AutomationId="ProxyEditorCancelButton"
+                    FontWeight="SemiBold"
+                    HorizontalContentAlignment="Center"
+                    VerticalContentAlignment="Center">
+                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                    <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center" />
+                    <TextBlock Text="Save" VerticalAlignment="Center" />
+                </StackPanel>
+            </Button>
+            <Button AutomationProperties.AutomationId="ProxyEditorCancelButton"
                     Width="140" Height="42"
                     Click="CancelButton_Click"
                     Background="#3E3E42"
                     Foreground="#CCCCCC"
                     BorderThickness="0"
                     CornerRadius="8"
-                    FontWeight="SemiBold" />
+                    FontWeight="SemiBold"
+                    HorizontalContentAlignment="Center"
+                    VerticalContentAlignment="Center">
+                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                    <TextBlock Text="&#xE711;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center" />
+                    <TextBlock Text="Cancel" VerticalAlignment="Center" />
+                </StackPanel>
+            </Button>
         </StackPanel>
 
         <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
@@ -102,15 +114,46 @@
                     </StackPanel>
                     <StackPanel Grid.Column="1" Spacing="6">
                         <TextBlock Text="Password" Foreground="#CCCCCC" FontWeight="SemiBold" />
-                        <TextBox AutomationProperties.AutomationId="ProxyPasswordInput"
-                                 Text="{Binding Password, UpdateSourceTrigger=PropertyChanged}"
-                                 Background="#1E1E1E"
-                                 Foreground="#CCCCCC"
-                                 BorderBrush="#3E3E42"
-                                 Padding="12,10"
-                                 CornerRadius="6" />
+                        <Grid ColumnDefinitions="*,38" ColumnSpacing="6">
+                            <TextBox Grid.Column="0"
+                                     AutomationProperties.AutomationId="ProxyPasswordInput"
+                                     Text="{Binding Password, UpdateSourceTrigger=PropertyChanged}"
+                                     PasswordChar="{Binding PasswordChar}"
+                                     Background="#1E1E1E"
+                                     Foreground="#CCCCCC"
+                                     BorderBrush="#3E3E42"
+                                     Padding="12,10"
+                                     CornerRadius="6" />
+                            <Button Grid.Column="1"
+                                    AutomationProperties.AutomationId="ProxyPasswordRevealButton"
+                                    Content="{Binding PasswordToggleIcon}"
+                                    Command="{Binding TogglePasswordVisibilityCommand}"
+                                    ToolTip.Tip="{Binding PasswordToggleTip}"
+                                    Background="#3E3E42"
+                                    Foreground="#CCCCCC"
+                                    BorderBrush="#4A4A50"
+                                    BorderThickness="1"
+                                    CornerRadius="6"
+                                    FontFamily="Segoe MDL2 Assets"
+                                    FontSize="15"
+                                    HorizontalContentAlignment="Center"
+                                    VerticalContentAlignment="Center" />
+                        </Grid>
                     </StackPanel>
                 </Grid>
+
+                <StackPanel Spacing="6">
+                    <TextBlock Text="IP change URL" Foreground="#CCCCCC" FontWeight="SemiBold" />
+                    <TextBox AutomationProperties.AutomationId="ProxyIpChangeUrlInput"
+                             Text="{Binding IpChangeUrl, UpdateSourceTrigger=PropertyChanged}"
+                             Watermark="https://provider.example/change-ip?token=..."
+                             Background="#1E1E1E"
+                             Foreground="#CCCCCC"
+                             BorderBrush="#3E3E42"
+                             Padding="12,10"
+                             CornerRadius="6"
+                             TextWrapping="NoWrap" />
+                </StackPanel>
 
                 <TextBlock Text="* Required fields" FontSize="11" Foreground="#858585" Margin="0,8,0,0" />
             </StackPanel>

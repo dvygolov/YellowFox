@@ -1,8 +1,10 @@
 using System;
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Controls;
+using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using MsBox.Avalonia;
@@ -19,6 +21,7 @@ public partial class ProxiesViewModel : ViewModelBase
 {
     private readonly DatabaseService _databaseService;
     private readonly ProxyValidatorService _proxyValidatorService;
+    private readonly ProxyIpRotationService _proxyIpRotationService;
 
     [ObservableProperty]
     private ProxyItemViewModel? _selectedProxy;
@@ -62,15 +65,17 @@ public partial class ProxiesViewModel : ViewModelBase
     public string FormTitle => IsEditMode ? "Edit Proxy" : "New Proxy";
     public bool IsHttpType => string.Equals(Type, "http", StringComparison.OrdinalIgnoreCase);
     public bool IsNotHttpType => !IsHttpType;
+    public bool CanChangeIp => SelectedProxy?.HasIpChangeUrl == true;
     public string ConnectionStatusText => IsLastCheckSuccessful ? "Active" : "Error";
     public string ConnectionStatusForeground => IsLastCheckSuccessful ? "#6EDB76" : "#FF6E6E";
     public string ConnectionStatusBackground => IsLastCheckSuccessful ? "#153A1B" : "#3A1515";
     public string ConnectionStatusBorder => IsLastCheckSuccessful ? "#2E7D32" : "#A33A3A";
 
-    public ProxiesViewModel(DatabaseService databaseService, ProxyValidatorService proxyValidatorService)
+    public ProxiesViewModel(DatabaseService databaseService, ProxyValidatorService proxyValidatorService, ProxyIpRotationService proxyIpRotationService)
     {
         _databaseService = databaseService;
         _proxyValidatorService = proxyValidatorService;
+        _proxyIpRotationService = proxyIpRotationService;
         LoadProxies();
     }
 
@@ -88,10 +93,12 @@ public partial class ProxiesViewModel : ViewModelBase
             Port = value.Proxy.Port;
             Username = value.Proxy.Username ?? string.Empty;
             Password = value.Proxy.Password ?? string.Empty;
+            IpChangeLink = value.Proxy.IpChangeUrl ?? string.Empty;
         }
 
         OnPropertyChanged(nameof(IsEditMode));
         OnPropertyChanged(nameof(FormTitle));
+        OnPropertyChanged(nameof(CanChangeIp));
     }
 
     partial void OnTypeChanged(string value)
@@ -224,18 +231,55 @@ public partial class ProxiesViewModel : ViewModelBase
             return;
 
         StatusMessage = "Testing proxy...";
-        var proxy = SelectedProxy.Proxy;
+        var selectedItem = SelectedProxy;
+        var proxy = selectedItem.Proxy;
         var result = await _proxyValidatorService.ValidateAsync(proxy);
 
         if (result.IsSuccess)
         {
             IsLastCheckSuccessful = true;
-            StatusMessage = $"OK | IP: {result.ExternalIp ?? "unknown"} | {result.LatencyMs}ms";
+            var countryFlagPath = await GetCountryFlagPathAsync(result.CountryCode);
+            selectedItem.SetSuccess(result.ExternalIp, result.LatencyMs, result.CountryCode, result.CountryName, countryFlagPath);
+            StatusMessage = FormatValidationMessage(result.ExternalIp, result.LatencyMs);
         }
         else
         {
             IsLastCheckSuccessful = false;
+            selectedItem.SetFailed(result.Error);
             StatusMessage = $"FAILED | {result.Error}";
+        }
+    }
+
+    [RelayCommand]
+    private async Task ChangeIp()
+    {
+        if (SelectedProxy == null || !SelectedProxy.HasIpChangeUrl)
+            return;
+
+        var selectedItem = SelectedProxy;
+        StatusMessage = $"Changing IP for {selectedItem.Proxy.Name}...";
+        try
+        {
+            var rotation = await _proxyIpRotationService.ChangeIpAsync(selectedItem.Proxy);
+            if (!rotation.Success)
+            {
+                selectedItem.SetFailed(rotation.Message);
+                IsLastCheckSuccessful = false;
+                StatusMessage = $"IP change failed: {rotation.Message}";
+                return;
+            }
+
+            StatusMessage = "IP change requested. Rechecking proxy...";
+            await CheckProxyItemAsync(selectedItem);
+            StatusMessage = selectedItem.ValidationState == ProxyValidationState.Success
+                ? $"IP changed: {selectedItem.ValidationMessage}"
+                : $"IP change requested, recheck failed: {selectedItem.ValidationMessage}";
+        }
+        catch (Exception ex)
+        {
+            selectedItem.SetFailed(ex.Message);
+            IsLastCheckSuccessful = false;
+            StatusMessage = $"IP change failed: {ex.Message}";
         }
     }
 
@@ -287,9 +331,31 @@ public partial class ProxiesViewModel : ViewModelBase
 
         var result = await validationTask;
         if (result.IsSuccess)
-            item.SetSuccess(result.ExternalIp, result.LatencyMs);
+        {
+            var countryFlagPath = await GetCountryFlagPathAsync(result.CountryCode);
+            item.SetSuccess(result.ExternalIp, result.LatencyMs, result.CountryCode, result.CountryName, countryFlagPath);
+        }
         else
+        {
             item.SetFailed(result.Error);
+        }
+    }
+
+    private static async Task<string?> GetCountryFlagPathAsync(string? countryCode)
+    {
+        try
+        {
+            return await CountryFlagCache.GetFlagPathAsync(countryCode);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string FormatValidationMessage(string? externalIp, long latencyMs)
+    {
+        return $"OK | IP: {externalIp ?? "unknown"} | {latencyMs}ms";
     }
 
     private void ResetForm()
@@ -330,6 +396,14 @@ public partial class ProxiesViewModel : ViewModelBase
             return false;
         }
 
+        if (!string.IsNullOrWhiteSpace(IpChangeLink) &&
+            (!Uri.TryCreate(IpChangeLink.Trim(), UriKind.Absolute, out var uri) ||
+             (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)))
+        {
+            validationError = "IP change URL must be a valid http/https URL.";
+            return false;
+        }
+
         validationError = string.Empty;
         return true;
     }
@@ -342,7 +416,7 @@ public partial class ProxiesViewModel : ViewModelBase
         proxy.Port = Port;
         proxy.Username = string.IsNullOrWhiteSpace(Username) ? null : Username.Trim();
         proxy.Password = string.IsNullOrWhiteSpace(Password) ? null : Password;
-        proxy.IsEnabled = true;
+        proxy.IpChangeUrl = string.IsNullOrWhiteSpace(IpChangeLink) ? null : IpChangeLink.Trim();
         return proxy;
     }
 
@@ -415,10 +489,26 @@ public partial class ProxyItemViewModel : ViewModelBase
     [ObservableProperty]
     private string _validationMessage = "Not checked";
 
+    [ObservableProperty]
+    private Bitmap? _countryFlagImage;
+
+    [ObservableProperty]
+    private bool _hasCountryFlagImage;
+
+    [ObservableProperty]
+    private string _countryCodeFallback = string.Empty;
+
+    [ObservableProperty]
+    private bool _hasCountryCodeFallback;
+
+    [ObservableProperty]
+    private string _countryToolTip = string.Empty;
+
     public string TypeDisplay => Proxy.Type.ToUpperInvariant();
     public string Endpoint => $"{Proxy.Host}:{Proxy.Port}";
     public string AuthDisplay => string.IsNullOrWhiteSpace(Proxy.Username) ? "No auth" : Proxy.Username!;
     public string EnabledDisplay => Proxy.IsEnabled ? "Enabled" : "Disabled";
+    public bool HasIpChangeUrl => !string.IsNullOrWhiteSpace(Proxy.IpChangeUrl);
     public string StatusColor => ValidationState switch
     {
         ProxyValidationState.Success => "#6EDB76",
@@ -450,20 +540,88 @@ public partial class ProxyItemViewModel : ViewModelBase
     {
         ValidationState = ProxyValidationState.Checking;
         ValidationMessage = "Checking...";
+        CountryFlagImage = null;
+        HasCountryFlagImage = false;
+        CountryCodeFallback = string.Empty;
+        HasCountryCodeFallback = false;
+        CountryToolTip = string.Empty;
     }
 
-    public void SetSuccess(string? externalIp, long latencyMs)
+    public void SetSuccess(string? externalIp, long latencyMs, string? countryCode, string? countryName, string? countryFlagPath)
     {
         ValidationState = ProxyValidationState.Success;
+        CountryFlagImage = LoadFlagImage(countryFlagPath);
+        HasCountryFlagImage = CountryFlagImage != null;
+        CountryCodeFallback = HasCountryFlagImage ? string.Empty : FormatCountryCodeFallback(countryCode);
+        HasCountryCodeFallback = !string.IsNullOrWhiteSpace(CountryCodeFallback);
+        CountryToolTip = FormatCountryToolTip(countryCode, countryName);
         ValidationMessage = string.IsNullOrWhiteSpace(externalIp)
             ? $"OK | {latencyMs}ms"
-            : $"OK | {externalIp} | {latencyMs}ms";
+            : FormatSuccessMessage(externalIp, latencyMs);
     }
 
     public void SetFailed(string? error)
     {
         ValidationState = ProxyValidationState.Failed;
         ValidationMessage = string.IsNullOrWhiteSpace(error) ? "Failed" : error;
+        CountryFlagImage = null;
+        HasCountryFlagImage = false;
+        CountryCodeFallback = string.Empty;
+        HasCountryCodeFallback = false;
+        CountryToolTip = string.Empty;
+    }
+
+    private static string FormatSuccessMessage(string externalIp, long latencyMs)
+    {
+        return $"OK | {externalIp} | {latencyMs}ms";
+    }
+
+    private static string FormatCountryToolTip(string? countryCode, string? countryName)
+    {
+        if (!string.IsNullOrWhiteSpace(countryName) && !string.IsNullOrWhiteSpace(countryCode))
+            return $"{countryName} ({countryCode})";
+
+        return countryName ?? countryCode ?? string.Empty;
+    }
+
+    private static Bitmap? LoadFlagImage(string? countryFlagPath)
+    {
+        if (string.IsNullOrWhiteSpace(countryFlagPath))
+            return null;
+
+        try
+        {
+            return new Bitmap(countryFlagPath);
+        }
+        catch
+        {
+            TryDeleteBrokenFlag(countryFlagPath);
+            return null;
+        }
+    }
+
+    private static void TryDeleteBrokenFlag(string countryFlagPath)
+    {
+        try
+        {
+            File.Delete(countryFlagPath);
+        }
+        catch
+        {
+            // The next refresh can keep using the fallback country code.
+        }
+    }
+
+    private static string FormatCountryCodeFallback(string? countryCode)
+    {
+        var normalized = countryCode?.Trim().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(normalized) || normalized.Length != 2)
+            return string.Empty;
+
+        if (!normalized.All(ch => ch >= 'A' && ch <= 'Z'))
+            return string.Empty;
+
+        return normalized;
     }
 }
 

@@ -68,6 +68,7 @@ public class DatabaseService
                 port INTEGER NOT NULL,
                 username TEXT,
                 password TEXT,
+                ip_change_url TEXT,
                 dolphin_proxy_id TEXT,
                 is_enabled INTEGER NOT NULL DEFAULT 1
             )";
@@ -116,6 +117,14 @@ public class DatabaseService
             var alterTableCommand = connection.CreateCommand();
             alterTableCommand.Transaction = transaction;
             alterTableCommand.CommandText = "ALTER TABLE proxies ADD COLUMN dolphin_proxy_id TEXT";
+            alterTableCommand.ExecuteNonQuery();
+        }
+
+        if (!ColumnExists(connection, transaction, "proxies", "ip_change_url"))
+        {
+            var alterTableCommand = connection.CreateCommand();
+            alterTableCommand.Transaction = transaction;
+            alterTableCommand.CommandText = "ALTER TABLE proxies ADD COLUMN ip_change_url TEXT";
             alterTableCommand.ExecuteNonQuery();
         }
 
@@ -476,7 +485,7 @@ public class DatabaseService
 
         var command = connection.CreateCommand();
         command.CommandText = @"
-            SELECT id, name, type, host, port, username, password, dolphin_proxy_id, is_enabled
+            SELECT id, name, type, host, port, username, password, ip_change_url, dolphin_proxy_id, is_enabled
             FROM proxies
             ORDER BY name";
 
@@ -492,8 +501,9 @@ public class DatabaseService
                 Port = reader.GetInt32(4),
                 Username = reader.IsDBNull(5) ? null : reader.GetString(5),
                 Password = reader.IsDBNull(6) ? null : reader.GetString(6),
-                DolphinProxyId = reader.IsDBNull(7) ? null : reader.GetString(7),
-                IsEnabled = reader.GetInt32(8) == 1
+                IpChangeUrl = reader.IsDBNull(7) ? null : reader.GetString(7),
+                DolphinProxyId = reader.IsDBNull(8) ? null : reader.GetString(8),
+                IsEnabled = reader.GetInt32(9) == 1
             });
         }
 
@@ -507,7 +517,7 @@ public class DatabaseService
 
         var command = connection.CreateCommand();
         command.CommandText = @"
-            SELECT id, name, type, host, port, username, password, dolphin_proxy_id, is_enabled
+            SELECT id, name, type, host, port, username, password, ip_change_url, dolphin_proxy_id, is_enabled
             FROM proxies
             WHERE id = @id";
         command.Parameters.AddWithValue("@id", id);
@@ -525,8 +535,9 @@ public class DatabaseService
             Port = reader.GetInt32(4),
             Username = reader.IsDBNull(5) ? null : reader.GetString(5),
             Password = reader.IsDBNull(6) ? null : reader.GetString(6),
-            DolphinProxyId = reader.IsDBNull(7) ? null : reader.GetString(7),
-            IsEnabled = reader.GetInt32(8) == 1
+            IpChangeUrl = reader.IsDBNull(7) ? null : reader.GetString(7),
+            DolphinProxyId = reader.IsDBNull(8) ? null : reader.GetString(8),
+            IsEnabled = reader.GetInt32(9) == 1
         };
     }
 
@@ -547,8 +558,8 @@ public class DatabaseService
 
         var command = connection.CreateCommand();
         command.CommandText = @"
-            INSERT INTO proxies (id, name, type, host, port, username, password, dolphin_proxy_id, is_enabled)
-            VALUES (@id, @name, @type, @host, @port, @username, @password, @dolphin_proxy_id, @is_enabled)";
+            INSERT INTO proxies (id, name, type, host, port, username, password, ip_change_url, dolphin_proxy_id, is_enabled)
+            VALUES (@id, @name, @type, @host, @port, @username, @password, @ip_change_url, @dolphin_proxy_id, @is_enabled)";
 
         command.Parameters.AddWithValue("@id", proxy.Id);
         command.Parameters.AddWithValue("@name", proxy.Name.Trim());
@@ -557,6 +568,7 @@ public class DatabaseService
         command.Parameters.AddWithValue("@port", proxy.Port);
         command.Parameters.AddWithValue("@username", (object?)proxy.Username ?? DBNull.Value);
         command.Parameters.AddWithValue("@password", (object?)proxy.Password ?? DBNull.Value);
+        command.Parameters.AddWithValue("@ip_change_url", (object?)proxy.IpChangeUrl ?? DBNull.Value);
         command.Parameters.AddWithValue("@dolphin_proxy_id", (object?)proxy.DolphinProxyId ?? DBNull.Value);
         command.Parameters.AddWithValue("@is_enabled", proxy.IsEnabled ? 1 : 0);
 
@@ -584,6 +596,7 @@ public class DatabaseService
                 port = @port,
                 username = @username,
                 password = @password,
+                ip_change_url = @ip_change_url,
                 dolphin_proxy_id = @dolphin_proxy_id,
                 is_enabled = @is_enabled
             WHERE id = @id";
@@ -595,6 +608,7 @@ public class DatabaseService
         command.Parameters.AddWithValue("@port", proxy.Port);
         command.Parameters.AddWithValue("@username", (object?)proxy.Username ?? DBNull.Value);
         command.Parameters.AddWithValue("@password", (object?)proxy.Password ?? DBNull.Value);
+        command.Parameters.AddWithValue("@ip_change_url", (object?)proxy.IpChangeUrl ?? DBNull.Value);
         command.Parameters.AddWithValue("@dolphin_proxy_id", (object?)proxy.DolphinProxyId ?? DBNull.Value);
         command.Parameters.AddWithValue("@is_enabled", proxy.IsEnabled ? 1 : 0);
 

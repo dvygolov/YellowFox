@@ -87,6 +87,38 @@ public class AgentCliTests
     }
 
     [Fact]
+    public void BuildRequest_ShouldMapProxyChangeIpCommand()
+    {
+        var request = AgentCli.BuildRequest(new[]
+        {
+            "proxy", "change-ip",
+            "--id", "Mobile Proxy",
+            "--json"
+        });
+
+        Assert.Equal("proxy.changeIp", request.Command);
+        Assert.Equal("Mobile Proxy", request.Args["id"]);
+    }
+
+    [Fact]
+    public void BuildRequest_ShouldMapProxyIpChangeUrlOption()
+    {
+        var request = AgentCli.BuildRequest(new[]
+        {
+            "proxy", "add",
+            "--name", "Mobile Proxy",
+            "--type", "http",
+            "--host", "127.0.0.1",
+            "--port", "8080",
+            "--ip-change-url", "https://proxy.example/rotate",
+            "--json"
+        });
+
+        Assert.Equal("proxy.add", request.Command);
+        Assert.Equal("https://proxy.example/rotate", request.Args["ip-change-url"]);
+    }
+
+    [Fact]
     public void CreateFailureJson_ShouldUseCliResponseShape()
     {
         var json = AgentCli.CreateFailureJson("desktop_unavailable", "Desktop is not running.");

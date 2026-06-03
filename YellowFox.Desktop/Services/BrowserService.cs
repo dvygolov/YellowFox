@@ -67,15 +67,18 @@ public class BrowserService
         {
             var pythonDir = ResolvePythonScriptsPath();
             var launcher = ResolvePythonLauncher(pythonDir);
-            using var process = Process.Start(new ProcessStartInfo
+            var startInfo = new ProcessStartInfo
             {
                 FileName = launcher,
-                Arguments = "-c \"from camoufox.pkgman import installed_verstr; print(installed_verstr())\"",
+                Arguments = "-c \"from yellowfox_camoufox_home import configure_camoufox_home; configure_camoufox_home(); from camoufox.pkgman import installed_verstr; print(installed_verstr())\"",
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 CreateNoWindow = true
-            });
+            };
+            ApplyLocalPythonEnvironment(startInfo, pythonDir);
+
+            using var process = Process.Start(startInfo);
 
             if (process == null)
                 return "Camoufox: unavailable";
@@ -168,7 +171,10 @@ public class BrowserService
                 var validation = await _proxyValidatorService.ValidateAsync(proxy);
                 if (!validation.IsSuccess)
                     throw new InvalidOperationException($"Proxy check failed: {validation.Error}");
-                await WriteLogAsync(logPath, "INFO", $"Proxy validation passed. IP={validation.ExternalIp ?? "unknown"}, latency={validation.LatencyMs}ms.");
+                var countryLog = !string.IsNullOrWhiteSpace(validation.CountryCode)
+                    ? $", country={validation.CountryCode}"
+                    : string.Empty;
+                await WriteLogAsync(logPath, "INFO", $"Proxy validation passed. IP={validation.ExternalIp ?? "unknown"}{countryLog}, latency={validation.LatencyMs}ms.");
                 browserProxy = proxy;
                 if (IsAuthenticatedSocks5(proxy))
                 {
@@ -201,11 +207,14 @@ public class BrowserService
                 },
                 user_data_dir = userDataDir,
                 proxy = BuildCamoufoxProxy(browserProxy),
-                geoip = contextFingerprint.UseCamoufoxGeoIp ? contextFingerprint.GeoIp : null,
+                geoip = contextFingerprint.GeoIp,
                 camoufox_config = contextFingerprint.CamoufoxConfig,
                 profile_id = profile.Id,
                 profile_name = profile.Name,
+                profile_app_user_model_id = BuildProfileAppUserModelId(profile.Id),
+                profile_icon_path = Path.Combine(userDataDir, "yellowfox-profile.ico"),
                 initial_urls = initialUrls,
+                cookies = ToBrokerCookiePayload(ReadImportedCookies(profileId)),
                 addons = enabledExtensions,
                 bookmarks = sharedBookmarks.Select(b => new
                 {
@@ -223,7 +232,7 @@ public class BrowserService
             var pythonDir = ResolvePythonScriptsPath();
 
             var launcher = ResolvePythonLauncher(pythonDir);
-            var serverScript = Path.Combine(pythonDir, "camoufox-native-broker.py");
+            var serverScript = Path.Combine(pythonDir, "camoufox-broker.py");
             if (!File.Exists(serverScript))
                 throw new FileNotFoundException($"Camoufox broker script not found: {serverScript}");
 
@@ -231,7 +240,7 @@ public class BrowserService
             var arguments = $"\"{serverScript}\" \"{tempConfigPath}\"";
             existingCamoufoxPids = GetCamoufoxProcessIds();
 
-            process = Process.Start(new ProcessStartInfo
+            var startInfo = new ProcessStartInfo
             {
                 FileName = fileName,
                 Arguments = arguments,
@@ -239,7 +248,10 @@ public class BrowserService
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 CreateNoWindow = true
-            });
+            };
+            ApplyLocalPythonEnvironment(startInfo, pythonDir);
+
+            process = Process.Start(startInfo);
             if (process == null)
                 throw new InvalidOperationException("Failed to start Python broker process");
             await WriteLogAsync(logPath, "INFO", $"Python broker process started. PID={process.Id}");
@@ -279,7 +291,7 @@ public class BrowserService
             if (initialUrls.Count == 0)
                 await RestoreTabsAsync(profileId, instance, logPath);
             else
-                await WriteLogAsync(logPath, "INFO", $"Restored tabs from native launch arguments. Requested={initialUrls.Count}.");
+                await WriteLogAsync(logPath, "INFO", $"Requested broker tab restore. Requested={initialUrls.Count}.");
             _ = RunTabsSnapshotLoopAsync(profileId, instance, logPath);
             _ = RunBrowserWindowMonitorAsync(profileId, instance, logPath);
 
@@ -435,28 +447,54 @@ public class BrowserService
         if (!File.Exists(filePath))
             return (false, "Cookie file not found.");
 
-        var startedTemporarily = false;
+        var content = await File.ReadAllTextAsync(filePath);
+        return await ImportCookiesFromTextAsync(profileId, content, null, $"file '{filePath}'");
+    }
+
+    public async Task<(bool Success, string Message)> ImportCookiesFromTextAsync(string profileId, string content, string? domain, string sourceDescription = "manual input")
+    {
+        var profile = _databaseService.GetProfile(profileId);
+        var profileName = profile?.Name ?? profileId;
+        var logPath = _databaseService.GetProfileLogFilePath(profileId, profileName);
+        await WriteLogAsync(logPath, "INFO", $"Cookie import requested from {sourceDescription}.");
+
+        if (!TryParseCookiesForImport(content, domain, out var cookies, out var parseError))
+            return (false, parseError);
+
+        if (cookies.Count == 0)
+            return (false, "No cookies found.");
+
+        SaveImportedCookies(profileId, cookies);
+        await WriteLogAsync(logPath, "INFO", $"Saved imported cookies. Count={cookies.Count}.");
+
         if (!IsRunning(profileId))
         {
-            var startSuccess = await StartProfileAsync(profileId);
-            if (!startSuccess)
-                return (false, "Failed to start profile for cookie import.");
-            startedTemporarily = true;
+            await WriteLogAsync(logPath, "INFO", "Profile is not running. Cookies will be applied on next start.");
+            return (true, $"Saved {cookies.Count} cookies. They will be applied when the profile starts.");
         }
 
         try
         {
-            if (!TryGetRunningInstance(profileId, out var instance) || instance?.Browser == null)
+            if (!TryGetRunningInstance(profileId, out var instance) || instance == null)
+                return (false, "No running browser instance found.");
+
+            if (!string.IsNullOrWhiteSpace(instance.BrokerUrl))
+            {
+                var imported = await BrokerPostAsync<BrokerCookieResponse>(instance.BrokerUrl, "cookies", new
+                {
+                    cookies = ToBrokerCookiePayload(cookies)
+                });
+                var importedCount = imported.Count ?? cookies.Count;
+                await WriteLogAsync(logPath, "INFO", $"Cookie import completed through broker. Count={importedCount}");
+                return (true, $"Imported {importedCount} cookies.");
+            }
+
+            if (instance.Browser == null)
                 return (false, "No running browser instance found.");
 
             var context = await GetOrCreateContextAsync(instance, logPath);
             if (context == null)
                 return (false, "No browser context found.");
-
-            var json = await File.ReadAllTextAsync(filePath);
-            var cookies = ParseCookiesForImport(json);
-            if (cookies.Count == 0)
-                return (false, "No cookies found in file.");
 
             await context.AddCookiesAsync(cookies);
             await WriteLogAsync(logPath, "INFO", $"Cookie import completed. Count={cookies.Count}");
@@ -467,11 +505,60 @@ public class BrowserService
             await WriteLogAsync(logPath, "ERROR", $"Cookie import failed: {ex.Message}");
             return (false, $"Import failed: {ex.Message}");
         }
-        finally
+    }
+
+    internal static bool TryParseCookiesForImport(string content, string? domain, out List<Cookie> cookies, out string error)
+    {
+        cookies = new List<Cookie>();
+        error = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(content))
         {
-            if (startedTemporarily)
-                await StopProfileAsync(profileId);
+            error = "Cookie input is empty.";
+            return false;
         }
+
+        var trimmed = content.Trim();
+        if (LooksLikeJson(trimmed))
+        {
+            try
+            {
+                cookies = ParseCookiesForImport(trimmed);
+            }
+            catch (JsonException ex)
+            {
+                error = $"Invalid JSON cookie format: {ex.Message}";
+                return false;
+            }
+
+            if (cookies.Count == 0)
+            {
+                error = "No cookies found in JSON.";
+                return false;
+            }
+
+            return true;
+        }
+
+        if (TryParseNameValueCookies(trimmed, domain, out cookies, out error))
+        {
+            if (cookies.Count > 0)
+                return true;
+
+            if (!string.IsNullOrWhiteSpace(error))
+                return false;
+        }
+
+        if (LooksLikeNameValueCookieString(trimmed))
+        {
+            error = string.IsNullOrWhiteSpace(error)
+                ? "No cookies found."
+                : error;
+            return false;
+        }
+
+        error = "Cookie format not found. Supported formats: JSON or name=value; name2=value2.";
+        return false;
     }
 
     public async Task<(bool Success, string? Url, string? Title, string Message)> OpenUrlAsync(string profileId, string rawUrl)
@@ -796,6 +883,38 @@ public class BrowserService
         File.WriteAllText(path, json);
     }
 
+    private List<Cookie> ReadImportedCookies(string profileId)
+    {
+        var path = _databaseService.GetProfileImportedCookiesFilePath(profileId);
+        if (!File.Exists(path))
+            return new List<Cookie>();
+
+        try
+        {
+            return ParseCookiesForImport(File.ReadAllText(path));
+        }
+        catch
+        {
+            return new List<Cookie>();
+        }
+    }
+
+    private static List<object> ToBrokerCookiePayload(IReadOnlyCollection<Cookie> cookies)
+    {
+        return cookies.Select(cookie => new
+        {
+            name = cookie.Name,
+            value = cookie.Value,
+            url = cookie.Url,
+            domain = cookie.Domain,
+            path = string.IsNullOrWhiteSpace(cookie.Path) ? "/" : cookie.Path,
+            expires = cookie.Expires,
+            httpOnly = cookie.HttpOnly,
+            secure = cookie.Secure,
+            sameSite = cookie.SameSite?.ToString()
+        }).Cast<object>().ToList();
+    }
+
     internal static string PrepareSharedBookmarks(string profileDir, IReadOnlyCollection<BookmarkItem> bookmarks)
     {
         Directory.CreateDirectory(profileDir);
@@ -830,6 +949,8 @@ public class BrowserService
         EnsureUserPref(userJsLines, "browser.startup.page", "0");
         EnsureUserPref(userJsLines, "browser.aboutwelcome.enabled", "false");
         EnsureUserPref(userJsLines, "browser.preonboarding.enabled", "false");
+        EnsureUserPref(userJsLines, "browser.tabs.drawInTitlebar", "false");
+        EnsureUserPref(userJsLines, "browser.tabs.inTitlebar", "0");
         EnsureUserPref(userJsLines, "taskbar.grouping.useprofile", "true");
         EnsureUserPref(userJsLines, "browser.startup.blankWindow", "false");
         EnsureUserPref(userJsLines, "extensions.autoDisableScopes", "0");
@@ -841,8 +962,6 @@ public class BrowserService
         RemoveUserPref(userJsLines, "browser.sessionstore.resume_from_crash");
         RemoveUserPref(userJsLines, "browser.sessionstore.max_tabs_undo");
         RemoveUserPref(userJsLines, "browser.sessionstore.max_windows_undo");
-        RemoveUserPref(userJsLines, "browser.link.open_newwindow");
-        RemoveUserPref(userJsLines, "browser.link.open_newwindow.restriction");
         RemoveUserPref(userJsLines, "datareporting.healthreport.uploadEnabled");
         RemoveUserPref(userJsLines, "toolkit.telemetry.enabled");
         RemoveUserPref(userJsLines, "toolkit.telemetry.unified");
@@ -1957,6 +2076,8 @@ public class BrowserService
         EnsureUserPref(lines, "browser.toolbars.bookmarks.showInPrivateBrowsing", "true");
         EnsureUserPref(lines, "browser.aboutwelcome.enabled", "false");
         EnsureUserPref(lines, "browser.preonboarding.enabled", "false");
+        EnsureUserPref(lines, "browser.tabs.drawInTitlebar", "false");
+        EnsureUserPref(lines, "browser.tabs.inTitlebar", "0");
         EnsureUserPref(lines, "taskbar.grouping.useprofile", "true");
         EnsureUserPref(lines, "browser.startup.blankWindow", "false");
         EnsureUserPref(lines, "extensions.autoDisableScopes", "0");
@@ -1968,8 +2089,6 @@ public class BrowserService
         RemoveUserPref(lines, "browser.sessionstore.resume_from_crash");
         RemoveUserPref(lines, "browser.sessionstore.max_tabs_undo");
         RemoveUserPref(lines, "browser.sessionstore.max_windows_undo");
-        RemoveUserPref(lines, "browser.link.open_newwindow");
-        RemoveUserPref(lines, "browser.link.open_newwindow.restriction");
         RemoveUserPref(lines, "datareporting.healthreport.uploadEnabled");
         RemoveUserPref(lines, "toolkit.telemetry.enabled");
         RemoveUserPref(lines, "toolkit.telemetry.unified");
@@ -1987,15 +2106,21 @@ public class BrowserService
     private static void ApplyNavigationPrefs(List<string> lines)
     {
         EnsureUserPref(lines, "keyword.enabled", "true");
+        EnsureUserPref(lines, "browser.link.open_newwindow", "3");
+        EnsureUserPref(lines, "browser.link.open_newwindow.restriction", "0");
         EnsureUserPref(lines, "dom.event.contextmenu.enabled", "false");
         EnsureUserPref(lines, "browser.fixup.fallback-to-https", "true");
         EnsureUserPref(lines, "browser.fixup.upgrade_to_https", "true");
         EnsureUserPref(lines, "dom.security.https_first", "true");
+        EnsureUserPref(lines, "dom.security.https_first_pbm", "true");
         EnsureUserPref(lines, "dom.security.https_only_mode", "true");
+        EnsureUserPref(lines, "dom.security.https_only_mode_pbm", "true");
+        EnsureUserPref(lines, "dom.security.https_only_mode.upgrade_local", "true");
         EnsureUserPref(lines, "dom.security.https_only_mode_ever_enabled", "true");
         EnsureUserPref(lines, "browser.search.defaultenginename", "\"Google\"");
         EnsureUserPref(lines, "browser.search.selectedEngine", "\"Google\"");
         EnsureUserPref(lines, "browser.search.order.1", "\"Google\"");
+        EnsureUserPref(lines, "browser.search.update", "false");
         EnsureUserPref(lines, "browser.urlbar.placeholderName", "\"Google\"");
         EnsureUserPref(lines, "browser.urlbar.placeholderName.private", "\"Google\"");
     }
@@ -2014,8 +2139,19 @@ public class BrowserService
                 ? File.ReadAllLines(path).ToList()
                 : new List<string>();
             EnsureUserPref(lines, "yellowfox.profile.name", escapedName);
+            EnsureUserPref(lines, "browser.tabs.drawInTitlebar", "false");
+            EnsureUserPref(lines, "browser.tabs.inTitlebar", "0");
+            RemoveUserPref(lines, "toolkit.legacyUserProfileCustomizations.stylesheets");
             File.WriteAllLines(path, lines);
         }
+
+        DeleteUserChrome(profileDir);
+    }
+
+    private static string BuildProfileAppUserModelId(string profileId)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(profileId));
+        return $"YellowFox.Camoufox.{Convert.ToHexString(hash)[..16]}";
     }
 
     private static void DeleteToolbarState(string profileDir)
@@ -2027,15 +2163,20 @@ public class BrowserService
 
     private static void WriteExtensionToolbarPrefs(string profileDir, IEnumerable<ManagedExtensionState> extensions)
     {
-        var toolbarState = JsonSerializer.Serialize(BuildToolbarCustomizationState(extensions));
-        var toolbarPrefValue = JsonSerializer.Serialize(toolbarState);
+        var extensionStates = extensions.ToList();
+        var toolbarPrefValue = extensionStates.Count > 0
+            ? JsonSerializer.Serialize(JsonSerializer.Serialize(BuildToolbarCustomizationState(extensionStates)))
+            : null;
         foreach (var fileName in new[] { "user.js", "prefs.js" })
         {
             var path = Path.Combine(profileDir, fileName);
             var lines = File.Exists(path)
                 ? File.ReadAllLines(path).ToList()
                 : new List<string>();
-            EnsureUserPref(lines, "browser.uiCustomization.state", toolbarPrefValue);
+            if (toolbarPrefValue == null)
+                RemoveUserPref(lines, "browser.uiCustomization.state");
+            else
+                EnsureUserPref(lines, "browser.uiCustomization.state", toolbarPrefValue);
             File.WriteAllLines(path, lines);
         }
     }
@@ -2067,7 +2208,7 @@ public class BrowserService
                 ["unified-extensions-area"] = Array.Empty<string>(),
                 ["nav-bar"] = navBarItems.ToArray(),
                 ["toolbar-menubar"] = new[] { "menubar-items" },
-                ["TabsToolbar"] = new[] { "tabbrowser-tabs", "new-tab-button", "alltabs-button" },
+                ["TabsToolbar"] = new[] { "tabbrowser-tabs", "new-tab-button", "alltabs-button", "titlebar-buttonbox-container" },
                 ["vertical-tabs"] = Array.Empty<string>(),
                 ["PersonalToolbar"] = new[] { "personal-bookmarks" }
             },
@@ -2122,6 +2263,110 @@ public class BrowserService
         return cookies;
     }
 
+    private static bool LooksLikeJson(string content)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+            return false;
+
+        var first = content.TrimStart()[0];
+        return first is '[' or '{';
+    }
+
+    private static bool LooksLikeNameValueCookieString(string content)
+    {
+        return content.Contains('=') && !content.Contains('\n') && !content.Contains('\r');
+    }
+
+    private static bool TryParseNameValueCookies(string content, string? rawDomain, out List<Cookie> cookies, out string error)
+    {
+        cookies = new List<Cookie>();
+        error = string.Empty;
+
+        if (!LooksLikeNameValueCookieString(content))
+            return false;
+
+        if (!TryNormalizeCookieDomain(rawDomain, out var domain, out error))
+            return true;
+
+        var parts = content.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (var part in parts)
+        {
+            var separatorIndex = part.IndexOf('=');
+            if (separatorIndex <= 0)
+            {
+                error = "Cookie format not found. Expected name=value pairs separated by semicolons.";
+                cookies.Clear();
+                return true;
+            }
+
+            var name = part[..separatorIndex].Trim();
+            var value = part[(separatorIndex + 1)..].Trim();
+            if (string.IsNullOrWhiteSpace(name) || IsCookieAttributeName(name))
+            {
+                error = "Cookie format not found. Expected browser cookies, not Set-Cookie attributes.";
+                cookies.Clear();
+                return true;
+            }
+
+            cookies.Add(new Cookie
+            {
+                Name = name,
+                Value = value,
+                Domain = domain,
+                Path = "/",
+                Secure = true
+            });
+        }
+
+        if (cookies.Count == 0)
+        {
+            error = "No cookies found.";
+            return true;
+        }
+
+        return true;
+    }
+
+    private static bool TryNormalizeCookieDomain(string? rawDomain, out string domain, out string error)
+    {
+        domain = string.Empty;
+        error = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(rawDomain))
+        {
+            error = "Domain is required for name=value cookie format.";
+            return false;
+        }
+
+        var value = rawDomain.Trim();
+        if (Uri.TryCreate(value, UriKind.Absolute, out var uri) && !string.IsNullOrWhiteSpace(uri.Host))
+            value = uri.Host;
+        else
+            value = value.Split('/')[0].Split(':')[0];
+
+        value = value.Trim().TrimStart('.');
+        if (string.IsNullOrWhiteSpace(value) ||
+            value.Contains(' ') ||
+            !value.Contains('.') ||
+            !Regex.IsMatch(value, "^[A-Za-z0-9.-]+$"))
+        {
+            error = "Enter a valid domain for name=value cookie format, for example facebook.com.";
+            return false;
+        }
+
+        domain = $".{value.ToLowerInvariant()}";
+        return true;
+    }
+
+    private static bool IsCookieAttributeName(string name)
+    {
+        return name.Trim().ToLowerInvariant() switch
+        {
+            "path" or "domain" or "expires" or "max-age" or "samesite" or "secure" or "httponly" => true,
+            _ => false
+        };
+    }
+
     internal static Dictionary<string, Dictionary<string, string>> ParseLocalStorageForImport(string json)
     {
         using var document = JsonDocument.Parse(json);
@@ -2157,6 +2402,7 @@ public class BrowserService
         var value = GetString(item, "value");
         var domain = GetString(item, "domain");
         var path = GetString(item, "path") ?? "/";
+        var expires = NormalizeImportedCookieExpires(GetFloat(item, "expires") ?? GetFloat(item, "expirationDate"));
         if (string.IsNullOrWhiteSpace(name) || value == null || string.IsNullOrWhiteSpace(domain))
             return false;
 
@@ -2168,11 +2414,23 @@ public class BrowserService
             Path = path,
             HttpOnly = GetBool(item, "httpOnly"),
             Secure = GetBool(item, "secure"),
-            Expires = GetFloat(item, "expires") ?? GetFloat(item, "expirationDate"),
+            Expires = expires,
             SameSite = ParseSameSite(GetString(item, "sameSite"))
         };
 
         return true;
+    }
+
+    private static float? NormalizeImportedCookieExpires(float? expires)
+    {
+        if (expires == null)
+            return null;
+
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        if (expires.Value > now)
+            return expires;
+
+        return DateTimeOffset.UtcNow.AddMonths(6).ToUnixTimeSeconds();
     }
 
     private static string? GetString(JsonElement item, string name)
@@ -2221,6 +2479,9 @@ public class BrowserService
             "lax" => SameSiteAttribute.Lax,
             "none" => SameSiteAttribute.None,
             "no-restriction" => SameSiteAttribute.None,
+            "0" => SameSiteAttribute.Strict,
+            "1" => SameSiteAttribute.Lax,
+            "2" => SameSiteAttribute.None,
             _ => null
         };
     }
@@ -2493,6 +2754,7 @@ public class BrowserService
                 RedirectStandardError = true,
                 CreateNoWindow = true
             };
+            ApplyLocalPythonEnvironment(startInfo, pythonDir);
 
             using var process = Process.Start(startInfo);
             if (process == null)
@@ -3476,7 +3738,7 @@ public class BrowserService
     {
         using var response = await BrokerHttpClient.GetAsync($"{brokerUrl.TrimEnd('/')}/{path.TrimStart('/')}");
         var json = await response.Content.ReadAsStringAsync();
-        response.EnsureSuccessStatusCode();
+        EnsureBrokerHttpSuccess(response, json);
         var payload = JsonSerializer.Deserialize<T>(json, BrokerJsonOptions)
             ?? throw new InvalidOperationException("Broker returned an empty response.");
         ThrowIfBrokerError(payload, json);
@@ -3489,7 +3751,7 @@ public class BrowserService
         using var content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
         using var response = await BrokerHttpClient.PostAsync($"{brokerUrl.TrimEnd('/')}/{path.TrimStart('/')}", content);
         var json = await response.Content.ReadAsStringAsync();
-        response.EnsureSuccessStatusCode();
+        EnsureBrokerHttpSuccess(response, json);
         var payload = JsonSerializer.Deserialize<T>(json, BrokerJsonOptions)
             ?? throw new InvalidOperationException("Broker returned an empty response.");
         ThrowIfBrokerError(payload, json);
@@ -3505,6 +3767,27 @@ public class BrowserService
     {
         if (payload is BrokerOkResponse ok && !ok.Ok)
             throw new InvalidOperationException(ok.Error ?? json);
+    }
+
+    private static void EnsureBrokerHttpSuccess(HttpResponseMessage response, string json)
+    {
+        if (response.IsSuccessStatusCode)
+            return;
+
+        try
+        {
+            var error = JsonSerializer.Deserialize<BrokerOkResponse>(json, BrokerJsonOptions);
+            if (!string.IsNullOrWhiteSpace(error?.Error))
+                throw new InvalidOperationException(error.Error);
+        }
+        catch (JsonException)
+        {
+        }
+
+        throw new InvalidOperationException(
+            string.IsNullOrWhiteSpace(json)
+                ? $"Broker request failed: {(int)response.StatusCode} {response.ReasonPhrase}"
+                : $"Broker request failed: {(int)response.StatusCode} {response.ReasonPhrase}: {json}");
     }
 
     private class BrokerOkResponse
@@ -3523,6 +3806,11 @@ public class BrowserService
     {
         public bool Success { get; set; }
         public string? Message { get; set; }
+    }
+
+    private sealed class BrokerCookieResponse : BrokerOkResponse
+    {
+        public int? Count { get; set; }
     }
 
     private sealed class BrokerPagesResponse : BrokerOkResponse
@@ -3637,6 +3925,25 @@ public class BrowserService
         }
 
         throw new FileNotFoundException($"Python launcher not found for scripts directory: {pythonDir}");
+    }
+
+    private static void ApplyLocalPythonEnvironment(ProcessStartInfo startInfo, string pythonDir)
+    {
+        var localAppData = Path.Combine(pythonDir, ".localappdata");
+        var xdgCache = Path.Combine(pythonDir, ".cache");
+        Directory.CreateDirectory(localAppData);
+        Directory.CreateDirectory(xdgCache);
+
+        if (OperatingSystem.IsWindows())
+            startInfo.Environment["LOCALAPPDATA"] = localAppData;
+        else
+            startInfo.Environment["XDG_CACHE_HOME"] = xdgCache;
+
+        startInfo.Environment["PYTHONUTF8"] = "1";
+        startInfo.Environment.TryGetValue("PYTHONPATH", out var pythonPath);
+        startInfo.Environment["PYTHONPATH"] = string.IsNullOrWhiteSpace(pythonPath)
+            ? pythonDir
+            : $"{pythonDir}{Path.PathSeparator}{pythonPath}";
     }
 
     private static bool IsPythonLauncherUsable(string candidate)

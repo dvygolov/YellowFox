@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO.Pipes;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -18,8 +19,14 @@ public static class AgentCli
     {
         try
         {
+            if (TryHandleDesktopCommand(args, out var desktopJson))
+            {
+                await output.WriteLineAsync(desktopJson);
+                return IsOk(desktopJson) ? 0 : 1;
+            }
+
             var request = BuildRequest(args);
-            var responseJson = await SendAsync(request);
+            var responseJson = await SendWithDesktopAutostartAsync(request);
             await output.WriteLineAsync(responseJson);
             return IsOk(responseJson) ? 0 : 1;
         }
@@ -38,6 +45,11 @@ public static class AgentCli
             await output.WriteLineAsync(CreateFailureJson("desktop_unavailable", "YellowFox Desktop is not running or did not accept the agent connection."));
             return 2;
         }
+        catch (UnauthorizedAccessException ex)
+        {
+            await output.WriteLineAsync(CreateFailureJson("pipe_access_denied", ex.Message));
+            return 2;
+        }
         catch (IOException ex)
         {
             await output.WriteLineAsync(CreateFailureJson("pipe_error", ex.Message));
@@ -52,7 +64,7 @@ public static class AgentCli
             .ToArray();
 
         if (args.Length < 2)
-            throw new AgentCliException("bad_request", "Usage: yellowfox <profile|proxy|dolphin> <command> [--key value]", 1);
+            throw new AgentCliException("bad_request", "Usage: yellowfox <desktop|profile|proxy|extension|bookmark|dolphin> <command> [--key value]", 1);
 
         var scope = args[0].ToLowerInvariant();
         var action = args[1].ToLowerInvariant();
@@ -61,6 +73,10 @@ public static class AgentCli
         var command = (scope, action) switch
         {
             ("profile", "list") => "profile.list",
+            ("profile", "create") => "profile.create",
+            ("profile", "update") => "profile.update",
+            ("profile", "delete") => "profile.delete",
+            ("profile", "clone") => "profile.clone",
             ("profile", "start") => "profile.start",
             ("profile", "stop") => "profile.stop",
             ("profile", "endpoint") => "profile.endpoint",
@@ -68,12 +84,27 @@ public static class AgentCli
             ("profile", "attach") => "profile.attach",
             ("profile", "pages") => "profile.pages",
             ("profile", "click") => "profile.click",
-            ("profile", "update") => "profile.update",
+            ("profile", "import-cookies") => "profile.importCookies",
+            ("profile", "export-cookies") => "profile.exportCookies",
+            ("profile", "log") => "profile.log",
             ("proxy", "list") => "proxy.list",
             ("proxy", "add") => "proxy.add",
             ("proxy", "update") => "proxy.update",
             ("proxy", "delete") => "proxy.delete",
             ("proxy", "test") => "proxy.test",
+            ("proxy", "change-ip") => "proxy.changeIp",
+            ("extension", "list") => "extension.list",
+            ("extension", "add") => "extension.add",
+            ("extension", "import-url") => "extension.importUrl",
+            ("extension", "import-archive") => "extension.importArchive",
+            ("extension", "update") => "extension.update",
+            ("extension", "toggle") => "extension.toggle",
+            ("extension", "delete") => "extension.delete",
+            ("bookmark", "list") => "bookmark.list",
+            ("bookmark", "add") => "bookmark.add",
+            ("bookmark", "add-folder") => "bookmark.addFolder",
+            ("bookmark", "update") => "bookmark.update",
+            ("bookmark", "delete") => "bookmark.delete",
             ("dolphin", "import") => "dolphin.import",
             _ => throw new AgentCliException("unknown_command", $"Unknown command: {scope} {action}", 1)
         };
@@ -109,6 +140,133 @@ public static class AgentCli
             throw new IOException("Desktop returned an empty agent response.");
 
         return response;
+    }
+
+    private static async Task<string> SendWithDesktopAutostartAsync(AgentCliRequest request)
+    {
+        try
+        {
+            return await SendAsync(request);
+        }
+        catch (Exception ex) when (IsDesktopUnavailableException(ex))
+        {
+            var start = StartDesktop();
+            if (!start.Success)
+                throw new AgentCliException("desktop_start_failed", start.Message, 2);
+
+            var deadline = DateTimeOffset.UtcNow.AddSeconds(20);
+            Exception? lastError = null;
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                try
+                {
+                    await Task.Delay(500);
+                    return await SendAsync(request);
+                }
+                catch (Exception retryEx) when (IsDesktopUnavailableException(retryEx))
+                {
+                    lastError = retryEx;
+                }
+            }
+
+            throw lastError ?? ex;
+        }
+    }
+
+    private static bool IsDesktopUnavailableException(Exception ex)
+    {
+        return ex is TimeoutException or OperationCanceledException or IOException;
+    }
+
+    private static bool TryHandleDesktopCommand(string[] rawArgs, out string json)
+    {
+        json = string.Empty;
+        var args = rawArgs
+            .Where(arg => !string.Equals(arg, "--json", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+
+        if (args.Length < 2 || !string.Equals(args[0], "desktop", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var action = args[1].ToLowerInvariant();
+        json = action switch
+        {
+            "status" => CreateSuccessJson(DesktopStatus()),
+            "start" => DesktopStartJson(),
+            _ => throw new AgentCliException("unknown_command", $"Unknown command: desktop {action}", 1)
+        };
+        return true;
+    }
+
+    private static string DesktopStartJson()
+    {
+        var start = StartDesktop();
+        return start.Success
+            ? CreateSuccessJson(new { running = true, started = start.Started, path = start.Path })
+            : CreateFailureJson("desktop_start_failed", start.Message);
+    }
+
+    private static object DesktopStatus()
+    {
+        var processes = Process.GetProcessesByName("YellowFox.Desktop");
+        return new
+        {
+            running = processes.Length > 0,
+            count = processes.Length,
+            processIds = processes.Select(process => process.Id).ToArray()
+        };
+    }
+
+    private static DesktopStartResult StartDesktop()
+    {
+        var running = Process.GetProcessesByName("YellowFox.Desktop");
+        if (running.Length > 0)
+            return new DesktopStartResult(true, false, null, "YellowFox Desktop is already running.");
+
+        var path = ResolveDesktopExecutablePath();
+        if (path == null)
+            return new DesktopStartResult(false, false, null, "YellowFox.Desktop.exe was not found. Build the desktop project first.");
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = path,
+                WorkingDirectory = Path.GetDirectoryName(path) ?? Environment.CurrentDirectory,
+                UseShellExecute = true
+            });
+            return new DesktopStartResult(true, true, path, "YellowFox Desktop started.");
+        }
+        catch (Exception ex)
+        {
+            return new DesktopStartResult(false, false, path, ex.Message);
+        }
+    }
+
+    private static string? ResolveDesktopExecutablePath()
+    {
+        var candidates = new List<string>();
+        var envPath = Environment.GetEnvironmentVariable("YELLOWFOX_DESKTOP_PATH");
+        if (!string.IsNullOrWhiteSpace(envPath))
+            candidates.Add(envPath);
+
+        candidates.Add(Path.Combine(Environment.CurrentDirectory, "YellowFox.Desktop", "bin", "Debug", "net8.0", "YellowFox.Desktop.exe"));
+        candidates.Add(Path.Combine(AppContext.BaseDirectory, "YellowFox.Desktop.exe"));
+        candidates.Add(Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory,
+            "..", "..", "..", "..",
+            "YellowFox.Desktop", "bin", "Debug", "net8.0", "YellowFox.Desktop.exe")));
+
+        return candidates.FirstOrDefault(File.Exists);
+    }
+
+    private static string CreateSuccessJson(object data)
+    {
+        return JsonSerializer.Serialize(new
+        {
+            ok = true,
+            data
+        }, JsonOptions);
     }
 
     private static Dictionary<string, string?> ParseOptions(string[] args)
@@ -147,6 +305,8 @@ public static class AgentCli
         }
     }
 }
+
+public sealed record DesktopStartResult(bool Success, bool Started, string? Path, string Message);
 
 public sealed record AgentCliRequest(string Command, Dictionary<string, string?> Args);
 

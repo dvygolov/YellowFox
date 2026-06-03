@@ -18,7 +18,7 @@
             <DockPanel>
                 <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" Spacing="8">
                     <Button AutomationProperties.AutomationId="NewBookmarkButton"
-                            Content="New Bookmark"
+                            Content="🔖 New Bookmark"
                             Command="{Binding NewBookmarkCommand}"
                             Padding="14,7"
                             Background="#4CAF50"
@@ -26,7 +26,7 @@
                             BorderThickness="0"
                             CornerRadius="5" />
                     <Button AutomationProperties.AutomationId="NewFolderButton"
-                            Content="New Folder"
+                            Content="📁 New Folder"
                             Command="{Binding NewFolderCommand}"
                             Padding="14,7"
                             Background="#357ABD"
@@ -34,7 +34,7 @@
                             BorderThickness="0"
                             CornerRadius="5" />
                     <Button AutomationProperties.AutomationId="EditBookmarkButton"
-                            Content="Edit"
+                            Content="✏️ Edit"
                             Command="{Binding EditBookmarkCommand}"
                             Padding="14,7"
                             Background="#3E3E42"
@@ -43,7 +43,7 @@
                             CornerRadius="5"
                             IsEnabled="{Binding IsEditMode}" />
                     <Button AutomationProperties.AutomationId="DeleteBookmarkButton"
-                            Content="Delete"
+                            Content="🗑️ Delete"
                             Command="{Binding DeleteCommand}"
                             Padding="14,7"
                             Background="#A33A3A"
@@ -52,7 +52,7 @@
                             CornerRadius="5"
                             IsEnabled="{Binding IsEditMode}" />
                     <Button AutomationProperties.AutomationId="BookmarksRefreshButton"
-                            Content="Refresh"
+                            Content="🔄 Refresh"
                             Command="{Binding RefreshCommand}"
                             Padding="14,7"
                             Background="#3E3E42"

@@ -11,6 +11,10 @@ import subprocess
 import contextlib
 from pathlib import Path
 
+from yellowfox_camoufox_home import configure_camoufox_home
+
+configure_camoufox_home()
+
 import orjson
 from camoufox.server import get_nodejs, to_camel_case_dict
 from camoufox.utils import launch_options
@@ -95,23 +99,28 @@ def build_launch_kwargs(config):
             "browser.toolbars.bookmarks.showInPrivateBrowsing": True,
             "browser.bookmarks.addedImportButton": True,
             "browser.policies.runOncePerModification.displayBookmarksToolbar": "always",
-            "toolkit.legacyUserProfileCustomizations.stylesheets": True,
             "browser.startup.page": 0,
             "keyword.enabled": True,
             "dom.event.contextmenu.enabled": False,
             "browser.fixup.fallback-to-https": True,
             "browser.fixup.upgrade_to_https": True,
             "dom.security.https_first": True,
+            "dom.security.https_first_pbm": True,
             "dom.security.https_only_mode": True,
+            "dom.security.https_only_mode_pbm": True,
+            "dom.security.https_only_mode.upgrade_local": True,
             "dom.security.https_only_mode_ever_enabled": True,
             "browser.search.defaultenginename": "Google",
             "browser.search.selectedEngine": "Google",
             "browser.search.order.1": "Google",
+            "browser.search.update": False,
             "browser.urlbar.placeholderName": "Google",
             "browser.urlbar.placeholderName.private": "Google",
             "browser.sessionstore.resume_from_crash": False,
             "browser.sessionstore.max_tabs_undo": 25,
             "browser.sessionstore.max_windows_undo": 0,
+            "browser.link.open_newwindow": 3,
+            "browser.link.open_newwindow.restriction": 0,
             "browser.shell.checkDefaultBrowser": False,
             "browser.aboutwelcome.enabled": False,
             "browser.preonboarding.enabled": False,
@@ -161,6 +170,7 @@ def ensure_browser_policies(executable_path, bookmarks):
         browser_root = Path(executable_path).parent
         remove_legacy_browser_autoconfig(browser_root)
         ensure_minimal_browser_autoconfig(browser_root)
+        remove_yellowfox_native_window_button_css(browser_root)
 
         policies = {
             "policies": {
@@ -199,82 +209,46 @@ def ensure_minimal_browser_autoconfig(browser_root):
 
     cfg = r'''
 // YellowFox minimal startup chrome visibility.
+lockPref("keyword.enabled", true);
+lockPref("browser.fixup.fallback-to-https", true);
+lockPref("browser.fixup.upgrade_to_https", true);
+lockPref("dom.security.https_first", true);
+lockPref("dom.security.https_first_pbm", true);
+lockPref("dom.security.https_only_mode", true);
+lockPref("dom.security.https_only_mode_pbm", true);
+lockPref("dom.security.https_only_mode.upgrade_local", true);
+lockPref("dom.security.https_only_mode_ever_enabled", true);
+lockPref("browser.search.defaultenginename", "Google");
+lockPref("browser.search.selectedEngine", "Google");
+lockPref("browser.search.order.1", "Google");
+lockPref("browser.search.update", false);
+lockPref("browser.urlbar.placeholderName", "Google");
+lockPref("browser.urlbar.placeholderName.private", "Google");
+
 try {
   const { Services } = ChromeUtils.importESModule("resource://gre/modules/Services.sys.mjs");
   Services.prefs.setCharPref("browser.toolbars.bookmarks.visibility", "always");
 
-  function getProfileName() {
+  async function enforceGoogleSearchEngine() {
     try {
-      return Services.prefs.getStringPref("yellowfox.profile.name", "").trim();
-    } catch (e) {
-      return "";
-    }
-  }
-
-  function installProfileBadge(win) {
-    try {
-      if (!win || !win.document) {
+      await Services.search.init();
+      const google = Services.search.getEngineByName("Google");
+      if (!google) {
         return;
       }
-
-      const profileName = getProfileName();
-      if (!profileName) {
-        return;
-      }
-
-      const doc = win.document;
-      const toolbox = doc.getElementById("navigator-toolbox") || doc.documentElement;
-      if (!toolbox) {
-        return;
-      }
-
-      let badge = doc.getElementById("yellowfox-profile-badge");
-      if (!badge) {
-        badge = doc.createElementNS("http://www.w3.org/1999/xhtml", "div");
-        badge.id = "yellowfox-profile-badge";
-        const label = doc.createElementNS("http://www.w3.org/1999/xhtml", "span");
-        label.id = "yellowfox-profile-badge-label";
-        badge.appendChild(label);
-        toolbox.appendChild(badge);
-      }
-
-      const label = doc.getElementById("yellowfox-profile-badge-label");
-      if (label) {
-        label.textContent = profileName;
-        label.setAttribute("title", profileName);
-      }
-
-      badge.style.setProperty("position", "fixed", "important");
-      badge.style.setProperty("top", "6px", "important");
-      badge.style.setProperty("left", "92px", "important");
-      badge.style.setProperty("z-index", "2147483647", "important");
-      badge.style.setProperty("display", "block", "important");
-      badge.style.setProperty("max-width", "280px", "important");
-      badge.style.setProperty("overflow", "hidden", "important");
-      badge.style.setProperty("white-space", "nowrap", "important");
-      badge.style.setProperty("text-overflow", "ellipsis", "important");
-      badge.style.setProperty("pointer-events", "none", "important");
-      badge.style.setProperty("padding", "4px 10px", "important");
-      badge.style.setProperty("border-radius", "6px", "important");
-      badge.style.setProperty("background", "#16a34a", "important");
-      badge.style.setProperty("color", "#ffffff", "important");
-      badge.style.setProperty("box-shadow", "0 2px 10px rgba(0, 0, 0, 0.35)", "important");
-      badge.style.setProperty("font", "600 12px/1.2 system-ui, -apple-system, Segoe UI, sans-serif", "important");
-
-      doc.documentElement.setAttribute("titlepreface", `[${profileName}] `);
-      if (win.gBrowser && typeof win.gBrowser.updateTitlebar === "function") {
-        win.gBrowser.updateTitlebar();
+      Services.search.defaultEngine = google;
+      if ("defaultPrivateEngine" in Services.search) {
+        Services.search.defaultPrivateEngine = google;
       }
     } catch (e) {}
   }
+  enforceGoogleSearchEngine();
 
   function showBookmarksToolbar(win) {
     try {
       if (!win || !win.document) {
         return;
       }
-
-      installProfileBadge(win);
 
       const root = win.document.documentElement;
       const chromeHidden = root.getAttribute("chromehidden");
@@ -305,6 +279,21 @@ try {
 } catch (e) {}
 '''
     (browser_root / "yellowfox.cfg").write_text(cfg.lstrip(), encoding="utf-8")
+
+
+def remove_yellowfox_native_window_button_css(browser_root):
+    chrome_css_path = browser_root / "chrome.css"
+    if not chrome_css_path.exists():
+        return
+
+    marker_start = "/* YellowFox native window controls start */"
+    marker_end = "/* YellowFox native window controls end */"
+
+    text = chrome_css_path.read_text(encoding="utf-8", errors="ignore")
+    if marker_start in text and marker_end in text:
+        before, rest = text.split(marker_start, 1)
+        _, after = rest.split(marker_end, 1)
+        chrome_css_path.write_text(before.rstrip() + after, encoding="utf-8")
 
 
 def remove_legacy_browser_autoconfig(browser_root):

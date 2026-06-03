@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -8,6 +9,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using YellowFox.Desktop.Models;
 
@@ -15,13 +17,27 @@ namespace YellowFox.Desktop.Services;
 
 public class ProxyValidatorService
 {
-    private static readonly string[] ProbeUrls =
+    private static readonly Uri[] HttpProbeUrls =
     {
-        "http://api.ipify.org?format=json",
-        "http://ipv4.icanhazip.com",
-        "http://ifconfig.me/ip"
+        new("http://ip-api.com/json/?fields=status,message,query,country,countryCode"),
+        new("https://api.ip.sb/geoip"),
+        new("https://ipapi.co/json/"),
+        new("https://api64.ipify.org?format=json"),
+        new("https://ifconfig.me/ip")
     };
-    private const string ProbeHost = "api.ipify.org";
+
+    private static readonly Uri[] Socks5ProbeUrls =
+    {
+        new("http://ip-api.com/json/?fields=status,message,query,country,countryCode"),
+        new("http://api64.ipify.org?format=json"),
+        new("http://ifconfig.me/ip")
+    };
+
+    private static readonly string[] DirectCountryLookupUrlFormats =
+    {
+        "http://ip-api.com/json/{0}?fields=status,message,query,country,countryCode",
+        "https://ipapi.co/{0}/json/"
+    };
 
     public async Task<ProxyValidationResult> ValidateAsync(Proxy proxy)
     {
@@ -43,7 +59,7 @@ public class ProxyValidatorService
                 result = await ValidateHttpAsync(proxy, stopwatch);
             }
 
-            return result;
+            return await AddCountryIfMissingAsync(result);
         }
         catch (Exception ex)
         {
@@ -72,17 +88,18 @@ public class ProxyValidatorService
             Timeout = TimeSpan.FromSeconds(10)
         };
 
-        string? ip = null;
+        ProxyProbeResult? probeResult = null;
         Exception? lastError = null;
-        foreach (var probeUrl in ProbeUrls)
+        foreach (var probeUrl in HttpProbeUrls)
         {
             try
             {
                 var response = await httpClient.GetAsync(probeUrl);
                 response.EnsureSuccessStatusCode();
                 var body = await response.Content.ReadAsStringAsync();
-                ip = TryExtractIp(body);
-                break;
+                probeResult = TryExtractProbeResult(body);
+                if (!string.IsNullOrWhiteSpace(probeResult.Ip))
+                    break;
             }
             catch (Exception ex)
             {
@@ -91,8 +108,8 @@ public class ProxyValidatorService
         }
 
         stopwatch.Stop();
-        if (!string.IsNullOrWhiteSpace(ip))
-            return ProxyValidationResult.Success(ip, stopwatch.ElapsedMilliseconds);
+        if (!string.IsNullOrWhiteSpace(probeResult?.Ip))
+            return ProxyValidationResult.Success(probeResult, stopwatch.ElapsedMilliseconds);
 
         if (lastError != null)
             return ProxyValidationResult.Failed(lastError.Message, stopwatch.ElapsedMilliseconds);
@@ -100,7 +117,73 @@ public class ProxyValidatorService
         return ProxyValidationResult.Success("unknown", stopwatch.ElapsedMilliseconds);
     }
 
+    private static async Task<ProxyValidationResult> AddCountryIfMissingAsync(ProxyValidationResult result)
+    {
+        if (!result.IsSuccess ||
+            !string.IsNullOrWhiteSpace(result.CountryCode) ||
+            string.IsNullOrWhiteSpace(result.ExternalIp) ||
+            string.Equals(result.ExternalIp, "unknown", StringComparison.OrdinalIgnoreCase))
+        {
+            return result;
+        }
+
+        try
+        {
+            using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+            foreach (var format in DirectCountryLookupUrlFormats)
+            {
+                var url = string.Format(CultureInfo.InvariantCulture, format, Uri.EscapeDataString(result.ExternalIp));
+                try
+                {
+                    var body = await httpClient.GetStringAsync(url, cancellation.Token);
+                    var probeResult = TryExtractProbeResult(body);
+                    if (!string.IsNullOrWhiteSpace(probeResult.CountryCode) || !string.IsNullOrWhiteSpace(probeResult.CountryName))
+                        return result.WithCountry(probeResult.CountryCode, probeResult.CountryName);
+                }
+                catch
+                {
+                    // Try the next lookup provider.
+                }
+            }
+        }
+        catch
+        {
+            // Country is optional; keep the proxy check result if enrichment fails.
+        }
+
+        return result;
+    }
+
     private static async Task<ProxyValidationResult> ValidateSocks5Async(Proxy proxy, Stopwatch stopwatch)
+    {
+        Exception? lastError = null;
+        foreach (var probeUrl in Socks5ProbeUrls)
+        {
+            try
+            {
+                var body = await FetchViaSocks5Async(proxy, probeUrl);
+                var probeResult = TryExtractProbeResult(body);
+                if (!string.IsNullOrWhiteSpace(probeResult.Ip))
+                {
+                    stopwatch.Stop();
+                    return ProxyValidationResult.Success(probeResult, stopwatch.ElapsedMilliseconds);
+                }
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+            }
+        }
+
+        stopwatch.Stop();
+        if (lastError != null)
+            return ProxyValidationResult.Failed(lastError.Message, stopwatch.ElapsedMilliseconds);
+
+        return ProxyValidationResult.Success("unknown", stopwatch.ElapsedMilliseconds);
+    }
+
+    private static async Task<string> FetchViaSocks5Async(Proxy proxy, Uri probeUrl)
     {
         using var tcpClient = new TcpClient();
         await tcpClient.ConnectAsync(proxy.Host, proxy.Port);
@@ -115,8 +198,7 @@ public class ProxyValidatorService
         var greetingReply = await ReadExactAsync(stream, 2);
         if (greetingReply[0] != 0x05 || greetingReply[1] == 0xFF)
         {
-            stopwatch.Stop();
-            return ProxyValidationResult.Failed("SOCKS5 auth method rejected.", stopwatch.ElapsedMilliseconds);
+            throw new IOException("SOCKS5 auth method rejected.");
         }
 
         if (greetingReply[1] == 0x02)
@@ -125,8 +207,7 @@ public class ProxyValidatorService
             var password = Encoding.UTF8.GetBytes(proxy.Password ?? string.Empty);
             if (username.Length > 255 || password.Length > 255)
             {
-                stopwatch.Stop();
-                return ProxyValidationResult.Failed("SOCKS5 credentials are too long.", stopwatch.ElapsedMilliseconds);
+                throw new IOException("SOCKS5 credentials are too long.");
             }
 
             var authRequest = new byte[3 + username.Length + password.Length];
@@ -140,12 +221,11 @@ public class ProxyValidatorService
             var authReply = await ReadExactAsync(stream, 2);
             if (authReply[1] != 0x00)
             {
-                stopwatch.Stop();
-                return ProxyValidationResult.Failed("SOCKS5 username/password rejected.", stopwatch.ElapsedMilliseconds);
+                throw new IOException("SOCKS5 username/password rejected.");
             }
         }
 
-        var hostBytes = Encoding.ASCII.GetBytes(ProbeHost);
+        var hostBytes = Encoding.ASCII.GetBytes(probeUrl.Host);
         var connectRequest = new byte[7 + hostBytes.Length];
         connectRequest[0] = 0x05; // version
         connectRequest[1] = 0x01; // CONNECT
@@ -153,16 +233,16 @@ public class ProxyValidatorService
         connectRequest[3] = 0x03; // DOMAIN
         connectRequest[4] = (byte)hostBytes.Length;
         Buffer.BlockCopy(hostBytes, 0, connectRequest, 5, hostBytes.Length);
-        connectRequest[5 + hostBytes.Length] = 0x00; // port 80
-        connectRequest[6 + hostBytes.Length] = 0x50;
+        var port = probeUrl.IsDefaultPort ? 80 : probeUrl.Port;
+        connectRequest[5 + hostBytes.Length] = (byte)(port >> 8);
+        connectRequest[6 + hostBytes.Length] = (byte)(port & 0xFF);
 
         await stream.WriteAsync(connectRequest);
 
         var connectHeader = await ReadExactAsync(stream, 4);
         if (connectHeader[1] != 0x00)
         {
-            stopwatch.Stop();
-            return ProxyValidationResult.Failed($"SOCKS5 connect failed (code: {connectHeader[1]}).", stopwatch.ElapsedMilliseconds);
+            throw new IOException($"SOCKS5 connect failed (code: {connectHeader[1]}).");
         }
 
         var atyp = connectHeader[3];
@@ -179,7 +259,8 @@ public class ProxyValidatorService
         }
         _ = await ReadExactAsync(stream, 2); // bound port
 
-        var httpRequest = $"GET /?format=json HTTP/1.1\r\nHost: {ProbeHost}\r\nConnection: close\r\n\r\n";
+        var path = string.IsNullOrWhiteSpace(probeUrl.PathAndQuery) ? "/" : probeUrl.PathAndQuery;
+        var httpRequest = $"GET {path} HTTP/1.1\r\nHost: {probeUrl.Host}\r\nConnection: close\r\n\r\n";
         var requestBytes = Encoding.ASCII.GetBytes(httpRequest);
         await stream.WriteAsync(requestBytes);
         await stream.FlushAsync();
@@ -187,10 +268,7 @@ public class ProxyValidatorService
         var rawResponse = await ReadToEndAsync(stream);
         var bodyIndex = rawResponse.IndexOf("\r\n\r\n", StringComparison.Ordinal);
         var body = bodyIndex >= 0 ? rawResponse[(bodyIndex + 4)..] : rawResponse;
-        var decodedBody = TryDecodeChunkedBody(body);
-        var ip = TryExtractIp(decodedBody) ?? "unknown";
-        stopwatch.Stop();
-        return ProxyValidationResult.Success(ip, stopwatch.ElapsedMilliseconds);
+        return TryDecodeChunkedBody(body);
     }
 
     private static async Task<byte[]> ReadExactAsync(Stream stream, int count)
@@ -261,16 +339,35 @@ public class ProxyValidatorService
         }
     }
 
-    private static string? TryExtractIp(string content)
+    private static ProxyProbeResult TryExtractProbeResult(string content)
     {
         if (string.IsNullOrWhiteSpace(content))
-            return null;
+            return new ProxyProbeResult(null, null, null);
 
         try
         {
-            var data = JsonSerializer.Deserialize<IpResponse>(content);
-            if (!string.IsNullOrWhiteSpace(data?.Ip))
-                return data.Ip;
+            using var document = JsonDocument.Parse(content);
+            if (document.RootElement.ValueKind == JsonValueKind.Object)
+            {
+                var ip = GetString(document.RootElement, "ip")
+                    ?? GetString(document.RootElement, "query")
+                    ?? GetString(document.RootElement, "ip_addr");
+                var countryCode = GetString(document.RootElement, "country_code")
+                    ?? GetString(document.RootElement, "countryCode");
+                var countryName = GetString(document.RootElement, "country_name");
+
+                var country = GetString(document.RootElement, "country");
+                if (string.IsNullOrWhiteSpace(countryCode) && IsCountryCode(country))
+                    countryCode = country;
+                else if (string.IsNullOrWhiteSpace(countryName))
+                    countryName = country;
+
+                countryCode = NormalizeCountryCode(countryCode);
+                countryName = NormalizeCountryName(countryName, countryCode);
+
+                if (!string.IsNullOrWhiteSpace(ip))
+                    return new ProxyProbeResult(ip, countryCode, countryName);
+            }
         }
         catch
         {
@@ -279,27 +376,70 @@ public class ProxyValidatorService
 
         var jsonMatch = Regex.Match(content, "\"ip\"\\s*:\\s*\"(?<ip>[^\"]+)\"", RegexOptions.IgnoreCase);
         if (jsonMatch.Success)
-            return jsonMatch.Groups["ip"].Value;
+            return new ProxyProbeResult(jsonMatch.Groups["ip"].Value, null, null);
+
+        var queryMatch = Regex.Match(content, "\"query\"\\s*:\\s*\"(?<ip>[^\"]+)\"", RegexOptions.IgnoreCase);
+        if (queryMatch.Success)
+            return new ProxyProbeResult(queryMatch.Groups["ip"].Value, null, null);
 
         var ipv4Match = Regex.Match(content, @"\b(\d{1,3}\.){3}\d{1,3}\b");
         if (ipv4Match.Success)
-            return ipv4Match.Value;
+            return new ProxyProbeResult(ipv4Match.Value, null, null);
 
         var ipv6Match = Regex.Match(content, @"\b([0-9a-f]{1,4}:){2,7}[0-9a-f]{1,4}\b", RegexOptions.IgnoreCase);
-        return ipv6Match.Success ? ipv6Match.Value : null;
+        return ipv6Match.Success
+            ? new ProxyProbeResult(ipv6Match.Value, null, null)
+            : new ProxyProbeResult(null, null, null);
     }
 
-    private sealed class IpResponse
+    private static string? GetString(JsonElement element, string propertyName)
     {
-        public string? Ip { get; set; }
+        return element.TryGetProperty(propertyName, out var property) && property.ValueKind == JsonValueKind.String
+            ? property.GetString()
+            : null;
+    }
+
+    private static bool IsCountryCode(string? value)
+    {
+        var trimmed = value?.Trim();
+        return !string.IsNullOrWhiteSpace(trimmed) &&
+               trimmed.Length == 2 &&
+               trimmed.All(char.IsLetter);
+    }
+
+    private static string? NormalizeCountryCode(string? countryCode)
+    {
+        return IsCountryCode(countryCode) ? countryCode!.Trim().ToUpperInvariant() : null;
+    }
+
+    private static string? NormalizeCountryName(string? countryName, string? countryCode)
+    {
+        if (!string.IsNullOrWhiteSpace(countryName))
+            return countryName.Trim();
+
+        if (string.IsNullOrWhiteSpace(countryCode))
+            return null;
+
+        try
+        {
+            return new RegionInfo(countryCode).EnglishName;
+        }
+        catch
+        {
+            return countryCode;
+        }
     }
 }
+
+public sealed record ProxyProbeResult(string? Ip, string? CountryCode, string? CountryName);
 
 public sealed class ProxyValidationResult
 {
     public bool IsSuccess { get; init; }
     public string? Error { get; init; }
     public string? ExternalIp { get; init; }
+    public string? CountryCode { get; init; }
+    public string? CountryName { get; init; }
     public long LatencyMs { get; init; }
 
     public static ProxyValidationResult Success(string? ip, long latencyMs)
@@ -309,6 +449,31 @@ public sealed class ProxyValidationResult
             IsSuccess = true,
             ExternalIp = ip,
             LatencyMs = latencyMs
+        };
+    }
+
+    public static ProxyValidationResult Success(ProxyProbeResult probeResult, long latencyMs)
+    {
+        return new ProxyValidationResult
+        {
+            IsSuccess = true,
+            ExternalIp = probeResult.Ip,
+            CountryCode = probeResult.CountryCode,
+            CountryName = probeResult.CountryName,
+            LatencyMs = latencyMs
+        };
+    }
+
+    public ProxyValidationResult WithCountry(string? countryCode, string? countryName)
+    {
+        return new ProxyValidationResult
+        {
+            IsSuccess = IsSuccess,
+            Error = Error,
+            ExternalIp = ExternalIp,
+            CountryCode = countryCode,
+            CountryName = countryName,
+            LatencyMs = LatencyMs
         };
     }
 

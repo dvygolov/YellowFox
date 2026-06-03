@@ -17,8 +17,7 @@
     <DockPanel Margin="24">
         <!-- Buttons at bottom -->
         <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Center" Spacing="15" Margin="0,30,0,0">
-            <Button Content="Save" 
-                    AutomationProperties.AutomationId="ProfileEditorSaveButton"
+            <Button AutomationProperties.AutomationId="ProfileEditorSaveButton"
                     Width="140" 
                     Height="42"
                     Click="SaveButton_Click"
@@ -28,7 +27,13 @@
                     CornerRadius="8"
                     FontWeight="SemiBold"
                     FontSize="14"
+                    HorizontalContentAlignment="Center"
+                    VerticalContentAlignment="Center"
                     Cursor="Hand">
+                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                    <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center" />
+                    <TextBlock Text="Save" VerticalAlignment="Center" />
+                </StackPanel>
                 <Button.Styles>
                     <Style Selector="Button:pointerover">
                         <Setter Property="Background" Value="#66BB6A" />
@@ -38,8 +43,7 @@
                     </Style>
                 </Button.Styles>
             </Button>
-            <Button Content="Cancel" 
-                    AutomationProperties.AutomationId="ProfileEditorCancelButton"
+            <Button AutomationProperties.AutomationId="ProfileEditorCancelButton"
                     Width="140" 
                     Height="42"
                     Click="CancelButton_Click"
@@ -49,7 +53,13 @@
                     CornerRadius="8"
                     FontWeight="SemiBold"
                     FontSize="14"
+                    HorizontalContentAlignment="Center"
+                    VerticalContentAlignment="Center"
                     Cursor="Hand">
+                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                    <TextBlock Text="&#xE711;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center" />
+                    <TextBlock Text="Cancel" VerticalAlignment="Center" />
+                </StackPanel>
                 <Button.Styles>
                     <Style Selector="Button:pointerover">
                         <Setter Property="Background" Value="#4A4A4E" />
@@ -115,13 +125,32 @@
                            FontSize="13" />
                 <ComboBox ItemsSource="{Binding OsOptions}"
                           AutomationProperties.AutomationId="ProfileOsCombo"
-                          SelectedItem="{Binding SelectedOs}"
+                          SelectedItem="{Binding SelectedOsOption}"
                           HorizontalAlignment="Stretch"
                           Background="#1E1E1E"
                           Foreground="#CCCCCC"
                           BorderBrush="#3E3E42"
                           Padding="12,10"
-                          CornerRadius="6" />
+                          CornerRadius="6">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:OsOption">
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <Viewbox Width="16"
+                                         Height="16"
+                                         VerticalAlignment="Center">
+                                    <Path Width="24"
+                                          Height="24"
+                                          Stretch="Uniform"
+                                          Data="{Binding IconData}"
+                                          Fill="{Binding IconFill}" />
+                                </Viewbox>
+                                <TextBlock Text="{Binding DisplayName}"
+                                           VerticalAlignment="Center"
+                                           FontWeight="SemiBold" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
             </StackPanel>
             
             <!-- Screen Resolution -->

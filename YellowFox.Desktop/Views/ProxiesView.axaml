@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:YellowFox.Desktop.ViewModels"
+             xmlns:behaviors="using:YellowFox.Desktop.Behaviors"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d"
@@ -16,7 +17,7 @@
                 BorderThickness="0,0,0,1"
                 Padding="20,12">
             <StackPanel Orientation="Horizontal" Spacing="8">
-                    <Button Content="New"
+                    <Button Content="➕ New"
                             AutomationProperties.AutomationId="NewProxyButton"
                             Command="{Binding NewProxyCommand}"
                             Padding="14,7"
@@ -24,7 +25,7 @@
                             Foreground="White"
                             BorderThickness="0"
                             CornerRadius="5" />
-                    <Button Content="Edit"
+                    <Button Content="✏️ Edit"
                             AutomationProperties.AutomationId="EditProxyButton"
                             Command="{Binding EditProxyCommand}"
                             Padding="14,7"
@@ -33,7 +34,7 @@
                             BorderThickness="0"
                             CornerRadius="5"
                             IsEnabled="{Binding IsEditMode}" />
-                    <Button Content="Check"
+                    <Button Content="✅ Check"
                             AutomationProperties.AutomationId="TestProxyButton"
                             Command="{Binding TestProxyCommand}"
                             Padding="14,7"
@@ -43,7 +44,17 @@
                             BorderThickness="1"
                             CornerRadius="5"
                             IsEnabled="{Binding IsEditMode}" />
-                    <Button Content="Delete"
+                    <Button Content="🔁 Change IP"
+                            AutomationProperties.AutomationId="ChangeProxyIpButton"
+                            Command="{Binding ChangeIpCommand}"
+                            Padding="14,7"
+                            Background="#132D47"
+                            Foreground="#4FA8FF"
+                            BorderBrush="#1F5C92"
+                            BorderThickness="1"
+                            CornerRadius="5"
+                            IsEnabled="{Binding CanChangeIp}" />
+                    <Button Content="🗑️ Delete"
                             AutomationProperties.AutomationId="DeleteProxyButton"
                             Command="{Binding DeleteProxyCommand}"
                             Padding="14,7"
@@ -52,7 +63,7 @@
                             BorderThickness="0"
                             CornerRadius="5"
                             IsEnabled="{Binding IsEditMode}" />
-                    <Button Content="Refresh"
+                    <Button Content="🔄 Refresh"
                             AutomationProperties.AutomationId="ProxiesRefreshButton"
                             Command="{Binding RefreshCommand}"
                             Padding="14,7"
@@ -75,9 +86,13 @@
                   BorderBrush="#3E3E42"
                   RowBackground="#1E1E1E"
                   HeadersVisibility="Column"
+                  ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                  ScrollViewer.VerticalScrollBarVisibility="Auto"
+                  CanUserResizeColumns="True"
+                  behaviors:DataGridColumnWidthPersistence.Key="Proxies"
                   Margin="0">
             <DataGrid.Columns>
-                <DataGridTemplateColumn Header="" Width="42">
+                <DataGridTemplateColumn Header="" Width="42" CanUserSort="False">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate x:DataType="vm:ProxyItemViewModel">
                             <Border Width="10"
@@ -92,7 +107,38 @@
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
-                <DataGridTextColumn Header="Name" Binding="{Binding Proxy.Name}" Width="2*" />
+                <DataGridTemplateColumn Header="Name" Width="2*" SortMemberPath="Proxy.Name">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate x:DataType="vm:ProxyItemViewModel">
+                            <Grid ColumnDefinitions="28,*"
+                                  VerticalAlignment="Center">
+                                <Grid Grid.Column="0"
+                                      Width="22"
+                                      Height="16"
+                                      HorizontalAlignment="Center"
+                                      VerticalAlignment="Center"
+                                      ToolTip.Tip="{Binding CountryToolTip}">
+                                    <Image Source="{Binding CountryFlagImage}"
+                                           Width="22"
+                                           Height="16"
+                                           Stretch="Uniform"
+                                           IsVisible="{Binding HasCountryFlagImage}" />
+                                    <TextBlock Text="{Binding CountryCodeFallback}"
+                                               FontSize="12"
+                                               FontWeight="SemiBold"
+                                               Foreground="#D7DEE8"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center"
+                                               IsVisible="{Binding HasCountryCodeFallback}" />
+                                </Grid>
+                                <TextBlock Grid.Column="1"
+                                           Text="{Binding Proxy.Name}"
+                                           TextTrimming="CharacterEllipsis"
+                                           VerticalAlignment="Center" />
+                            </Grid>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
                 <DataGridTextColumn Header="Type" Binding="{Binding TypeDisplay}" Width="120" />
                 <DataGridTextColumn Header="Endpoint" Binding="{Binding Endpoint}" Width="2*" />
                 <DataGridTextColumn Header="Login" Binding="{Binding AuthDisplay}" Width="160" />

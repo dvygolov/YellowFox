@@ -13,6 +13,15 @@ description: "Use when an agent needs to work through YellowFox browser profiles
 
 ## Core Commands
 
+Start YellowFox Desktop if it is not running:
+
+```powershell
+dotnet run --no-build --project YellowFox.Cli -- desktop start --json
+dotnet run --no-build --project YellowFox.Cli -- desktop status --json
+```
+
+Regular CLI commands auto-start YellowFox Desktop when the agent pipe is unavailable and a built `YellowFox.Desktop.exe` can be found.
+
 List profiles:
 
 ```powershell
@@ -61,6 +70,22 @@ Stop a profile:
 dotnet run --no-build --project YellowFox.Cli -- profile stop --id "NRD GGL3" --json
 ```
 
+Create/update/delete profiles:
+
+```powershell
+dotnet run --no-build --project YellowFox.Cli -- profile create --name "Test" --proxy-id "YWB-MD3" --width 1920 --height 1080 --json
+dotnet run --no-build --project YellowFox.Cli -- profile update --id "Test" --notes "..." --proxy-id none --json
+dotnet run --no-build --project YellowFox.Cli -- profile delete --id "Test" --json
+```
+
+Import/export cookies:
+
+```powershell
+dotnet run --no-build --project YellowFox.Cli -- profile import-cookies --id "NRD GGL3" --file "cookies.json" --json
+dotnet run --no-build --project YellowFox.Cli -- profile import-cookies --id "NRD GGL3" --domain "facebook.com" --text "c_user=...; xs=..." --json
+dotnet run --no-build --project YellowFox.Cli -- profile export-cookies --id "NRD GGL3" --file "cookies.json" --json
+```
+
 Import Dolphin data:
 
 ```powershell
@@ -85,7 +110,31 @@ dotnet run --no-build --project YellowFox.Cli -- dolphin import --json
 ```powershell
 dotnet run --no-build --project YellowFox.Cli -- proxy list --json
 dotnet run --no-build --project YellowFox.Cli -- proxy test --id "YWB-MD3" --json
+dotnet run --no-build --project YellowFox.Cli -- proxy change-ip --id "YWB-MD3" --json
+dotnet run --no-build --project YellowFox.Cli -- proxy update --id "YWB-MD3" --enabled false --json
+dotnet run --no-build --project YellowFox.Cli -- proxy update --id "YWB-MD3" --ip-change-url "https://provider.example/rotate" --json
 dotnet run --no-build --project YellowFox.Cli -- profile update --id "NRD GGL3" --proxy-id "YWB-MD3" --json
+```
+
+## Extension Commands
+
+```powershell
+dotnet run --no-build --project YellowFox.Cli -- extension list --json
+dotnet run --no-build --project YellowFox.Cli -- extension import-url --url "https://addons.mozilla.org/en-US/firefox/addon/darkreader/" --json
+dotnet run --no-build --project YellowFox.Cli -- extension import-archive --path "D:\path\addon.xpi" --name "Addon" --json
+dotnet run --no-build --project YellowFox.Cli -- extension add --name "Custom" --path "D:\path\unpacked-extension" --json
+dotnet run --no-build --project YellowFox.Cli -- extension toggle --id "Dark Reader" --enabled false --json
+dotnet run --no-build --project YellowFox.Cli -- extension delete --id "Dark Reader" --json
+```
+
+## Bookmark Commands
+
+```powershell
+dotnet run --no-build --project YellowFox.Cli -- bookmark list --json
+dotnet run --no-build --project YellowFox.Cli -- bookmark add-folder --title "Work" --json
+dotnet run --no-build --project YellowFox.Cli -- bookmark add --title "Example" --url "https://example.com" --parent-id "<folder-id>" --json
+dotnet run --no-build --project YellowFox.Cli -- bookmark update --id "<bookmark-id>" --title "New title" --json
+dotnet run --no-build --project YellowFox.Cli -- bookmark delete --id "<bookmark-id>" --json
 ```
 
 ## Failure Rules

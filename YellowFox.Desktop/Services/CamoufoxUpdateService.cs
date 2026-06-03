@@ -35,7 +35,7 @@ public sealed class CamoufoxUpdateService
                 "Python launcher was not found. Install Python or create the YellowFox python/venv environment.");
         }
 
-        if (!await ArePythonDependenciesInstalledAsync(launcher, cancellationToken))
+        if (!await ArePythonDependenciesInstalledAsync(launcher, pythonDir, cancellationToken))
         {
             return CamoufoxPrerequisiteStatus.Failure(
                 CamoufoxPrerequisiteState.PythonDependenciesMissing,
@@ -124,6 +124,7 @@ public sealed class CamoufoxUpdateService
                     CreateNoWindow = true
                 }
             };
+            ApplyLocalPythonEnvironment(process.StartInfo, pythonDir);
             process.StartInfo.ArgumentList.Add("-m");
             process.StartInfo.ArgumentList.Add("pip");
             process.StartInfo.ArgumentList.Add("install");
@@ -187,6 +188,7 @@ public sealed class CamoufoxUpdateService
                 CreateNoWindow = true
             }
         };
+        ApplyLocalPythonEnvironment(process.StartInfo, pythonDir);
         process.StartInfo.ArgumentList.Add(script);
         process.StartInfo.ArgumentList.Add(argument);
 
@@ -276,11 +278,11 @@ public sealed class CamoufoxUpdateService
         return false;
     }
 
-    private static async Task<bool> ArePythonDependenciesInstalledAsync(string launcher, CancellationToken cancellationToken)
+    private static async Task<bool> ArePythonDependenciesInstalledAsync(string launcher, string pythonDir, CancellationToken cancellationToken)
     {
         try
         {
-            using var process = Process.Start(new ProcessStartInfo
+            var startInfo = new ProcessStartInfo
             {
                 FileName = launcher,
                 Arguments = "-c \"import camoufox, requests, websocket\"",
@@ -288,7 +290,10 @@ public sealed class CamoufoxUpdateService
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 CreateNoWindow = true
-            });
+            };
+            ApplyLocalPythonEnvironment(startInfo, pythonDir);
+
+            using var process = Process.Start(startInfo);
 
             if (process == null)
                 return false;
@@ -322,6 +327,28 @@ public sealed class CamoufoxUpdateService
         {
             return false;
         }
+    }
+
+    private static void ApplyLocalPythonEnvironment(ProcessStartInfo startInfo, string pythonDir)
+    {
+        if (string.IsNullOrWhiteSpace(pythonDir))
+            return;
+
+        var localAppData = Path.Combine(pythonDir, ".localappdata");
+        var xdgCache = Path.Combine(pythonDir, ".cache");
+        Directory.CreateDirectory(localAppData);
+        Directory.CreateDirectory(xdgCache);
+
+        if (OperatingSystem.IsWindows())
+            startInfo.Environment["LOCALAPPDATA"] = localAppData;
+        else
+            startInfo.Environment["XDG_CACHE_HOME"] = xdgCache;
+
+        startInfo.Environment["PYTHONUTF8"] = "1";
+        startInfo.Environment.TryGetValue("PYTHONPATH", out var pythonPath);
+        startInfo.Environment["PYTHONPATH"] = string.IsNullOrWhiteSpace(pythonPath)
+            ? pythonDir
+            : $"{pythonDir}{Path.PathSeparator}{pythonPath}";
     }
 
     private static void TryKill(Process process)

@@ -14,6 +14,7 @@ public class Proxy
     public int Port { get; set; }
     public string? Username { get; set; }
     public string? Password { get; set; }
+    public string? IpChangeUrl { get; set; }
     public string? DolphinProxyId { get; set; }
     public bool IsEnabled { get; set; } = true;
 

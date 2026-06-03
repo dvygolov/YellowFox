@@ -5,6 +5,7 @@ import copy
 import json
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -68,13 +69,94 @@ class BrokerState:
         with self.lock:
             page = next((p for p in self.context.pages if not is_restorable_url(p.url)), None)
             if page is None:
-                page = self.context.new_page()
+                opener = self.context.pages[0] if self.context.pages else self.context.new_page()
+                try:
+                    opener.evaluate(
+                        "(target) => window.open(target, '_blank', 'noopener,noreferrer')",
+                        url,
+                    )
+                    deadline = time.time() + 5
+                    while time.time() < deadline:
+                        opened = next((p for p in self.context.pages if p.url == url), None)
+                        if opened is not None:
+                            page = opened
+                            break
+                        time.sleep(0.1)
+                    if page is None:
+                        page = self.context.pages[-1] if self.context.pages else opener
+                except Exception:
+                    page = self.context.new_page()
             try:
                 page.goto(url, wait_until="commit", timeout=15000)
             except Exception:
                 pass
-            page.bring_to_front()
+            try:
+                page.bring_to_front()
+            except Exception:
+                pass
             return {"url": page.url, "title": None}
+
+    def restore_initial_urls(self, urls):
+        restored = 0
+        errors = []
+        for url in urls or []:
+            if not is_restorable_url(url):
+                continue
+            try:
+                self.open_url(url)
+                restored += 1
+            except Exception as exc:
+                errors.append(f"{urlparse(url).netloc or url}: {exc}")
+        return {"restored": restored, "errors": errors}
+
+    def import_cookies(self, cookies):
+        payload = []
+        for cookie in cookies or []:
+            if not isinstance(cookie, dict):
+                continue
+            name = str(cookie.get("name") or "").strip()
+            value = cookie.get("value")
+            if not name or value is None:
+                continue
+
+            item = {
+                "name": name,
+                "value": str(value),
+                "path": str(cookie.get("path") or "/"),
+                "httpOnly": bool(cookie.get("httpOnly") or False),
+                "secure": bool(cookie.get("secure") if cookie.get("secure") is not None else True),
+            }
+            if cookie.get("url"):
+                item["url"] = str(cookie["url"])
+            elif cookie.get("domain"):
+                domain = str(cookie["domain"]).strip()
+                item["domain"] = domain
+            else:
+                continue
+
+            expires = cookie.get("expires")
+            if expires not in (None, "", -1):
+                try:
+                    item["expires"] = int(float(expires))
+                except Exception:
+                    pass
+
+            same_site = cookie.get("sameSite")
+            if same_site:
+                normalized = str(same_site).strip().lower().replace("_", "-")
+                item["sameSite"] = {
+                    "strict": "Strict",
+                    "lax": "Lax",
+                    "none": "None",
+                    "no-restriction": "None",
+                }.get(normalized, str(same_site))
+
+            payload.append(item)
+
+        if payload:
+            with self.lock:
+                self.context.add_cookies(payload)
+        return len(payload)
 
     def click_text(self, text):
         with self.lock:
@@ -164,6 +246,10 @@ def make_handler(state):
                     payload = state.click_text(data["text"])
                     self._send(200, {"ok": True, **payload})
                     return
+                if parsed.path == "/cookies":
+                    count = state.import_cookies(data.get("cookies") or [])
+                    self._send(200, {"ok": True, "count": count})
+                    return
                 if parsed.path == "/stop":
                     state.stopping = True
                     self._send(200, {"ok": True})
@@ -192,8 +278,19 @@ def main():
     manager = Camoufox(**launch_kwargs)
     context = manager.__enter__()
     state = BrokerState(manager, context)
+    startup_cookies = config.get("cookies") or []
+    if startup_cookies:
+        try:
+            count = state.import_cookies(startup_cookies)
+            print(f"YELLOWFOX_IMPORTED_COOKIES {count}", file=sys.stderr, flush=True)
+        except Exception as exc:
+            print(f"YELLOWFOX_IMPORT_COOKIES_ERROR {exc}", file=sys.stderr, flush=True)
     server = HTTPServer(("127.0.0.1", 0), make_handler(state))
     print(f"YELLOWFOX_BROKER http://127.0.0.1:{server.server_port}", flush=True)
+    initial_urls = [url for url in config.get("initial_urls") or [] if is_restorable_url(url)]
+    if initial_urls:
+        result = state.restore_initial_urls(initial_urls)
+        print(f"YELLOWFOX_RESTORED_TABS {json.dumps(result, ensure_ascii=False)}", file=sys.stderr, flush=True)
     while not state.stopping:
         server.handle_request()
     state.close()

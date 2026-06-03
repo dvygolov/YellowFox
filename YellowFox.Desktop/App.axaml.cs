@@ -38,14 +38,15 @@ public partial class App : Application
             var settingsService = new SettingsService();
             var databaseService = new DatabaseService();
             var proxyValidatorService = new ProxyValidatorService();
+            var proxyIpRotationService = new ProxyIpRotationService();
             var extensionStorageService = new ExtensionStorageService(databaseService);
             var camoufoxUpdateService = new CamoufoxUpdateService(settingsService);
             _browserService = new BrowserService(databaseService, settingsService, proxyValidatorService);
             var dolphinImportService = new DolphinImportService(databaseService, _browserService);
-            _agentPipeServer = new AgentPipeServer(databaseService, _browserService, proxyValidatorService, dolphinImportService);
+            _agentPipeServer = new AgentPipeServer(databaseService, _browserService, proxyValidatorService, dolphinImportService, extensionStorageService, proxyIpRotationService);
             _agentPipeServer.Start();
 
-            var mainWindowViewModel = new MainWindowViewModel(databaseService, _browserService, proxyValidatorService, extensionStorageService);
+            var mainWindowViewModel = new MainWindowViewModel(databaseService, _browserService, proxyValidatorService, extensionStorageService, proxyIpRotationService);
             var mainWindow = new MainWindow
             {
                 DataContext = mainWindowViewModel,

@@ -2,6 +2,7 @@ using System;
 using System.Collections.ObjectModel;
 using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using YellowFox.Desktop.Models;
 
 namespace YellowFox.Desktop.ViewModels;
@@ -26,6 +27,12 @@ public partial class ProxyEditorViewModel : ViewModelBase
     [ObservableProperty]
     private string _password = string.Empty;
 
+    [ObservableProperty]
+    private bool _isPasswordVisible;
+
+    [ObservableProperty]
+    private string _ipChangeUrl = string.Empty;
+
     public ObservableCollection<string> TypeOptions { get; } = new()
     {
         Proxy.HttpType,
@@ -33,6 +40,9 @@ public partial class ProxyEditorViewModel : ViewModelBase
     };
 
     public string Title { get; }
+    public char PasswordChar => IsPasswordVisible ? '\0' : '●';
+    public string PasswordToggleIcon => IsPasswordVisible ? "\uE8F5" : "\uE890";
+    public string PasswordToggleTip => IsPasswordVisible ? "Hide password" : "Show password";
 
     public ProxyEditorViewModel(Proxy? proxy = null)
     {
@@ -47,6 +57,7 @@ public partial class ProxyEditorViewModel : ViewModelBase
         Port = proxy.Port;
         Username = proxy.Username ?? string.Empty;
         Password = proxy.Password ?? string.Empty;
+        IpChangeUrl = proxy.IpChangeUrl ?? string.Empty;
     }
 
     public bool TryValidate(out string validationError)
@@ -75,6 +86,14 @@ public partial class ProxyEditorViewModel : ViewModelBase
             return false;
         }
 
+        if (!string.IsNullOrWhiteSpace(IpChangeUrl) &&
+            (!Uri.TryCreate(IpChangeUrl.Trim(), UriKind.Absolute, out var uri) ||
+             (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)))
+        {
+            validationError = "IP change URL must be a valid http/https URL.";
+            return false;
+        }
+
         validationError = string.Empty;
         return true;
     }
@@ -87,7 +106,20 @@ public partial class ProxyEditorViewModel : ViewModelBase
         proxy.Port = Port;
         proxy.Username = string.IsNullOrWhiteSpace(Username) ? null : Username.Trim();
         proxy.Password = string.IsNullOrWhiteSpace(Password) ? null : Password;
-        proxy.IsEnabled = true;
+        proxy.IpChangeUrl = string.IsNullOrWhiteSpace(IpChangeUrl) ? null : IpChangeUrl.Trim();
         return proxy;
+    }
+
+    [RelayCommand]
+    private void TogglePasswordVisibility()
+    {
+        IsPasswordVisible = !IsPasswordVisible;
+    }
+
+    partial void OnIsPasswordVisibleChanged(bool value)
+    {
+        OnPropertyChanged(nameof(PasswordChar));
+        OnPropertyChanged(nameof(PasswordToggleIcon));
+        OnPropertyChanged(nameof(PasswordToggleTip));
     }
 }

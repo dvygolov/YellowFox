@@ -35,6 +35,7 @@ build/
 # Runtime data
 data/
 artifacts/
+.artifacts/
 .playwright-desktop/
 .claude/
 *.db
@@ -43,6 +44,9 @@ artifacts/
 
 # CamouFox
 camoufox/
+python/.camoufox/
+python/.cache/
+python/.localappdata/
 
 # IDE
 .vscode/

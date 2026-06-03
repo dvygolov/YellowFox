@@ -25,15 +25,19 @@ public sealed class AgentPipeServer : IAsyncDisposable
     private readonly BrowserService _browserService;
     private readonly ProxyValidatorService _proxyValidatorService;
     private readonly DolphinImportService _dolphinImportService;
+    private readonly ExtensionStorageService _extensionStorageService;
+    private readonly ProxyIpRotationService _proxyIpRotationService;
     private readonly CancellationTokenSource _cts = new();
     private Task? _serverTask;
 
-    public AgentPipeServer(DatabaseService databaseService, BrowserService browserService, ProxyValidatorService proxyValidatorService, DolphinImportService dolphinImportService)
+    public AgentPipeServer(DatabaseService databaseService, BrowserService browserService, ProxyValidatorService proxyValidatorService, DolphinImportService dolphinImportService, ExtensionStorageService extensionStorageService, ProxyIpRotationService proxyIpRotationService)
     {
         _databaseService = databaseService;
         _browserService = browserService;
         _proxyValidatorService = proxyValidatorService;
         _dolphinImportService = dolphinImportService;
+        _extensionStorageService = extensionStorageService;
+        _proxyIpRotationService = proxyIpRotationService;
     }
 
     public void Start()
@@ -121,6 +125,7 @@ public sealed class AgentPipeServer : IAsyncDisposable
             return request.Command.Trim().ToLowerInvariant() switch
             {
                 "profile.list" => AgentResponse.Success(ListProfiles()),
+                "profile.create" => CreateProfile(request),
                 "profile.start" => await StartProfileAsync(GetRequired(request, "id")),
                 "profile.stop" => await StopProfileAsync(GetRequired(request, "id")),
                 "profile.endpoint" => GetProfileEndpoint(GetRequired(request, "id")),
@@ -129,11 +134,29 @@ public sealed class AgentPipeServer : IAsyncDisposable
                 "profile.pages" => await GetProfilePagesAsync(GetRequired(request, "id"), !IsFalse(GetOptional(request, "text"))),
                 "profile.click" => await ClickProfileTextAsync(GetRequired(request, "id"), GetRequired(request, "text")),
                 "profile.update" => UpdateProfile(request),
+                "profile.delete" => await DeleteProfileAsync(GetRequired(request, "id")),
+                "profile.clone" => CloneProfile(request),
+                "profile.importcookies" => await ImportProfileCookiesAsync(request),
+                "profile.exportcookies" => await ExportProfileCookiesAsync(request),
+                "profile.log" => GetProfileLog(GetRequired(request, "id")),
                 "proxy.list" => AgentResponse.Success(ListProxies()),
                 "proxy.add" => AddProxy(request),
                 "proxy.update" => UpdateProxy(request),
                 "proxy.delete" => DeleteProxy(GetRequired(request, "id")),
                 "proxy.test" => await TestProxyAsync(GetRequired(request, "id")),
+                "proxy.changeip" => await ChangeProxyIpAsync(GetRequired(request, "id")),
+                "extension.list" => AgentResponse.Success(ListExtensions()),
+                "extension.add" => AddExtension(request),
+                "extension.importurl" => await ImportExtensionUrlAsync(request),
+                "extension.importarchive" => ImportExtensionArchive(request),
+                "extension.update" => UpdateExtension(request),
+                "extension.toggle" => ToggleExtension(request),
+                "extension.delete" => DeleteExtension(GetRequired(request, "id")),
+                "bookmark.list" => AgentResponse.Success(ListBookmarks()),
+                "bookmark.add" => AddBookmark(request, isFolder: false),
+                "bookmark.addfolder" => AddBookmark(request, isFolder: true),
+                "bookmark.update" => UpdateBookmark(request),
+                "bookmark.delete" => DeleteBookmark(GetRequired(request, "id")),
                 "dolphin.import" => await ImportDolphinAsync(request),
                 _ => AgentResponse.Fail("unknown_command", $"Unknown command: {request.Command}")
             };
@@ -174,6 +197,22 @@ public sealed class AgentPipeServer : IAsyncDisposable
                 endpoint = _browserService.GetEndpoint(profile.Id)
             };
         }).ToList();
+    }
+
+    private AgentResponse CreateProfile(AgentRequest request)
+    {
+        var profile = new Profile
+        {
+            Name = GetRequired(request, "name").Trim(),
+            Notes = GetOptional(request, "notes"),
+            ProxyId = TryGet(request, "proxy-id", out var proxyId) || TryGet(request, "proxyId", out proxyId)
+                ? ResolveProxyIdOrNone(proxyId)
+                : null,
+            FingerprintConfig = BuildFingerprintConfig(request)
+        };
+
+        _databaseService.CreateProfile(profile);
+        return AgentResponse.Success(ProfileData(profile));
     }
 
     private async Task<AgentResponse> StartProfileAsync(string idOrName)
@@ -289,16 +328,98 @@ public sealed class AgentPipeServer : IAsyncDisposable
         };
     }
 
+    private object ProfileData(Profile profile)
+    {
+        var proxy = string.IsNullOrWhiteSpace(profile.ProxyId) ? null : _databaseService.GetProxy(profile.ProxyId);
+        return new
+        {
+            id = profile.Id,
+            name = profile.Name,
+            notes = profile.Notes,
+            proxyId = profile.ProxyId,
+            proxyName = proxy?.Name,
+            os = profile.FingerprintConfig.Os,
+            screen = new
+            {
+                width = profile.FingerprintConfig.Screen.MaxWidth,
+                height = profile.FingerprintConfig.Screen.MaxHeight
+            },
+            running = _browserService.IsRunning(profile.Id),
+            endpoint = _browserService.GetEndpoint(profile.Id)
+        };
+    }
+
     private AgentResponse UpdateProfile(AgentRequest request)
     {
         var profile = ResolveProfile(GetRequired(request, "id"));
+        if (TryGet(request, "name", out var name))
+            profile.Name = name.Trim();
+        if (TryGet(request, "notes", out var notes))
+            profile.Notes = string.IsNullOrWhiteSpace(notes) ? null : notes;
         if (TryGet(request, "proxy-id", out var proxyId) || TryGet(request, "proxyId", out proxyId))
         {
             profile.ProxyId = ResolveProxyIdOrNone(proxyId);
         }
+        if (TryGet(request, "os", out var os))
+            profile.FingerprintConfig.Os = NormalizeOs(os);
+        if (TryGet(request, "width", out var width))
+            profile.FingerprintConfig.Screen.MaxWidth = ParsePositiveInt(width, "width");
+        if (TryGet(request, "height", out var height))
+            profile.FingerprintConfig.Screen.MaxHeight = ParsePositiveInt(height, "height");
 
         _databaseService.UpdateProfile(profile);
-        return AgentResponse.Success(ProfileRuntimeData(profile));
+        return AgentResponse.Success(ProfileData(profile));
+    }
+
+    private async Task<AgentResponse> DeleteProfileAsync(string idOrName)
+    {
+        var profile = ResolveProfile(idOrName);
+        if (_browserService.IsRunning(profile.Id))
+            await _browserService.StopProfileAsync(profile.Id);
+
+        _databaseService.DeleteProfile(profile.Id);
+        return AgentResponse.Success(new { id = profile.Id, name = profile.Name, deleted = true });
+    }
+
+    private AgentResponse CloneProfile(AgentRequest request)
+    {
+        var source = ResolveProfile(GetRequired(request, "id"));
+        var clone = _databaseService.CloneProfile(source.Id, GetRequired(request, "name").Trim());
+        return AgentResponse.Success(ProfileData(clone));
+    }
+
+    private async Task<AgentResponse> ImportProfileCookiesAsync(AgentRequest request)
+    {
+        var profile = ResolveProfile(GetRequired(request, "id"));
+        var domain = GetOptional(request, "domain");
+        var result = TryGet(request, "file", out var file)
+            ? await _browserService.ImportCookiesAsync(profile.Id, file)
+            : await _browserService.ImportCookiesFromTextAsync(profile.Id, GetRequired(request, "text"), domain, "CLI");
+
+        return result.Success
+            ? AgentResponse.Success(new { id = profile.Id, name = profile.Name, message = result.Message })
+            : AgentResponse.Fail("cookie_import_failed", result.Message);
+    }
+
+    private async Task<AgentResponse> ExportProfileCookiesAsync(AgentRequest request)
+    {
+        var profile = ResolveProfile(GetRequired(request, "id"));
+        var result = await _browserService.ExportCookiesAsync(profile.Id, GetRequired(request, "file"));
+        return result.Success
+            ? AgentResponse.Success(new { id = profile.Id, name = profile.Name, message = result.Message })
+            : AgentResponse.Fail("cookie_export_failed", result.Message);
+    }
+
+    private AgentResponse GetProfileLog(string idOrName)
+    {
+        var profile = ResolveProfile(idOrName);
+        var path = _browserService.GetOrCreateProfileLogPath(profile.Id);
+        return AgentResponse.Success(new
+        {
+            id = profile.Id,
+            name = profile.Name,
+            logPath = path
+        });
     }
 
     private object ListProxies()
@@ -316,7 +437,8 @@ public sealed class AgentPipeServer : IAsyncDisposable
             Port = GetRequiredInt(request, "port"),
             Username = GetOptional(request, "username"),
             Password = GetOptional(request, "password"),
-            IsEnabled = true
+            IpChangeUrl = GetOptional(request, "ip-change-url") ?? GetOptional(request, "ipChangeUrl"),
+            IsEnabled = !IsFalse(GetOptional(request, "enabled"))
         };
 
         _databaseService.CreateProxy(proxy);
@@ -339,6 +461,10 @@ public sealed class AgentPipeServer : IAsyncDisposable
             proxy.Username = string.IsNullOrWhiteSpace(username) ? null : username.Trim();
         if (TryGet(request, "password", out var password))
             proxy.Password = string.IsNullOrWhiteSpace(password) ? null : password;
+        if (TryGet(request, "ip-change-url", out var ipChangeUrl) || TryGet(request, "ipChangeUrl", out ipChangeUrl))
+            proxy.IpChangeUrl = string.IsNullOrWhiteSpace(ipChangeUrl) ? null : ipChangeUrl.Trim();
+        if (TryGet(request, "enabled", out var enabled))
+            proxy.IsEnabled = !IsFalse(enabled);
 
         _databaseService.UpdateProxy(proxy);
         return AgentResponse.Success(ProxyData(proxy));
@@ -362,9 +488,158 @@ public sealed class AgentPipeServer : IAsyncDisposable
             type = proxy.Type,
             success = result.IsSuccess,
             externalIp = result.ExternalIp,
+            countryCode = result.CountryCode,
+            countryName = result.CountryName,
             latencyMs = result.LatencyMs,
             error = result.Error
         });
+    }
+
+    private async Task<AgentResponse> ChangeProxyIpAsync(string idOrName)
+    {
+        var proxy = ResolveProxy(idOrName);
+        var rotation = await _proxyIpRotationService.ChangeIpAsync(proxy);
+        if (!rotation.Success)
+            return AgentResponse.Fail("ip_change_failed", rotation.Message);
+
+        var validation = await _proxyValidatorService.ValidateAsync(proxy);
+        return AgentResponse.Success(new
+        {
+            id = proxy.Id,
+            name = proxy.Name,
+            message = rotation.Message,
+            validation = new
+            {
+                success = validation.IsSuccess,
+                externalIp = validation.ExternalIp,
+                countryCode = validation.CountryCode,
+                countryName = validation.CountryName,
+                latencyMs = validation.LatencyMs,
+                error = validation.Error
+            }
+        });
+    }
+
+    private object ListExtensions()
+    {
+        return _databaseService.GetAllExtensions().Select(ExtensionData).ToList();
+    }
+
+    private AgentResponse AddExtension(AgentRequest request)
+    {
+        var extension = new ExtensionItem
+        {
+            Name = GetRequired(request, "name").Trim(),
+            Path = GetRequired(request, "path").Trim(),
+            IsEnabled = !IsFalse(GetOptional(request, "enabled"))
+        };
+
+        if (_extensionStorageService.IsArchivePath(extension.Path))
+            extension.Path = _extensionStorageService.StoreArchive(extension.Path, extension.Id);
+        else if (!BrowserService.IsExtensionPathUsable(extension.Path))
+            return AgentResponse.Fail("bad_request", "Path must point to an unpacked extension folder with manifest.json, or to a .zip/.xpi archive.");
+
+        _databaseService.CreateExtension(extension);
+        return AgentResponse.Success(ExtensionData(extension));
+    }
+
+    private async Task<AgentResponse> ImportExtensionUrlAsync(AgentRequest request)
+    {
+        var extension = await _extensionStorageService.ImportFromUrlAsync(GetRequired(request, "url"));
+        return AgentResponse.Success(ExtensionData(extension));
+    }
+
+    private AgentResponse ImportExtensionArchive(AgentRequest request)
+    {
+        var path = GetRequired(request, "path");
+        var name = GetOptional(request, "name") ?? Path.GetFileNameWithoutExtension(path);
+        var extension = _extensionStorageService.ImportArchive(path, name);
+        return AgentResponse.Success(ExtensionData(extension));
+    }
+
+    private AgentResponse UpdateExtension(AgentRequest request)
+    {
+        var extension = ResolveExtension(GetRequired(request, "id"));
+        if (TryGet(request, "name", out var name))
+            extension.Name = name.Trim();
+        if (TryGet(request, "path", out var path))
+        {
+            path = path.Trim();
+            extension.Path = _extensionStorageService.IsArchivePath(path)
+                ? _extensionStorageService.StoreArchive(path, extension.Id)
+                : path;
+        }
+        if (TryGet(request, "enabled", out var enabled))
+            extension.IsEnabled = !IsFalse(enabled);
+
+        _databaseService.UpdateExtension(extension);
+        return AgentResponse.Success(ExtensionData(extension));
+    }
+
+    private AgentResponse ToggleExtension(AgentRequest request)
+    {
+        var extension = ResolveExtension(GetRequired(request, "id"));
+        extension.IsEnabled = TryGet(request, "enabled", out var enabled)
+            ? !IsFalse(enabled)
+            : !extension.IsEnabled;
+        _databaseService.UpdateExtension(extension);
+        return AgentResponse.Success(ExtensionData(extension));
+    }
+
+    private AgentResponse DeleteExtension(string idOrName)
+    {
+        var extension = ResolveExtension(idOrName);
+        _extensionStorageService.DeleteExtensionWithFiles(extension);
+        return AgentResponse.Success(new { id = extension.Id, name = extension.Name, deleted = true });
+    }
+
+    private object ListBookmarks()
+    {
+        return _databaseService.GetAllBookmarks().Select(BookmarkData).ToList();
+    }
+
+    private AgentResponse AddBookmark(AgentRequest request, bool isFolder)
+    {
+        var bookmark = new BookmarkItem
+        {
+            Title = GetRequired(request, "title").Trim(),
+            Url = isFolder ? string.Empty : GetRequired(request, "url").Trim(),
+            ParentId = GetOptional(request, "parent-id") ?? GetOptional(request, "parentId"),
+            IsFolder = isFolder
+        };
+
+        if (TryGet(request, "folder", out var folder))
+            bookmark.Folder = folder;
+        if (TryGet(request, "sort-order", out var sortOrder) || TryGet(request, "sortOrder", out sortOrder))
+            bookmark.SortOrder = ParsePositiveOrZeroInt(sortOrder, "sort-order");
+
+        _databaseService.CreateBookmark(bookmark);
+        return AgentResponse.Success(BookmarkData(bookmark));
+    }
+
+    private AgentResponse UpdateBookmark(AgentRequest request)
+    {
+        var bookmark = ResolveBookmark(GetRequired(request, "id"));
+        if (TryGet(request, "title", out var title))
+            bookmark.Title = title.Trim();
+        if (TryGet(request, "url", out var url))
+            bookmark.Url = url.Trim();
+        if (TryGet(request, "folder", out var folder))
+            bookmark.Folder = string.IsNullOrWhiteSpace(folder) ? null : folder.Trim();
+        if (TryGet(request, "parent-id", out var parentId) || TryGet(request, "parentId", out parentId))
+            bookmark.ParentId = string.IsNullOrWhiteSpace(parentId) || string.Equals(parentId, "none", StringComparison.OrdinalIgnoreCase) ? null : parentId;
+        if (TryGet(request, "sort-order", out var sortOrder) || TryGet(request, "sortOrder", out sortOrder))
+            bookmark.SortOrder = ParsePositiveOrZeroInt(sortOrder, "sort-order");
+
+        _databaseService.UpdateBookmark(bookmark);
+        return AgentResponse.Success(BookmarkData(bookmark));
+    }
+
+    private AgentResponse DeleteBookmark(string id)
+    {
+        var bookmark = ResolveBookmark(id);
+        _databaseService.DeleteBookmark(bookmark.Id);
+        return AgentResponse.Success(new { id = bookmark.Id, title = bookmark.Title, deleted = true });
     }
 
     private async Task<AgentResponse> ImportDolphinAsync(AgentRequest request)
@@ -400,7 +675,33 @@ public sealed class AgentPipeServer : IAsyncDisposable
             port = proxy.Port,
             username = proxy.Username,
             hasPassword = !string.IsNullOrEmpty(proxy.Password),
+            hasIpChangeUrl = !string.IsNullOrWhiteSpace(proxy.IpChangeUrl),
             enabled = proxy.IsEnabled
+        };
+    }
+
+    private object ExtensionData(ExtensionItem extension)
+    {
+        return new
+        {
+            id = extension.Id,
+            name = extension.Name,
+            path = extension.Path,
+            enabled = extension.IsEnabled
+        };
+    }
+
+    private static object BookmarkData(BookmarkItem bookmark)
+    {
+        return new
+        {
+            id = bookmark.Id,
+            title = bookmark.Title,
+            url = bookmark.Url,
+            folder = bookmark.Folder,
+            parentId = bookmark.ParentId,
+            isFolder = bookmark.IsFolder,
+            sortOrder = bookmark.SortOrder
         };
     }
 
@@ -440,6 +741,27 @@ public sealed class AgentPipeServer : IAsyncDisposable
         };
     }
 
+    private ExtensionItem ResolveExtension(string idOrName)
+    {
+        var matches = _databaseService.GetAllExtensions()
+            .Where(extension => string.Equals(extension.Id, idOrName, StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(extension.Name, idOrName, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        return matches.Count switch
+        {
+            1 => matches[0],
+            0 => throw new InvalidOperationException($"Extension not found: {idOrName}"),
+            _ => throw new ArgumentException($"Extension name is ambiguous: {idOrName}")
+        };
+    }
+
+    private BookmarkItem ResolveBookmark(string id)
+    {
+        return _databaseService.GetAllBookmarks().FirstOrDefault(bookmark => string.Equals(bookmark.Id, id, StringComparison.Ordinal))
+            ?? throw new InvalidOperationException($"Bookmark not found: {id}");
+    }
+
     private string? ResolveProxyIdOrNone(string value)
     {
         if (string.Equals(value, "none", StringComparison.OrdinalIgnoreCase))
@@ -474,6 +796,43 @@ public sealed class AgentPipeServer : IAsyncDisposable
             throw new ArgumentException("Port must be between 1 and 65535.");
 
         return port;
+    }
+
+    private static int ParsePositiveInt(string value, string name)
+    {
+        if (!int.TryParse(value, out var parsed) || parsed <= 0)
+            throw new ArgumentException($"{name} must be a positive integer.");
+
+        return parsed;
+    }
+
+    private static int ParsePositiveOrZeroInt(string value, string name)
+    {
+        if (!int.TryParse(value, out var parsed) || parsed < 0)
+            throw new ArgumentException($"{name} must be zero or a positive integer.");
+
+        return parsed;
+    }
+
+    private static string NormalizeOs(string os)
+    {
+        var normalized = os.Trim().ToLowerInvariant();
+        return normalized is "windows" or "macos" or "linux"
+            ? normalized
+            : throw new ArgumentException($"Unsupported OS: {os}");
+    }
+
+    private static FingerprintConfig BuildFingerprintConfig(AgentRequest request)
+    {
+        return new FingerprintConfig
+        {
+            Os = TryGet(request, "os", out var os) ? NormalizeOs(os) : new FingerprintConfig().Os,
+            Screen = new ScreenConfig
+            {
+                MaxWidth = TryGet(request, "width", out var width) ? ParsePositiveInt(width, "width") : 1280,
+                MaxHeight = TryGet(request, "height", out var height) ? ParsePositiveInt(height, "height") : 720
+            }
+        };
     }
 
     private static bool TryGet(AgentRequest request, string key, out string value)

@@ -2,6 +2,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:YellowFox.Desktop.ViewModels"
              xmlns:converters="using:YellowFox.Desktop.Converters"
+             xmlns:behaviors="using:YellowFox.Desktop.Behaviors"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d" d:DesignWidth="1000" d:DesignHeight="600"
@@ -124,21 +125,6 @@
             </Grid>
         </Border>
         
-        <!-- Table Header -->
-        <Border DockPanel.Dock="Top"
-                Background="#252526"
-                BorderBrush="#3E3E42"
-                BorderThickness="0,0,0,1"
-                Padding="20,12">
-            <Grid ColumnDefinitions="36,20,240,150,*,Auto">
-                <TextBlock Grid.Column="1" Text="" Foreground="#858585" FontSize="12" FontWeight="SemiBold" />
-                <TextBlock Grid.Column="2" Text="Name" Foreground="#858585" FontSize="12" FontWeight="SemiBold" />
-                <TextBlock Grid.Column="3" Text="Proxy" Foreground="#858585" FontSize="12" FontWeight="SemiBold" />
-                <TextBlock Grid.Column="4" Text="Notes" Foreground="#858585" FontSize="12" FontWeight="SemiBold" />
-                <TextBlock Grid.Column="5" Text="Actions" Foreground="#858585" FontSize="12" FontWeight="SemiBold" HorizontalAlignment="Right" />
-            </Grid>
-        </Border>
-        
         <!-- Bottom Action Bar (Bulk Actions) - MUST BE BEFORE ScrollViewer -->
         <Border DockPanel.Dock="Bottom"
                 Background="#2A2D2E"
@@ -188,175 +174,188 @@
         </Border>
         
         <!-- Profiles Table -->
-        <ListBox ItemsSource="{Binding Profiles}"
-                 AutomationProperties.AutomationId="ProfilesList"
-                 Background="Transparent"
-                 BorderThickness="0"
-                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                 ScrollViewer.VerticalScrollBarVisibility="Auto">
-            <ListBox.Styles>
-                <Style Selector="ListBoxItem">
-                    <Setter Property="Padding" Value="0" />
-                    <Setter Property="Margin" Value="0" />
-                    <Setter Property="Background" Value="Transparent" />
-                    <Setter Property="BorderThickness" Value="0" />
-                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-                </Style>
-                <Style Selector="ListBoxItem:selected">
-                    <Setter Property="Background" Value="Transparent" />
-                </Style>
-                <Style Selector="ListBoxItem:pointerover">
-                    <Setter Property="Background" Value="Transparent" />
-                </Style>
-            </ListBox.Styles>
+        <DataGrid x:Name="ProfilesDataGrid"
+                  ItemsSource="{Binding Profiles}"
+                  AutomationProperties.AutomationId="ProfilesList"
+                  AutoGenerateColumns="False"
+                  IsReadOnly="True"
+                  GridLinesVisibility="Horizontal"
+                  Background="#1E1E1E"
+                  Foreground="#CCCCCC"
+                  BorderBrush="#3E3E42"
+                  RowBackground="#252526"
+                  HeadersVisibility="Column"
+                  ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                  ScrollViewer.VerticalScrollBarVisibility="Auto"
+                  CanUserResizeColumns="True"
+                  behaviors:DataGridColumnWidthPersistence.Key="Profiles">
+            <DataGrid.Columns>
+                <DataGridTemplateColumn Header="" Width="36" CanUserSort="False">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate x:DataType="vm:ProfileItemViewModel">
+                            <CheckBox VerticalAlignment="Center"
+                                      HorizontalAlignment="Center"
+                                      IsChecked="{Binding IsSelected}" />
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
 
-            <ListBox.ItemTemplate>
-                <DataTemplate DataType="vm:ProfileItemViewModel">
-                    <!-- Profile Row -->
-                    <Border Background="#252526"
-                            BorderBrush="#3E3E42"
-                            BorderThickness="0,0,0,1"
-                            Padding="20,16"
-                            HorizontalAlignment="Stretch">
-                        <Border.Styles>
-                            <Style Selector="Border:pointerover">
-                                <Setter Property="Background" Value="#2D2D30" />
-                            </Style>
-                        </Border.Styles>
-                        
-                        <Grid ColumnDefinitions="36,20,240,150,*,Auto"
-                              HorizontalAlignment="Stretch">
-                                <!-- Checkbox Column -->
-                                <CheckBox Grid.Column="0" 
-                                          VerticalAlignment="Center"
-                                          IsChecked="{Binding IsSelected}" />
-                                
-                                <!-- Status Indicator -->
-                                <Ellipse Grid.Column="1"
-                                         Width="10" Height="10"
-                                         VerticalAlignment="Center"
-                                         HorizontalAlignment="Left"
-                                         Fill="{Binding IsRunning, Converter={StaticResource StatusColorConverter}}" />
-                                
-                                <!-- Name with Icon -->
-                                <StackPanel Grid.Column="2" 
-                                            Orientation="Horizontal" 
-                                            Spacing="10"
-                                            VerticalAlignment="Center">
-                                    <TextBlock Text="💻" FontSize="16" VerticalAlignment="Center" />
-                                    <TextBlock Text="{Binding Profile.Name}" 
-                                               FontSize="14" 
-                                               FontWeight="SemiBold"
-                                               Foreground="#CCCCCC"
-                                               VerticalAlignment="Center"
-                                               TextTrimming="CharacterEllipsis"
-                                               MaxWidth="170" />
-                                </StackPanel>
-                                
-                                <!-- Proxy -->
-                                <TextBlock Grid.Column="3"
-                                           Text="{Binding ProxyDisplay}" 
-                                           Foreground="#858585"
-                                           FontSize="13"
+                <DataGridTemplateColumn Header="" Width="28" CanUserSort="False">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate x:DataType="vm:ProfileItemViewModel">
+                            <Ellipse Width="10"
+                                     Height="10"
+                                     VerticalAlignment="Center"
+                                     HorizontalAlignment="Center"
+                                     Fill="{Binding IsRunning, Converter={StaticResource StatusColorConverter}}" />
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+
+                <DataGridTemplateColumn Header="Name" Width="240" SortMemberPath="Profile.Name">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate x:DataType="vm:ProfileItemViewModel">
+                            <StackPanel Orientation="Horizontal"
+                                        Spacing="10"
+                                        VerticalAlignment="Center">
+                                <Grid Width="28"
+                                      Height="24"
+                                      VerticalAlignment="Center"
+                                      ToolTip.Tip="{Binding OsIconTip}">
+                                    <Viewbox Width="{Binding OsIconBoxSize}"
+                                             Height="{Binding OsIconBoxSize}"
+                                             HorizontalAlignment="Center"
+                                             VerticalAlignment="Center"
+                                             Stretch="Uniform">
+                                        <Path Width="24"
+                                              Height="24"
+                                              Stretch="Uniform"
+                                              Data="{Binding OsIconData}"
+                                              Fill="{Binding OsIconFill}" />
+                                    </Viewbox>
+                                </Grid>
+                                <TextBlock Text="{Binding Profile.Name}"
+                                           FontSize="14"
+                                           FontWeight="SemiBold"
+                                           Foreground="#CCCCCC"
                                            VerticalAlignment="Center"
                                            TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
 
-                                <!-- Notes -->
-                                <Border Grid.Column="4"
-                                        Classes="NotesHost"
-                                        Background="#202326"
-                                        BorderBrush="#30363D"
-                                        BorderThickness="1"
-                                        CornerRadius="5"
-                                        Padding="0"
-                                        Margin="0,0,12,0"
-                                        VerticalAlignment="Center">
-                                    <Grid ColumnDefinitions="*,Auto">
-                                        <TextBox Grid.Column="0"
-                                                 Classes="ProfileNotesTextBox"
-                                                 Text="{Binding NotesDisplay}"
-                                                 IsReadOnly="True"
-                                                 IsVisible="{Binding IsNotesCollapsed}"
-                                                 Height="34"
-                                                 TextWrapping="NoWrap"
-                                                 AcceptsReturn="False"
-                                                 VerticalContentAlignment="Center"
-                                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                                 ScrollViewer.VerticalScrollBarVisibility="Disabled" />
+                <DataGridTextColumn Header="Proxy"
+                                    Binding="{Binding ProxyDisplay}"
+                                    Width="150" />
 
-                                        <TextBox Grid.Column="0"
-                                                 Classes="ProfileNotesTextBox"
-                                                 Text="{Binding NotesDisplay}"
-                                                 IsReadOnly="True"
-                                                 IsVisible="{Binding IsNotesExpanded}"
-                                                 MinHeight="70"
-                                                 MaxHeight="190"
-                                                 TextWrapping="Wrap"
-                                                 AcceptsReturn="True"
-                                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                                 ScrollViewer.VerticalScrollBarVisibility="Auto" />
+                <DataGridTemplateColumn Header="Notes" Width="*" SortMemberPath="NotesDisplay">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate x:DataType="vm:ProfileItemViewModel">
+                            <Border Classes="NotesHost"
+                                    Background="#202326"
+                                    BorderBrush="#30363D"
+                                    BorderThickness="1"
+                                    CornerRadius="5"
+                                    Padding="0"
+                                    Margin="0,4,12,4"
+                                    VerticalAlignment="Center">
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <TextBox Grid.Column="0"
+                                             Classes="ProfileNotesTextBox"
+                                             Text="{Binding NotesDisplay}"
+                                             IsReadOnly="True"
+                                             IsVisible="{Binding IsNotesCollapsed}"
+                                             Height="34"
+                                             TextWrapping="NoWrap"
+                                             AcceptsReturn="False"
+                                             VerticalContentAlignment="Center"
+                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                             ScrollViewer.VerticalScrollBarVisibility="Disabled" />
 
-                                        <Button Grid.Column="1"
-                                                Classes="NotesToggle"
-                                                Content="{Binding NotesToggleIcon}"
-                                                Command="{Binding ToggleNotesCommand}"
-                                                IsVisible="{Binding HasNotes}"
-                                                ToolTip.Tip="{Binding NotesToggleTip}"
-                                                Margin="6,3,6,3"
-                                                VerticalAlignment="Top" />
-                                    </Grid>
-                                </Border>
-                                
-                                <!-- Action Buttons -->
-                                <StackPanel Grid.Column="5"
-                                            Orientation="Horizontal" 
-                                            Spacing="6"
-                                            VerticalAlignment="Center"
-                                            HorizontalAlignment="Right">
-                                    
-                                    <!-- Start Button (when not running) -->
-                                    <Button Classes="PrimaryAction"
-                                            Command="{Binding StartCommand}"
-                                            IsVisible="{Binding IsNotRunning}"
-                                            Background="#2E7D32">
-                                        <StackPanel Orientation="Horizontal" Spacing="6">
-                                            <TextBlock Text="&#xE768;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center" />
-                                            <TextBlock Text="Start" VerticalAlignment="Center" />
-                                        </StackPanel>
-                                    </Button>
-                                    
-                                    <!-- Stop Button (when running) -->
-                                    <Button Classes="PrimaryAction"
-                                            Command="{Binding StopCommand}"
-                                            IsVisible="{Binding IsRunning}"
-                                            Background="#B71C1C">
-                                        <StackPanel Orientation="Horizontal" Spacing="6">
-                                            <TextBlock Text="&#xE71A;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center" />
-                                            <TextBlock Text="Stop" VerticalAlignment="Center" />
-                                        </StackPanel>
-                                    </Button>
-                                    
-                                    <!-- More Actions -->
-                                    <Button Classes="SecondaryAction"
-                                            Content="&#xE712;"
-                                            ToolTip.Tip="More actions">
-                                        <Button.Flyout>
-                                            <MenuFlyout Placement="BottomEdgeAlignedRight">
-                                                <MenuItem Header="Edit" Command="{Binding EditCommand}" />
-                                                <MenuItem Header="Clone" Command="{Binding CloneCommand}" />
-                                                <MenuItem Header="Export cookies" Command="{Binding ExportCookiesCommand}" />
-                                                <MenuItem Header="Import cookies" Command="{Binding ImportCookiesCommand}" />
-                                                <MenuItem Header="Open log" Command="{Binding ViewLogCommand}" />
-                                                <MenuItem Header="Delete" Command="{Binding DeleteCommand}" Foreground="#F44336" />
-                                            </MenuFlyout>
-                                        </Button.Flyout>
-                                    </Button>
-                                </StackPanel>
-                        </Grid>
-                    </Border>
-                </DataTemplate>
-            </ListBox.ItemTemplate>
-        </ListBox>
+                                    <TextBox Grid.Column="0"
+                                             Classes="ProfileNotesTextBox"
+                                             Text="{Binding NotesDisplay}"
+                                             IsReadOnly="True"
+                                             IsVisible="{Binding IsNotesExpanded}"
+                                             MinHeight="70"
+                                             MaxHeight="190"
+                                             TextWrapping="Wrap"
+                                             AcceptsReturn="True"
+                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                             ScrollViewer.VerticalScrollBarVisibility="Auto" />
+
+                                    <Button Grid.Column="1"
+                                            Classes="NotesToggle"
+                                            Content="{Binding NotesToggleIcon}"
+                                            Command="{Binding ToggleNotesCommand}"
+                                            IsVisible="{Binding HasNotes}"
+                                            ToolTip.Tip="{Binding NotesToggleTip}"
+                                            Margin="6,3,6,3"
+                                            VerticalAlignment="Top" />
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+
+                <DataGridTemplateColumn Header="Actions" Width="180" CanUserSort="False">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate x:DataType="vm:ProfileItemViewModel">
+                            <StackPanel Orientation="Horizontal"
+                                        Spacing="6"
+                                        VerticalAlignment="Center"
+                                        HorizontalAlignment="Left">
+                                <Button Classes="PrimaryAction"
+                                        Command="{Binding StartCommand}"
+                                        IsVisible="{Binding IsStartActionVisible}"
+                                        Background="#2E7D32">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <TextBlock Text="&#xE768;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center" />
+                                        <TextBlock Text="Start" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Button>
+
+                                <Button Classes="PrimaryAction"
+                                        Command="{Binding StopCommand}"
+                                        IsVisible="{Binding IsRunningActionVisible}"
+                                        Background="#B71C1C">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <TextBlock Text="&#xE71A;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center" />
+                                        <TextBlock Text="Stop" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Button>
+
+                                <Button Classes="PrimaryAction"
+                                        IsVisible="{Binding IsImportingCookies}"
+                                        IsEnabled="False"
+                                        Background="#235A8F">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <TextBlock Text="&#xE895;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center" />
+                                        <TextBlock Text="Importing" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Button>
+
+                                <Button Classes="SecondaryAction"
+                                        Content="&#xE712;"
+                                        ToolTip.Tip="More actions">
+                                    <Button.Flyout>
+                                        <MenuFlyout Placement="BottomEdgeAlignedRight">
+                                            <MenuItem Header="Edit" Command="{Binding EditCommand}" />
+                                            <MenuItem Header="Clone" Command="{Binding CloneCommand}" />
+                                            <MenuItem Header="Export cookies" Command="{Binding ExportCookiesCommand}" />
+                                            <MenuItem Header="Import cookies" Command="{Binding ImportCookiesCommand}" />
+                                            <MenuItem Header="Open log" Command="{Binding ViewLogCommand}" />
+                                            <MenuItem Header="Delete" Command="{Binding DeleteCommand}" Foreground="#F44336" />
+                                        </MenuFlyout>
+                                    </Button.Flyout>
+                                </Button>
+                            </StackPanel>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+            </DataGrid.Columns>
+        </DataGrid>
         
         <!-- Empty State -->
         <Panel IsVisible="{Binding !Profiles.Count}">

@@ -149,15 +149,20 @@ public class BrowserServiceTests : IDisposable
         Assert.Contains("browser.fixup.fallback-to-https\", true", userJs);
         Assert.Contains("browser.fixup.upgrade_to_https\", true", userJs);
         Assert.Contains("dom.security.https_first\", true", userJs);
+        Assert.Contains("dom.security.https_first_pbm\", true", userJs);
         Assert.Contains("dom.security.https_only_mode\", true", userJs);
+        Assert.Contains("dom.security.https_only_mode_pbm\", true", userJs);
+        Assert.Contains("dom.security.https_only_mode.upgrade_local\", true", userJs);
         Assert.Contains("browser.search.defaultenginename\", \"Google\"", userJs);
         Assert.Contains("browser.search.selectedEngine\", \"Google\"", userJs);
+        Assert.Contains("browser.search.update\", false", userJs);
         Assert.Contains("extensions.autoDisableScopes\", 0", userJs);
         Assert.Contains("extensions.enabledScopes\", 5", userJs);
         Assert.Contains("datareporting.policy.dataSubmissionPolicyAcceptedVersion\", 999", userJs);
         Assert.Contains("datareporting.policy.dataSubmissionPolicyNotifiedTime\", \"0\"", userJs);
         Assert.DoesNotContain("browser.sessionstore.resume_from_crash", userJs);
-        Assert.DoesNotContain("browser.link.open_newwindow", userJs);
+        Assert.Contains("browser.link.open_newwindow\", 3", userJs);
+        Assert.Contains("browser.link.open_newwindow.restriction\", 0", userJs);
         Assert.DoesNotContain("toolkit.telemetry.reportingpolicy.firstRun", userJs);
         var prefsJs = File.ReadAllText(Path.Combine(_testDataDir, "prefs.js"));
         Assert.Contains("browser.toolbars.bookmarks.visibility\", \"always\"", prefsJs);
@@ -168,7 +173,10 @@ public class BrowserServiceTests : IDisposable
         Assert.Contains("dom.event.contextmenu.enabled\", false", prefsJs);
         Assert.Contains("browser.fixup.fallback-to-https\", true", prefsJs);
         Assert.Contains("dom.security.https_only_mode\", true", prefsJs);
+        Assert.Contains("dom.security.https_only_mode_pbm\", true", prefsJs);
         Assert.Contains("browser.search.defaultenginename\", \"Google\"", prefsJs);
+        Assert.Contains("browser.link.open_newwindow\", 3", prefsJs);
+        Assert.Contains("browser.link.open_newwindow.restriction\", 0", prefsJs);
         Assert.Contains("extensions.autoDisableScopes\", 0", prefsJs);
         Assert.Contains("extensions.enabledScopes\", 5", prefsJs);
         Assert.Contains("datareporting.policy.dataSubmissionPolicyAcceptedVersion\", 999", prefsJs);
@@ -321,6 +329,82 @@ public class BrowserServiceTests : IDisposable
         Assert.Single(cookies);
         Assert.Equal("sid", cookies[0].Name);
         Assert.Equal(".example.com", cookies[0].Domain);
+        Assert.Equal(Microsoft.Playwright.SameSiteAttribute.None, cookies[0].SameSite);
+    }
+
+    [Fact]
+    public void TryParseCookiesForImport_ShouldAcceptNameValueCookieStringWithDomain()
+    {
+        var success = BrowserService.TryParseCookiesForImport(
+            "c_user=123; xs=abc; fr=def",
+            "facebook.com",
+            out var cookies,
+            out var error);
+
+        Assert.True(success, error);
+        Assert.Equal(3, cookies.Count);
+        Assert.Equal("c_user", cookies[0].Name);
+        Assert.Equal("123", cookies[0].Value);
+        Assert.Equal(".facebook.com", cookies[0].Domain);
+        Assert.Equal("/", cookies[0].Path);
+    }
+
+    [Fact]
+    public void TryParseCookiesForImport_ShouldRequireDomainForNameValueCookieString()
+    {
+        var success = BrowserService.TryParseCookiesForImport(
+            "c_user=123; xs=abc",
+            "",
+            out var cookies,
+            out var error);
+
+        Assert.False(success);
+        Assert.Empty(cookies);
+        Assert.Contains("Domain is required", error);
+    }
+
+    [Fact]
+    public void ParseCookiesForImport_ShouldExtendExpiredJsonCookieBySixMonths()
+    {
+        var json = """
+        [
+          {
+            "name": "sid",
+            "value": "abc",
+            "domain": ".example.com",
+            "path": "/",
+            "expirationDate": 1000
+          }
+        ]
+        """;
+
+        var before = DateTimeOffset.UtcNow.AddMonths(6).AddMinutes(-1).ToUnixTimeSeconds();
+        var cookies = BrowserService.ParseCookiesForImport(json);
+        var after = DateTimeOffset.UtcNow.AddMonths(6).AddMinutes(1).ToUnixTimeSeconds();
+
+        Assert.Single(cookies);
+        Assert.NotNull(cookies[0].Expires);
+        Assert.InRange(cookies[0].Expires!.Value, before, after);
+    }
+
+    [Fact]
+    public void ParseCookiesForImport_ShouldAcceptSerializedSameSiteNumbers()
+    {
+        var json = """
+        [
+          {
+            "name": "sid",
+            "value": "abc",
+            "domain": ".example.com",
+            "path": "/",
+            "sameSite": 2
+          }
+        ]
+        """;
+
+        var cookies = BrowserService.ParseCookiesForImport(json);
+
+        Assert.Single(cookies);
         Assert.Equal(Microsoft.Playwright.SameSiteAttribute.None, cookies[0].SameSite);
     }
 

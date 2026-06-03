@@ -42,11 +42,12 @@ public partial class MainWindowViewModel : ViewModelBase
         DatabaseService databaseService,
         BrowserService browserService,
         ProxyValidatorService proxyValidatorService,
-        ExtensionStorageService extensionStorageService)
+        ExtensionStorageService extensionStorageService,
+        ProxyIpRotationService proxyIpRotationService)
     {
         _browserService = browserService;
         ProfilesViewModel = new ProfilesViewModel(databaseService, browserService);
-        ProxiesViewModel = new ProxiesViewModel(databaseService, proxyValidatorService);
+        ProxiesViewModel = new ProxiesViewModel(databaseService, proxyValidatorService, proxyIpRotationService);
         ExtensionsViewModel = new ExtensionsViewModel(databaseService, extensionStorageService);
         BookmarksViewModel = new BookmarksViewModel(databaseService);
         _ = LoadCamoufoxVersionAsync();
