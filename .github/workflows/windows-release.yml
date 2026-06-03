@@ -45,7 +45,6 @@ jobs:
           --configuration Release
           --runtime win-x64
           --self-contained true
-          --no-restore
           -p:PublishSingleFile=false
           -p:DebugType=None
           -p:DebugSymbols=false
@@ -57,7 +56,6 @@ jobs:
           --configuration Release
           --runtime win-x64
           --self-contained true
-          --no-restore
           -p:PublishSingleFile=false
           -p:DebugType=None
           -p:DebugSymbols=false
