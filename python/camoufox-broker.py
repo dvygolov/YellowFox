@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
+import base64
 import importlib.util
 import contextlib
 import copy
 import json
+import os
+import queue
+import re
+import subprocess
 import sys
 import threading
 import time
@@ -41,15 +46,115 @@ def is_restorable_url(url):
     return lowered.startswith("http://") or lowered.startswith("https://")
 
 
+def is_native_download_url(url):
+    if not isinstance(url, str):
+        return False
+    lowered = url.strip().lower()
+    return lowered.startswith("http://") or lowered.startswith("https://")
+
+
+def get_download_dir():
+    configured = os.environ.get("YELLOWFOX_DOWNLOAD_DIR")
+    if configured:
+        return Path(configured).expanduser()
+    if sys.platform.startswith("win"):
+        profile = os.environ.get("USERPROFILE")
+        if profile:
+            return Path(profile) / "Downloads"
+    return Path.home() / "Downloads"
+
+
+def sanitize_download_filename(file_name):
+    name = str(file_name or "download").strip() or "download"
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name)
+    name = name.rstrip(" .")
+    return name or "download"
+
+
+def unique_download_path(directory, file_name):
+    safe_name = sanitize_download_filename(file_name)
+    candidate = directory / safe_name
+    if not candidate.exists():
+        return candidate
+    stem = candidate.stem or "download"
+    suffix = candidate.suffix
+    for index in range(1, 1000):
+        candidate = directory / f"{stem} ({index}){suffix}"
+        if not candidate.exists():
+            return candidate
+    return directory / f"{stem} ({int(time.time())}){suffix}"
+
+
+def recent_native_download(directory, file_name, since):
+    safe_name = sanitize_download_filename(file_name)
+    candidate = directory / safe_name
+    candidates = [candidate]
+    stem = candidate.stem or "download"
+    suffix = candidate.suffix
+    candidates.extend(directory / f"{stem} ({index}){suffix}" for index in range(1, 20))
+    for path in candidates:
+        try:
+            stat = path.stat()
+        except FileNotFoundError:
+            continue
+        if stat.st_size > 0 and stat.st_mtime >= since - 2:
+            return path
+    return None
+
+
 class BrokerState:
-    def __init__(self, context_manager, context):
-        self.context_manager = context_manager
+    def __init__(self, playwright, browser, server_process, context):
+        self.playwright = playwright
+        self.browser = browser
+        self.server_process = server_process
         self.context = context
         self.lock = threading.RLock()
+        self.download_lock = threading.RLock()
+        self.download_dir = get_download_dir()
+        self.download_page_ids = set()
         self.stopping = False
         self.closed = False
         self.context.set_default_timeout(5000)
         self.context.set_default_navigation_timeout(15000)
+        for page in list(self.context.pages):
+            self.attach_download_handler(page)
+        self.context.on("page", self.attach_download_handler)
+
+    def attach_download_handler(self, page):
+        page_id = id(page)
+        with self.download_lock:
+            if page_id in self.download_page_ids:
+                return
+            self.download_page_ids.add(page_id)
+        page.on("download", self.save_download)
+
+    def save_download(self, download):
+        try:
+            self.download_dir.mkdir(parents=True, exist_ok=True)
+            started_at = time.time()
+            source_url = str(getattr(download, "url", "") or "")
+            if is_native_download_url(source_url):
+                deadline = time.time() + 3
+                while time.time() < deadline:
+                    native_path = recent_native_download(self.download_dir, download.suggested_filename, started_at)
+                    if native_path:
+                        print(f"YELLOWFOX_DOWNLOAD_NATIVE {native_path}", file=sys.stderr, flush=True)
+                        return
+                    time.sleep(0.2)
+                print(f"YELLOWFOX_DOWNLOAD_NATIVE_PENDING {download.suggested_filename}", file=sys.stderr, flush=True)
+                return
+
+            with self.download_lock:
+                destination = self.download_dir / sanitize_download_filename(download.suggested_filename)
+                if destination.exists():
+                    try:
+                        destination.unlink()
+                    except Exception:
+                        destination = unique_download_path(self.download_dir, download.suggested_filename)
+                download.save_as(str(destination))
+            print(f"YELLOWFOX_DOWNLOAD_SAVED {destination}", file=sys.stderr, flush=True)
+        except Exception as exc:
+            print(f"YELLOWFOX_DOWNLOAD_SAVE_ERROR {exc}", file=sys.stderr, flush=True)
 
     def page_payload(self, include_text):
         result = []
@@ -195,9 +300,19 @@ class BrokerState:
                 return
             self.closed = True
             try:
-                self.context.close()
-            finally:
-                self.context_manager.__exit__(None, None, None)
+                self.browser.close()
+            except Exception:
+                pass
+            try:
+                self.playwright.stop()
+            except Exception:
+                pass
+            if self.server_process.poll() is None:
+                self.server_process.terminate()
+                try:
+                    self.server_process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.server_process.kill()
 
 
 def make_handler(state):
@@ -261,6 +376,86 @@ def make_handler(state):
     return Handler
 
 
+def drain_stream(stream, label):
+    def run():
+        try:
+            for line in iter(stream.readline, ""):
+                print(f"{label} {line.rstrip()}", file=sys.stderr, flush=True)
+        except Exception:
+            pass
+
+    threading.Thread(target=run, daemon=True).start()
+
+
+def launch_playwright_server(launcher, launch_kwargs, bookmarks):
+    with contextlib.redirect_stdout(sys.stderr):
+        options = launcher.launch_options(**copy.deepcopy(launch_kwargs))
+    launcher.ensure_browser_policies(options.get("executable_path"), bookmarks)
+
+    import orjson
+    from camoufox.server import get_nodejs, to_camel_case_dict
+
+    nodejs = get_nodejs()
+    data = orjson.dumps(to_camel_case_dict(options))
+    process = subprocess.Popen(
+        [
+            nodejs,
+            str(Path(__file__).with_name("launchPersistentServer.js")),
+        ],
+        cwd=Path(nodejs).parent / "package",
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if process.stdin:
+        process.stdin.write(base64.b64encode(data).decode())
+        process.stdin.close()
+
+    drain_stream(process.stderr, "YELLOWFOX_PLAYWRIGHT_STDERR")
+    stdout_queue = queue.Queue()
+
+    def collect_stdout():
+        try:
+            for line in iter(process.stdout.readline, ""):
+                stdout_queue.put(line)
+        except Exception as exc:
+            stdout_queue.put(f"YELLOWFOX_STDOUT_ERROR {exc}")
+
+    threading.Thread(target=collect_stdout, daemon=True).start()
+
+    endpoint_pattern = re.compile(r"(wss?://[^\s\x1b]+)")
+    deadline = time.time() + 120
+    while time.time() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(f"Playwright server exited before endpoint. ExitCode={process.returncode}")
+        try:
+            line = stdout_queue.get(timeout=0.25)
+        except queue.Empty:
+            continue
+        match = endpoint_pattern.search(line)
+        if match:
+            endpoint = match.group(1).rstrip("/")
+            print(f"YELLOWFOX_PLAYWRIGHT {endpoint}", flush=True)
+            return process, endpoint
+        print(f"YELLOWFOX_PLAYWRIGHT_STDOUT {line.rstrip()}", file=sys.stderr, flush=True)
+
+    raise TimeoutError("Timed out waiting for Playwright websocket endpoint.")
+
+
+def wait_for_persistent_context(browser, timeout=30):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        contexts = browser.contexts
+        if contexts:
+            context = contexts[0]
+            context.set_default_timeout(5000)
+            context.set_default_navigation_timeout(15000)
+            return context
+        time.sleep(0.25)
+    raise RuntimeError("Playwright server did not expose a persistent browser context.")
+
+
 def main():
     config = read_config()
     launcher = load_launcher()
@@ -269,15 +464,15 @@ def main():
     # Camoufox 142 hangs during persistent startup when WebExtensions are passed
     # through Playwright. Bookmarks are still imported through bookmarks.html.
     launch_kwargs.pop("addons", None)
-    with contextlib.redirect_stdout(sys.stderr):
-        options = launcher.launch_options(**copy.deepcopy(launch_kwargs))
-    launcher.ensure_browser_policies(options.get("executable_path"), bookmarks)
 
-    from camoufox.sync_api import Camoufox
+    server_process, playwright_endpoint = launch_playwright_server(launcher, launch_kwargs, bookmarks)
 
-    manager = Camoufox(**launch_kwargs)
-    context = manager.__enter__()
-    state = BrokerState(manager, context)
+    from playwright.sync_api import sync_playwright
+
+    playwright = sync_playwright().start()
+    browser = playwright.firefox.connect(playwright_endpoint)
+    context = wait_for_persistent_context(browser)
+    state = BrokerState(playwright, browser, server_process, context)
     startup_cookies = config.get("cookies") or []
     if startup_cookies:
         try:
@@ -289,8 +484,11 @@ def main():
     print(f"YELLOWFOX_BROKER http://127.0.0.1:{server.server_port}", flush=True)
     initial_urls = [url for url in config.get("initial_urls") or [] if is_restorable_url(url)]
     if initial_urls:
-        result = state.restore_initial_urls(initial_urls)
-        print(f"YELLOWFOX_RESTORED_TABS {json.dumps(result, ensure_ascii=False)}", file=sys.stderr, flush=True)
+        def restore_tabs():
+            result = state.restore_initial_urls(initial_urls)
+            print(f"YELLOWFOX_RESTORED_TABS {json.dumps(result, ensure_ascii=False)}", file=sys.stderr, flush=True)
+
+        threading.Thread(target=restore_tabs, daemon=True).start()
     while not state.stopping:
         server.handle_request()
     state.close()

@@ -194,7 +194,8 @@ public sealed class AgentPipeServer : IAsyncDisposable
                     height = profile.FingerprintConfig.Screen.MaxHeight
                 },
                 running = _browserService.IsRunning(profile.Id),
-                endpoint = _browserService.GetEndpoint(profile.Id)
+                endpoint = _browserService.GetEndpoint(profile.Id),
+                brokerEndpoint = _browserService.GetBrokerEndpoint(profile.Id)
             };
         }).ToList();
     }
@@ -256,6 +257,7 @@ public sealed class AgentPipeServer : IAsyncDisposable
             name = profile.Name,
             running = _browserService.IsRunning(profile.Id),
             endpoint = _browserService.GetEndpoint(profile.Id),
+            brokerEndpoint = _browserService.GetBrokerEndpoint(profile.Id),
             url = result.Url,
             title = result.Title
         });
@@ -279,6 +281,7 @@ public sealed class AgentPipeServer : IAsyncDisposable
             name = profile.Name,
             running = _browserService.IsRunning(profile.Id),
             endpoint = _browserService.GetEndpoint(profile.Id),
+            brokerEndpoint = _browserService.GetBrokerEndpoint(profile.Id),
             storageStatePath,
             contextOptionsPath = contextFingerprint.OptionsPath,
             initScriptPath = contextFingerprint.InitScriptPath
@@ -295,6 +298,7 @@ public sealed class AgentPipeServer : IAsyncDisposable
             name = profile.Name,
             running = _browserService.IsRunning(profile.Id),
             endpoint = _browserService.GetEndpoint(profile.Id),
+            brokerEndpoint = _browserService.GetBrokerEndpoint(profile.Id),
             pages
         });
     }
@@ -312,6 +316,7 @@ public sealed class AgentPipeServer : IAsyncDisposable
             name = profile.Name,
             running = _browserService.IsRunning(profile.Id),
             endpoint = _browserService.GetEndpoint(profile.Id),
+            brokerEndpoint = _browserService.GetBrokerEndpoint(profile.Id),
             url = result.Url,
             title = result.Title
         });
@@ -324,7 +329,8 @@ public sealed class AgentPipeServer : IAsyncDisposable
             id = profile.Id,
             name = profile.Name,
             running = _browserService.IsRunning(profile.Id),
-            endpoint = _browserService.GetEndpoint(profile.Id)
+            endpoint = _browserService.GetEndpoint(profile.Id),
+            brokerEndpoint = _browserService.GetBrokerEndpoint(profile.Id)
         };
     }
 
@@ -345,7 +351,8 @@ public sealed class AgentPipeServer : IAsyncDisposable
                 height = profile.FingerprintConfig.Screen.MaxHeight
             },
             running = _browserService.IsRunning(profile.Id),
-            endpoint = _browserService.GetEndpoint(profile.Id)
+            endpoint = _browserService.GetEndpoint(profile.Id),
+            brokerEndpoint = _browserService.GetBrokerEndpoint(profile.Id)
         };
     }
 

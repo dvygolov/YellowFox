@@ -12,6 +12,7 @@ using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Runtime.InteropServices;
 using Microsoft.Data.Sqlite;
 using Microsoft.Playwright;
 using YellowFox.Desktop.Models;
@@ -57,6 +58,16 @@ public class BrowserService
         {
             return _runningInstances.TryGetValue(profileId, out var instance)
                 ? instance.CdpUrl
+                : null;
+        }
+    }
+
+    public string? GetBrokerEndpoint(string profileId)
+    {
+        lock (_runningInstancesLock)
+        {
+            return _runningInstances.TryGetValue(profileId, out var instance)
+                ? instance.BrokerUrl
                 : null;
         }
     }
@@ -256,8 +267,9 @@ public class BrowserService
                 throw new InvalidOperationException("Failed to start Python broker process");
             await WriteLogAsync(logPath, "INFO", $"Python broker process started. PID={process.Id}");
 
-            var brokerUrl = await WaitForBrokerUrlAsync(process, TimeSpan.FromSeconds(120));
-            await WriteLogAsync(logPath, "INFO", $"Received broker endpoint: {brokerUrl}");
+            var endpoints = await WaitForBrokerEndpointsAsync(process, TimeSpan.FromSeconds(120));
+            await WriteLogAsync(logPath, "INFO", $"Received Playwright endpoint: {endpoints.PlaywrightEndpoint}");
+            await WriteLogAsync(logPath, "INFO", $"Received broker endpoint: {endpoints.BrokerUrl}");
             var browserProcessIds = GetCamoufoxProcessIds()
                 .Except(existingCamoufoxPids)
                 .ToList();
@@ -266,8 +278,8 @@ public class BrowserService
             var instance = new RunningInstance
             {
                 Process = process,
-                CdpUrl = string.Empty,
-                BrokerUrl = brokerUrl,
+                CdpUrl = endpoints.PlaywrightEndpoint,
+                BrokerUrl = endpoints.BrokerUrl,
                 TempConfigPath = tempConfigPath,
                 SnapshotCts = new CancellationTokenSource(),
                 BrowserProcessIds = browserProcessIds,
@@ -277,7 +289,10 @@ public class BrowserService
                 ContextInitScript = contextFingerprint.InitScript,
                 ContextOptionsPath = contextFingerprint.OptionsPath,
                 ContextInitScriptPath = contextFingerprint.InitScriptPath,
-                IsPersistentServer = true
+                IsPersistentServer = true,
+                WindowMonitorStartupDelay = initialUrls.Count > 0
+                    ? TimeSpan.FromSeconds(Math.Min(120, Math.Max(60, initialUrls.Count * 20)))
+                    : TimeSpan.FromSeconds(10)
             };
 
             lock (_runningInstancesLock)
@@ -833,6 +848,7 @@ public class BrowserService
         public string? ContextInitScriptPath { get; set; }
         public bool ContextInitScriptApplied { get; set; }
         public bool IsPersistentServer { get; set; }
+        public TimeSpan WindowMonitorStartupDelay { get; set; } = TimeSpan.FromSeconds(10);
     }
 
     internal sealed record ExtensionSyncResult(int InstalledCount, int RemovedCount, int SkippedCount);
@@ -976,6 +992,7 @@ public class BrowserService
         File.WriteAllLines(userJsPath, userJsLines);
         WriteToolbarPrefs(Path.Combine(profileDir, "prefs.js"), shouldImportBookmarksHtml);
         DeleteToolbarState(profileDir);
+        DeleteSearchEngineCache(profileDir);
         DeleteUserChrome(profileDir);
         DeleteSessionStores(profileDir);
         return WriteSharedBookmarksExtension(profileDir, bookmarks, previousManagedBookmarks);
@@ -2161,6 +2178,13 @@ public class BrowserService
             File.Delete(xulStorePath);
     }
 
+    private static void DeleteSearchEngineCache(string profileDir)
+    {
+        var searchCachePath = Path.Combine(profileDir, "search.json.mozlz4");
+        if (File.Exists(searchCachePath))
+            File.Delete(searchCachePath);
+    }
+
     private static void WriteExtensionToolbarPrefs(string profileDir, IEnumerable<ManagedExtensionState> extensions)
     {
         var extensionStates = extensions.ToList();
@@ -3240,7 +3264,7 @@ public class BrowserService
 
         try
         {
-            await Task.Delay(TimeSpan.FromSeconds(5), cts.Token);
+            await Task.Delay(instance.WindowMonitorStartupDelay, cts.Token);
             var missingVisibleWindowCount = 0;
             while (!cts.IsCancellationRequested)
             {
@@ -3611,13 +3635,21 @@ public class BrowserService
 
     private static bool HasVisibleTrackedBrowserWindow(RunningInstance instance)
     {
-        foreach (var processId in instance.BrowserProcessIds.Distinct())
+        var trackedProcessIds = instance.BrowserProcessIds
+            .Distinct()
+            .ToHashSet();
+
+        foreach (var processId in trackedProcessIds)
         {
             try
             {
                 using var process = Process.GetProcessById(processId);
+                process.Refresh();
                 if (!process.HasExited && process.MainWindowHandle != IntPtr.Zero)
-                    return true;
+                {
+                    if (!OperatingSystem.IsWindows() || IsWindowVisible(process.MainWindowHandle))
+                        return true;
+                }
             }
             catch
             {
@@ -3625,8 +3657,48 @@ public class BrowserService
             }
         }
 
+        if (OperatingSystem.IsWindows() && HasVisibleTopLevelWindowForProcessIds(trackedProcessIds))
+            return true;
+
         return false;
     }
+
+    private static bool HasVisibleTopLevelWindowForProcessIds(IReadOnlySet<int> processIds)
+    {
+        if (processIds.Count == 0)
+            return false;
+
+        var found = false;
+        var shellWindow = GetShellWindow();
+        EnumWindows((hWnd, _) =>
+        {
+            if (hWnd == IntPtr.Zero || hWnd == shellWindow || !IsWindowVisible(hWnd))
+                return true;
+
+            GetWindowThreadProcessId(hWnd, out var windowProcessId);
+            if (!processIds.Contains((int)windowProcessId))
+                return true;
+
+            found = true;
+            return false;
+        }, IntPtr.Zero);
+
+        return found;
+    }
+
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetShellWindow();
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 
     private static async Task KillTrackedBrowserProcessesAsync(IReadOnlyCollection<int> processIds, string logPath)
     {
@@ -3702,10 +3774,12 @@ public class BrowserService
         }
     }
 
-    private static async Task<string> WaitForBrokerUrlAsync(Process process, TimeSpan timeout)
+    private static async Task<BrokerEndpoints> WaitForBrokerEndpointsAsync(Process process, TimeSpan timeout)
     {
         var startedAt = DateTime.UtcNow;
         Task<string?>? stdoutReadTask = null;
+        string? brokerUrl = null;
+        string? playwrightEndpoint = null;
         while (DateTime.UtcNow - startedAt < timeout)
         {
             if (process.HasExited)
@@ -3726,13 +3800,22 @@ public class BrowserService
             if (line == null)
                 continue;
 
-            var match = Regex.Match(line, @"YELLOWFOX_BROKER\s+(https?://[^\s]+)");
-            if (match.Success)
-                return match.Groups[1].Value.TrimEnd('/');
+            var playwrightMatch = Regex.Match(line, @"YELLOWFOX_PLAYWRIGHT\s+(wss?://[^\s]+)");
+            if (playwrightMatch.Success)
+                playwrightEndpoint = playwrightMatch.Groups[1].Value.TrimEnd('/');
+
+            var brokerMatch = Regex.Match(line, @"YELLOWFOX_BROKER\s+(https?://[^\s]+)");
+            if (brokerMatch.Success)
+                brokerUrl = brokerMatch.Groups[1].Value.TrimEnd('/');
+
+            if (!string.IsNullOrWhiteSpace(brokerUrl) && !string.IsNullOrWhiteSpace(playwrightEndpoint))
+                return new BrokerEndpoints(brokerUrl, playwrightEndpoint);
         }
 
-        throw new TimeoutException("Timed out waiting for Camoufox broker endpoint.");
+        throw new TimeoutException("Timed out waiting for Camoufox broker and Playwright endpoints.");
     }
+
+    private sealed record BrokerEndpoints(string BrokerUrl, string PlaywrightEndpoint);
 
     private static async Task<T> BrokerGetAsync<T>(string brokerUrl, string path)
     {

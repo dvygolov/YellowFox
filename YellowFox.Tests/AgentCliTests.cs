@@ -71,6 +71,20 @@ public class AgentCliTests
     }
 
     [Fact]
+    public void BuildRequest_ShouldMapProfileEndpointCommand()
+    {
+        var request = AgentCli.BuildRequest(new[]
+        {
+            "profile", "endpoint",
+            "--id", "NRD GGL3",
+            "--json"
+        });
+
+        Assert.Equal("profile.endpoint", request.Command);
+        Assert.Equal("NRD GGL3", request.Args["id"]);
+    }
+
+    [Fact]
     public void BuildRequest_ShouldMapProfileClickCommand()
     {
         var request = AgentCli.BuildRequest(new[]

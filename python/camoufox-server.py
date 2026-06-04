@@ -23,6 +23,20 @@ from browserforge.fingerprints import Screen
 
 
 LAUNCH_PERSISTENT_SCRIPT = Path(__file__).with_name("launchPersistentServer.js")
+DOWNLOAD_MIME_TYPES = ",".join([
+    "application/json",
+    "application/octet-stream",
+    "application/pdf",
+    "application/zip",
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "text/csv",
+    "text/plain",
+    "video/mp4",
+    "video/quicktime",
+    "video/webm",
+])
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -67,6 +81,7 @@ def build_launch_kwargs(config):
     proxy = config.get('proxy')
     addons = config.get('addons') or []
     user_data_dir = config['user_data_dir']
+    download_dir = default_download_dir()
     os.makedirs(user_data_dir, exist_ok=True)
 
     if isinstance(proxy, str):
@@ -122,6 +137,12 @@ def build_launch_kwargs(config):
             "browser.link.open_newwindow": 3,
             "browser.link.open_newwindow.restriction": 0,
             "browser.shell.checkDefaultBrowser": False,
+            "browser.download.useDownloadDir": True,
+            "browser.download.folderList": 2,
+            "browser.download.dir": download_dir,
+            "browser.download.alwaysOpenPanel": True,
+            "browser.download.start_downloads_in_tmp_dir": False,
+            "browser.helperApps.neverAsk.saveToDisk": DOWNLOAD_MIME_TYPES,
             "browser.aboutwelcome.enabled": False,
             "browser.preonboarding.enabled": False,
             "extensions.autoDisableScopes": 0,
@@ -138,6 +159,8 @@ def build_launch_kwargs(config):
             "toolkit.telemetry.shutdownPingSender.enabled": False,
             "app.shield.optoutstudies.enabled": False
         },
+        "accept_downloads": "internal-browser-default",
+        "downloads_path": download_dir,
         "timeout": 120000,
         "persistent_context": True,
         "user_data_dir": user_data_dir,
@@ -151,6 +174,17 @@ def build_launch_kwargs(config):
         launch_kwargs["addons"] = addons
 
     return launch_kwargs
+
+
+def default_download_dir():
+    configured = os.environ.get("YELLOWFOX_DOWNLOAD_DIR")
+    if configured:
+        return str(Path(configured).expanduser())
+    if sys.platform.startswith("win"):
+        profile = os.environ.get("USERPROFILE")
+        if profile:
+            return str(Path(profile) / "Downloads")
+    return str(Path.home() / "Downloads")
 
 
 def print_launch_options(config):

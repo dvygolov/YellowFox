@@ -116,7 +116,9 @@ public class BrowserServiceTests : IDisposable
     public void PrepareSharedBookmarks_ShouldPreservePlacesAndSyncManagedBookmarks()
     {
         var placesPath = Path.Combine(_testDataDir, "places.sqlite");
+        var searchCachePath = Path.Combine(_testDataDir, "search.json.mozlz4");
         File.WriteAllText(placesPath, "old places db");
+        File.WriteAllText(searchCachePath, "old search cache");
 
         var extensionPath = BrowserService.PrepareSharedBookmarks(_testDataDir, new[]
         {
@@ -182,6 +184,7 @@ public class BrowserServiceTests : IDisposable
         Assert.Contains("datareporting.policy.dataSubmissionPolicyAcceptedVersion\", 999", prefsJs);
         Assert.DoesNotContain("browser.uiCustomization.state", prefsJs);
         Assert.False(File.Exists(Path.Combine(_testDataDir, "xulstore.json")));
+        Assert.False(File.Exists(searchCachePath));
         Assert.False(File.Exists(Path.Combine(_testDataDir, "chrome", "userChrome.css")));
         Assert.True(BrowserService.IsExtensionPathUsable(extensionPath));
         var backgroundJs = File.ReadAllText(Path.Combine(extensionPath, "background.js"));
