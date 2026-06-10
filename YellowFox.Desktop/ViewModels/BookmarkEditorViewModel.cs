@@ -58,7 +58,14 @@ public partial class BookmarkEditorViewModel : ViewModelBase
             return false;
         }
 
-        if (!Uri.TryCreate(Url.Trim(), UriKind.Absolute, out _))
+        var trimmedUrl = Url.Trim();
+        if (trimmedUrl.StartsWith("javascript:", StringComparison.OrdinalIgnoreCase))
+        {
+            validationError = string.Empty;
+            return true;
+        }
+
+        if (!Uri.TryCreate(trimmedUrl, UriKind.Absolute, out _))
         {
             validationError = "URL is invalid.";
             return false;

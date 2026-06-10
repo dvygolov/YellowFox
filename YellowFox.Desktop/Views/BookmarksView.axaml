@@ -74,9 +74,11 @@
                 Background="#1E1E1E"
                 BorderBrush="#3E3E42"
                 BorderThickness="0,0,0,1">
-            <TreeView AutomationProperties.AutomationId="BookmarksTree"
+            <TreeView x:Name="BookmarksTree"
+                      AutomationProperties.AutomationId="BookmarksTree"
                       ItemsSource="{Binding Bookmarks}"
                       SelectedItem="{Binding SelectedBookmark}"
+                      DragDrop.AllowDrop="True"
                       Background="#1E1E1E"
                       Foreground="#CCCCCC"
                       Padding="12">

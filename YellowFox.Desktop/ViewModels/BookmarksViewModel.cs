@@ -108,6 +108,82 @@ public partial class BookmarksViewModel : ViewModelBase
         Load();
     }
 
+    public bool CanMoveBookmark(string draggedId, string? targetId, BookmarkDropPosition dropPosition)
+    {
+        if (!_nodesById.TryGetValue(draggedId, out var draggedNode))
+            return false;
+
+        if (dropPosition == BookmarkDropPosition.RootEnd)
+            return true;
+
+        if (string.IsNullOrWhiteSpace(targetId) || !_nodesById.TryGetValue(targetId, out var targetNode))
+            return false;
+
+        if (string.Equals(draggedId, targetId, StringComparison.Ordinal))
+            return false;
+
+        if (dropPosition == BookmarkDropPosition.Inside && !targetNode.Bookmark.IsFolder)
+            return false;
+
+        return !IsDescendantOf(targetNode.Bookmark.Id, draggedNode.Bookmark.Id);
+    }
+
+    public void MoveBookmark(string draggedId, string? targetId, BookmarkDropPosition dropPosition)
+    {
+        if (!CanMoveBookmark(draggedId, targetId, dropPosition))
+            return;
+
+        var items = _databaseService.GetAllBookmarks();
+        var byId = items.ToDictionary(item => item.Id, StringComparer.Ordinal);
+        if (!byId.TryGetValue(draggedId, out var dragged))
+            return;
+
+        var oldParentId = dragged.ParentId;
+        string? newParentId;
+        int insertIndex;
+        if (dropPosition == BookmarkDropPosition.RootEnd || string.IsNullOrWhiteSpace(targetId))
+        {
+            newParentId = null;
+            insertIndex = OrderedSiblings(items, newParentId, draggedId).Count;
+        }
+        else
+        {
+            var target = byId[targetId];
+            if (dropPosition == BookmarkDropPosition.Inside)
+            {
+                newParentId = target.Id;
+                insertIndex = OrderedSiblings(items, newParentId, draggedId).Count;
+            }
+            else
+            {
+                newParentId = target.ParentId;
+                var siblings = OrderedSiblings(items, newParentId, draggedId);
+                var targetIndex = siblings.FindIndex(item => string.Equals(item.Id, target.Id, StringComparison.Ordinal));
+                if (targetIndex < 0)
+                    return;
+
+                insertIndex = dropPosition == BookmarkDropPosition.Before ? targetIndex : targetIndex + 1;
+            }
+        }
+
+        dragged.ParentId = newParentId;
+        var newSiblings = OrderedSiblings(items, newParentId, draggedId);
+        newSiblings.Insert(Math.Clamp(insertIndex, 0, newSiblings.Count), dragged);
+        for (var index = 0; index < newSiblings.Count; index++)
+            newSiblings[index].SortOrder = index;
+
+        if (!SameParent(oldParentId, newParentId))
+        {
+            var oldSiblings = OrderedSiblings(items, oldParentId, draggedId);
+            for (var index = 0; index < oldSiblings.Count; index++)
+                oldSiblings[index].SortOrder = index;
+        }
+
+        _databaseService.UpdateBookmarks(items);
+        StatusMessage = $"Moved: {dragged.Title}";
+        Load(dragged.Id);
+    }
+
     private async Task CreateItemAsync(bool isFolder)
     {
         var parentId = CurrentParentId;
@@ -146,8 +222,8 @@ public partial class BookmarksViewModel : ViewModelBase
         foreach (var node in _nodesById.Values
                      .Where(node => string.IsNullOrWhiteSpace(node.Bookmark.ParentId)
                                     || !_nodesById.ContainsKey(node.Bookmark.ParentId))
-                     .OrderByDescending(node => node.Bookmark.IsFolder)
-                     .ThenBy(node => node.Bookmark.SortOrder)
+                     .OrderBy(node => node.Bookmark.SortOrder)
+                     .ThenByDescending(node => node.Bookmark.IsFolder)
                      .ThenBy(node => node.Title, StringComparer.OrdinalIgnoreCase))
         {
             Bookmarks.Add(node);
@@ -167,6 +243,43 @@ public partial class BookmarksViewModel : ViewModelBase
         return _nodesById.TryGetValue(parentId, out var node)
             ? node.Path
             : "Bookmarks Toolbar";
+    }
+
+    private bool IsDescendantOf(string nodeId, string possibleAncestorId)
+    {
+        var currentId = nodeId;
+        while (_nodesById.TryGetValue(currentId, out var current))
+        {
+            var parentId = current.Bookmark.ParentId;
+            if (string.IsNullOrWhiteSpace(parentId))
+                return false;
+
+            if (string.Equals(parentId, possibleAncestorId, StringComparison.Ordinal))
+                return true;
+
+            currentId = parentId;
+        }
+
+        return false;
+    }
+
+    private static List<BookmarkItem> OrderedSiblings(IEnumerable<BookmarkItem> items, string? parentId, string? excludeId = null)
+    {
+        return items
+            .Where(item => SameParent(item.ParentId, parentId)
+                           && !string.Equals(item.Id, excludeId, StringComparison.Ordinal))
+            .OrderBy(item => item.SortOrder)
+            .ThenByDescending(item => item.IsFolder)
+            .ThenBy(item => item.Title, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static bool SameParent(string? left, string? right)
+    {
+        return string.Equals(
+            string.IsNullOrWhiteSpace(left) ? null : left,
+            string.IsNullOrWhiteSpace(right) ? null : right,
+            StringComparison.Ordinal);
     }
 
     private async Task<bool> ConfirmDelete(BookmarkItem bookmark)
@@ -233,8 +346,8 @@ public class BookmarkNodeViewModel : ViewModelBase
     public void SortChildren()
     {
         var sorted = Children
-            .OrderByDescending(node => node.Bookmark.IsFolder)
-            .ThenBy(node => node.Bookmark.SortOrder)
+            .OrderBy(node => node.Bookmark.SortOrder)
+            .ThenByDescending(node => node.Bookmark.IsFolder)
             .ThenBy(node => node.Title, StringComparer.OrdinalIgnoreCase)
             .ToList();
         Children.Clear();
@@ -245,4 +358,12 @@ public class BookmarkNodeViewModel : ViewModelBase
             Children.Add(child);
         }
     }
+}
+
+public enum BookmarkDropPosition
+{
+    Before,
+    After,
+    Inside,
+    RootEnd
 }

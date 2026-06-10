@@ -1,0 +1,33 @@
+.yellowfox-adlib-download-button {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2147483647;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 86px;
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: #111827;
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+  font: 600 13px/1 Arial, sans-serif;
+  letter-spacing: 0;
+}
+
+.yellowfox-adlib-download-button:hover {
+  background: #2563eb;
+}
+
+.yellowfox-adlib-download-button:disabled {
+  background: #6b7280;
+  cursor: default;
+}
+
+.yellowfox-adlib-download-anchor {
+  position: relative !important;
+}

@@ -144,7 +144,10 @@ Extensions can be imported from:
 - An AMO add-on page URL or a direct archive URL.
 
 Imported enabled extensions are synchronized into profile directories during
-profile startup.
+profile startup. If a Chrome-style manifest is detected, YellowFox will run a
+best-effort Firefox compatibility normalization pass (for example: generate a
+local `browser_specific_settings.gecko.id` if missing, and convert a few common
+Manifest V3 fields where possible).
 
 ### Proxies
 

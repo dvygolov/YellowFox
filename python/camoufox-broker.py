@@ -32,6 +32,16 @@ def load_launcher():
     return module
 
 
+def load_native_identity_helpers():
+    path = Path(__file__).with_name("camoufox-native-broker.py")
+    spec = importlib.util.spec_from_file_location("yellowfox_camoufox_native_broker", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Cannot load native broker module from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def read_config():
     if len(sys.argv) > 1:
         with open(sys.argv[1], "r", encoding="utf-8") as handle:
@@ -437,7 +447,7 @@ def launch_playwright_server(launcher, launch_kwargs, bookmarks):
         if match:
             endpoint = match.group(1).rstrip("/")
             print(f"YELLOWFOX_PLAYWRIGHT {endpoint}", flush=True)
-            return process, endpoint
+            return process, endpoint, options.get("executable_path")
         print(f"YELLOWFOX_PLAYWRIGHT_STDOUT {line.rstrip()}", file=sys.stderr, flush=True)
 
     raise TimeoutError("Timed out waiting for Playwright websocket endpoint.")
@@ -456,6 +466,26 @@ def wait_for_persistent_context(browser, timeout=30):
     raise RuntimeError("Playwright server did not expose a persistent browser context.")
 
 
+def apply_profile_identity(config, server_process, executable_path, user_data_dir):
+    if not sys.platform.startswith("win"):
+        return
+
+    try:
+        native = load_native_identity_helpers()
+        icon_path = native.ensure_profile_icon(config.get("profile_icon_path"), config.get("profile_name"))
+        native.apply_taskbar_identity(
+            server_process.pid,
+            config.get("profile_name"),
+            config.get("profile_id"),
+            user_data_dir,
+            icon_path,
+            executable_path,
+            config.get("profile_app_user_model_id"),
+        )
+    except Exception as exc:
+        print(f"YELLOWFOX_PROFILE_IDENTITY_ERROR {exc}", file=sys.stderr, flush=True)
+
+
 def main():
     config = read_config()
     launcher = load_launcher()
@@ -465,7 +495,7 @@ def main():
     # through Playwright. Bookmarks are still imported through bookmarks.html.
     launch_kwargs.pop("addons", None)
 
-    server_process, playwright_endpoint = launch_playwright_server(launcher, launch_kwargs, bookmarks)
+    server_process, playwright_endpoint, executable_path = launch_playwright_server(launcher, launch_kwargs, bookmarks)
 
     from playwright.sync_api import sync_playwright
 
@@ -473,6 +503,7 @@ def main():
     browser = playwright.firefox.connect(playwright_endpoint)
     context = wait_for_persistent_context(browser)
     state = BrokerState(playwright, browser, server_process, context)
+    apply_profile_identity(config, server_process, executable_path, launch_kwargs["user_data_dir"])
     startup_cookies = config.get("cookies") or []
     if startup_cookies:
         try:

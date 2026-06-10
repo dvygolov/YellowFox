@@ -11,20 +11,27 @@ namespace YellowFox.Desktop.Services;
 
 public class DatabaseService
 {
+    private const string MetaAdLibraryDownloaderExtensionId = "builtin-meta-ad-library-video-downloader";
+    private const string MetaAdLibraryDownloaderExtensionName = "Meta Ad Library Video Downloader";
+    private const string MetaAdLibraryDownloaderExtensionPath = "extensions/meta-ad-library-video-downloader";
+
     private readonly string _connectionString;
     private readonly string _dataDirectory;
+    private readonly bool _seedBuiltInExtensions;
     
     public DatabaseService(string? dataDirectory = null, bool disablePooling = false)
     {
         if (!string.IsNullOrWhiteSpace(dataDirectory))
         {
             _dataDirectory = dataDirectory;
+            _seedBuiltInExtensions = false;
         }
         else
         {
             // Setup data directory relative to application
             var appDir = AppDomain.CurrentDomain.BaseDirectory;
             _dataDirectory = Path.Combine(appDir, "data");
+            _seedBuiltInExtensions = true;
         }
 
         Directory.CreateDirectory(_dataDirectory);
@@ -174,7 +181,63 @@ public class DatabaseService
         bookmarksParentIndexCommand.CommandText = "CREATE INDEX IF NOT EXISTS idx_bookmarks_parent_id ON bookmarks(parent_id)";
         bookmarksParentIndexCommand.ExecuteNonQuery();
 
+        if (_seedBuiltInExtensions)
+            SeedBuiltInExtensions(connection, transaction);
+
         transaction.Commit();
+    }
+
+    private static void SeedBuiltInExtensions(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        var extensionPath = Path.Combine(
+            AppDomain.CurrentDomain.BaseDirectory,
+            MetaAdLibraryDownloaderExtensionPath.Replace('/', Path.DirectorySeparatorChar));
+
+        if (!Directory.Exists(extensionPath) || !File.Exists(Path.Combine(extensionPath, "manifest.json")))
+            return;
+
+        if (UpdateBuiltInExtensionById(connection, transaction, extensionPath))
+            return;
+
+        if (UpdateBuiltInExtensionByName(connection, transaction, extensionPath))
+            return;
+
+        using var insert = connection.CreateCommand();
+        insert.Transaction = transaction;
+        insert.CommandText = @"
+            INSERT INTO extensions (id, name, path, is_enabled)
+            VALUES (@id, @name, @path, 1)";
+        insert.Parameters.AddWithValue("@id", MetaAdLibraryDownloaderExtensionId);
+        insert.Parameters.AddWithValue("@name", MetaAdLibraryDownloaderExtensionName);
+        insert.Parameters.AddWithValue("@path", extensionPath);
+        insert.ExecuteNonQuery();
+    }
+
+    private static bool UpdateBuiltInExtensionById(SqliteConnection connection, SqliteTransaction transaction, string extensionPath)
+    {
+        using var update = connection.CreateCommand();
+        update.Transaction = transaction;
+        update.CommandText = @"
+            UPDATE extensions
+            SET name = @name, path = @path
+            WHERE id = @id";
+        update.Parameters.AddWithValue("@id", MetaAdLibraryDownloaderExtensionId);
+        update.Parameters.AddWithValue("@name", MetaAdLibraryDownloaderExtensionName);
+        update.Parameters.AddWithValue("@path", extensionPath);
+        return update.ExecuteNonQuery() > 0;
+    }
+
+    private static bool UpdateBuiltInExtensionByName(SqliteConnection connection, SqliteTransaction transaction, string extensionPath)
+    {
+        using var update = connection.CreateCommand();
+        update.Transaction = transaction;
+        update.CommandText = @"
+            UPDATE extensions
+            SET path = @path
+            WHERE name = @name";
+        update.Parameters.AddWithValue("@name", MetaAdLibraryDownloaderExtensionName);
+        update.Parameters.AddWithValue("@path", extensionPath);
+        return update.ExecuteNonQuery() > 0;
     }
 
     private static void MigrateBookmarkFolders(SqliteConnection connection, SqliteTransaction transaction)
@@ -837,6 +900,39 @@ public class DatabaseService
         command.Parameters.AddWithValue("@is_folder", bookmark.IsFolder ? 1 : 0);
         command.Parameters.AddWithValue("@sort_order", bookmark.SortOrder);
         command.ExecuteNonQuery();
+    }
+
+    public void UpdateBookmarks(IReadOnlyCollection<BookmarkItem> bookmarks)
+    {
+        using var connection = new SqliteConnection(_connectionString);
+        connection.Open();
+        using var transaction = connection.BeginTransaction();
+
+        foreach (var bookmark in bookmarks)
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = @"
+                UPDATE bookmarks
+                SET title = @title,
+                    url = @url,
+                    folder = @folder,
+                    parent_id = @parent_id,
+                    is_folder = @is_folder,
+                    sort_order = @sort_order
+                WHERE id = @id";
+
+            command.Parameters.AddWithValue("@id", bookmark.Id);
+            command.Parameters.AddWithValue("@title", bookmark.Title.Trim());
+            command.Parameters.AddWithValue("@url", bookmark.IsFolder ? string.Empty : bookmark.Url.Trim());
+            command.Parameters.AddWithValue("@folder", (object?)BookmarkFolderPath(bookmark, bookmarks) ?? DBNull.Value);
+            command.Parameters.AddWithValue("@parent_id", (object?)bookmark.ParentId ?? DBNull.Value);
+            command.Parameters.AddWithValue("@is_folder", bookmark.IsFolder ? 1 : 0);
+            command.Parameters.AddWithValue("@sort_order", bookmark.SortOrder);
+            command.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
     }
 
     public void DeleteBookmark(string id)

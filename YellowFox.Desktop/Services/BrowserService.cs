@@ -224,7 +224,7 @@ public class BrowserService
                 profile_name = profile.Name,
                 profile_app_user_model_id = BuildProfileAppUserModelId(profile.Id),
                 profile_icon_path = Path.Combine(userDataDir, "yellowfox-profile.ico"),
-                initial_urls = initialUrls,
+                initial_urls = Array.Empty<string>(),
                 cookies = ToBrokerCookiePayload(ReadImportedCookies(profileId)),
                 addons = enabledExtensions,
                 bookmarks = sharedBookmarks.Select(b => new
@@ -303,10 +303,7 @@ public class BrowserService
             process.EnableRaisingEvents = true;
             process.Exited += (_, _) => _ = HandleProcessExitedAsync(profileId);
 
-            if (initialUrls.Count == 0)
-                await RestoreTabsAsync(profileId, instance, logPath);
-            else
-                await WriteLogAsync(logPath, "INFO", $"Requested broker tab restore. Requested={initialUrls.Count}.");
+            await RestoreTabsAsync(profileId, instance, logPath);
             _ = RunTabsSnapshotLoopAsync(profileId, instance, logPath);
             _ = RunBrowserWindowMonitorAsync(profileId, instance, logPath);
 
@@ -962,7 +959,7 @@ public class BrowserService
         EnsureUserPref(userJsLines, "browser.toolbars.bookmarks.showInPrivateBrowsing", "true");
         EnsureUserPref(userJsLines, "browser.policies.runOncePerModification.displayBookmarksToolbar", "\"always\"");
         EnsureUserPref(userJsLines, "browser.bookmarks.addedImportButton", "true");
-        EnsureUserPref(userJsLines, "browser.startup.page", "0");
+        EnsureUserPref(userJsLines, "browser.startup.page", "3");
         EnsureUserPref(userJsLines, "browser.aboutwelcome.enabled", "false");
         EnsureUserPref(userJsLines, "browser.preonboarding.enabled", "false");
         EnsureUserPref(userJsLines, "browser.tabs.drawInTitlebar", "false");
@@ -971,13 +968,14 @@ public class BrowserService
         EnsureUserPref(userJsLines, "browser.startup.blankWindow", "false");
         EnsureUserPref(userJsLines, "extensions.autoDisableScopes", "0");
         EnsureUserPref(userJsLines, "extensions.enabledScopes", "5");
+        EnsureUserPref(userJsLines, "xpinstall.signatures.required", "false");
         EnsureUserPref(userJsLines, "datareporting.policy.dataSubmissionEnabled", "false");
         EnsureUserPref(userJsLines, "datareporting.policy.dataSubmissionPolicyAcceptedVersion", "999");
         EnsureUserPref(userJsLines, "datareporting.policy.dataSubmissionPolicyNotifiedTime", "\"0\"");
         ApplyNavigationPrefs(userJsLines);
-        RemoveUserPref(userJsLines, "browser.sessionstore.resume_from_crash");
-        RemoveUserPref(userJsLines, "browser.sessionstore.max_tabs_undo");
-        RemoveUserPref(userJsLines, "browser.sessionstore.max_windows_undo");
+        EnsureUserPref(userJsLines, "browser.sessionstore.resume_from_crash", "true");
+        EnsureUserPref(userJsLines, "browser.sessionstore.max_tabs_undo", "25");
+        EnsureUserPref(userJsLines, "browser.sessionstore.max_windows_undo", "3");
         RemoveUserPref(userJsLines, "datareporting.healthreport.uploadEnabled");
         RemoveUserPref(userJsLines, "toolkit.telemetry.enabled");
         RemoveUserPref(userJsLines, "toolkit.telemetry.unified");
@@ -994,7 +992,6 @@ public class BrowserService
         DeleteToolbarState(profileDir);
         DeleteSearchEngineCache(profileDir);
         DeleteUserChrome(profileDir);
-        DeleteSessionStores(profileDir);
         return WriteSharedBookmarksExtension(profileDir, bookmarks, previousManagedBookmarks);
     }
 
@@ -1138,6 +1135,16 @@ public class BrowserService
             return false;
 
         var sourcePath = Path.GetFullPath(extension.Path.Trim());
+        try
+        {
+            _ = ExtensionCompatService.NormalizeManifestForFirefox(sourcePath, extension.Name, out var isCompatible);
+            if (!isCompatible)
+                return false;
+        }
+        catch
+        {
+            return false;
+        }
         var manifestPath = Path.Combine(sourcePath, "manifest.json");
         string? addonId;
         try
@@ -1265,7 +1272,7 @@ public class BrowserService
         var items = NormalizeBookmarkTreeItems(bookmarks);
         var byParent = items
             .GroupBy(item => item.ParentId ?? string.Empty)
-            .ToDictionary(group => group.Key, group => group.OrderByDescending(item => item.IsFolder).ThenBy(item => item.SortOrder).ThenBy(item => item.Title).ToList());
+            .ToDictionary(group => group.Key, group => group.OrderBy(item => item.SortOrder).ThenByDescending(item => item.IsFolder).ThenBy(item => item.Title).ToList());
 
         var sb = new StringBuilder();
         sb.AppendLine("<!DOCTYPE NETSCAPE-Bookmark-file-1>");
@@ -2037,28 +2044,6 @@ public class BrowserService
         }
     }
 
-    private static void DeleteSessionStores(string profileDir)
-    {
-        var files = new[]
-        {
-            "sessionstore.jsonlz4",
-            "sessionstore.js",
-            "sessionstore.bak",
-            "sessionCheckpoints.json"
-        };
-
-        foreach (var file in files)
-        {
-            var path = Path.Combine(profileDir, file);
-            if (File.Exists(path))
-                File.Delete(path);
-        }
-
-        var backupsDir = Path.Combine(profileDir, "sessionstore-backups");
-        if (Directory.Exists(backupsDir))
-            Directory.Delete(backupsDir, recursive: true);
-    }
-
     private static void EnsureUserPref(List<string> lines, string key, string value)
     {
         var prefPrefix = $"user_pref(\"{key}\"";
@@ -2099,13 +2084,15 @@ public class BrowserService
         EnsureUserPref(lines, "browser.startup.blankWindow", "false");
         EnsureUserPref(lines, "extensions.autoDisableScopes", "0");
         EnsureUserPref(lines, "extensions.enabledScopes", "5");
+        EnsureUserPref(lines, "xpinstall.signatures.required", "false");
         EnsureUserPref(lines, "datareporting.policy.dataSubmissionEnabled", "false");
         EnsureUserPref(lines, "datareporting.policy.dataSubmissionPolicyAcceptedVersion", "999");
         EnsureUserPref(lines, "datareporting.policy.dataSubmissionPolicyNotifiedTime", "\"0\"");
         ApplyNavigationPrefs(lines);
-        RemoveUserPref(lines, "browser.sessionstore.resume_from_crash");
-        RemoveUserPref(lines, "browser.sessionstore.max_tabs_undo");
-        RemoveUserPref(lines, "browser.sessionstore.max_windows_undo");
+        EnsureUserPref(lines, "browser.startup.page", "3");
+        EnsureUserPref(lines, "browser.sessionstore.resume_from_crash", "true");
+        EnsureUserPref(lines, "browser.sessionstore.max_tabs_undo", "25");
+        EnsureUserPref(lines, "browser.sessionstore.max_windows_undo", "3");
         RemoveUserPref(lines, "datareporting.healthreport.uploadEnabled");
         RemoveUserPref(lines, "toolkit.telemetry.enabled");
         RemoveUserPref(lines, "toolkit.telemetry.unified");
@@ -2135,9 +2122,14 @@ public class BrowserService
         EnsureUserPref(lines, "dom.security.https_only_mode.upgrade_local", "true");
         EnsureUserPref(lines, "dom.security.https_only_mode_ever_enabled", "true");
         EnsureUserPref(lines, "browser.search.defaultenginename", "\"Google\"");
+        EnsureUserPref(lines, "browser.search.defaultenginename.US", "\"Google\"");
         EnsureUserPref(lines, "browser.search.selectedEngine", "\"Google\"");
+        EnsureUserPref(lines, "browser.search.defaultPrivateEngine", "\"Google\"");
+        EnsureUserPref(lines, "browser.search.separatePrivateDefault", "false");
+        EnsureUserPref(lines, "browser.search.separatePrivateDefault.ui.enabled", "false");
         EnsureUserPref(lines, "browser.search.order.1", "\"Google\"");
         EnsureUserPref(lines, "browser.search.update", "false");
+        EnsureUserPref(lines, "browser.urlbar.searchSuggestionsChoice", "true");
         EnsureUserPref(lines, "browser.urlbar.placeholderName", "\"Google\"");
         EnsureUserPref(lines, "browser.urlbar.placeholderName.private", "\"Google\"");
     }
@@ -3405,6 +3397,12 @@ public class BrowserService
                     .Select(p => p.Url?.Trim())
                     .Where(IsRestorableUrl)
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                if (brokerCurrentUrls.Count > 0)
+                {
+                    await WriteLogAsync(logPath, "INFO", "Skipped YellowFox tab fallback because Firefox restored native session tabs.");
+                    return;
+                }
+
                 var brokerTabsToRestore = snapshot.Urls
                     .Where(IsRestorableUrl)
                     .Where(url => !brokerCurrentUrls.Contains(url))
@@ -3424,6 +3422,11 @@ public class BrowserService
                 .Select(p => p.Url?.Trim())
                 .Where(IsRestorableUrl)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (currentUrls.Count > 0)
+            {
+                await WriteLogAsync(logPath, "INFO", "Skipped YellowFox tab fallback because Firefox restored native session tabs.");
+                return;
+            }
 
             var tabsToRestore = snapshot.Urls
                 .Where(IsRestorableUrl)

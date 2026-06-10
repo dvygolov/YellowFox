@@ -75,8 +75,66 @@ public class ExtensionStorageService
         Directory.CreateDirectory(extensionFolder);
 
         ZipFile.ExtractToDirectory(sourceFilePath, extensionFolder, overwriteFiles: true);
+        try
+        {
+            EnsureFirefoxCompatibility(extensionFolder, extensionId);
+        }
+        catch
+        {
+            try
+            {
+                Directory.Delete(extensionFolder, recursive: true);
+            }
+            catch
+            {
+                // Best-effort cleanup; keep original exception.
+            }
+
+            throw;
+        }
         return extensionFolder;
     }
+
+    public string? EnsureFirefoxCompatibility(string extensionPath, string extensionName)
+    {
+        var result = GetCompatibilityResult(extensionPath, extensionName);
+
+        if (!result.IsCompatible && !result.HasWarnings)
+            throw new InvalidOperationException(result.Message);
+
+        return result.Message;
+    }
+
+    public ExtensionCompatibilityResult GetCompatibilityResult(string extensionPath, string extensionName)
+    {
+        var compatibilityMessage = ExtensionCompatService.NormalizeManifestForFirefox(
+            extensionPath,
+            extensionName,
+            out var isCompatible,
+            out var hasWarnings);
+
+        return new ExtensionCompatibilityResult(
+            compatibilityMessage,
+            isCompatible,
+            hasWarnings);
+    }
+
+    public bool IsFirefoxCompatible(string extensionPath, string extensionName, out string? compatibilityMessage)
+    {
+        var result = GetCompatibilityResult(extensionPath, extensionName);
+        compatibilityMessage = result.Message;
+        return result.IsCompatible;
+    }
+
+    public bool IsFirefoxCompatible(string extensionPath, string extensionName, out string? compatibilityMessage, out bool hasWarnings)
+    {
+        var result = GetCompatibilityResult(extensionPath, extensionName);
+        compatibilityMessage = result.Message;
+        hasWarnings = result.HasWarnings;
+        return result.IsCompatible;
+    }
+
+    public sealed record ExtensionCompatibilityResult(string? Message, bool IsCompatible, bool HasWarnings);
 
     public bool IsArchivePath(string path)
     {

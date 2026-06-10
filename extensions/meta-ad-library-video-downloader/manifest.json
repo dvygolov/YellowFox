@@ -1,0 +1,39 @@
+{
+  "manifest_version": 2,
+  "name": "Meta Ad Library Video Downloader",
+  "version": "1.0.0",
+  "description": "Adds a download button to videos in Meta Ad Library results.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "meta-ad-library-video-downloader@yellowfox.local"
+    }
+  },
+  "permissions": [
+    "downloads",
+    "https://www.facebook.com/*",
+    "https://*.fbcdn.net/*"
+  ],
+  "background": {
+    "scripts": [
+      "background.js"
+    ],
+    "persistent": false
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.facebook.com/ads/library/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    "page-hook.js"
+  ]
+}

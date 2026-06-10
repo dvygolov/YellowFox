@@ -114,7 +114,7 @@ def build_launch_kwargs(config):
             "browser.toolbars.bookmarks.showInPrivateBrowsing": True,
             "browser.bookmarks.addedImportButton": True,
             "browser.policies.runOncePerModification.displayBookmarksToolbar": "always",
-            "browser.startup.page": 0,
+            "browser.startup.page": 3,
             "keyword.enabled": True,
             "dom.event.contextmenu.enabled": False,
             "browser.fixup.fallback-to-https": True,
@@ -126,14 +126,19 @@ def build_launch_kwargs(config):
             "dom.security.https_only_mode.upgrade_local": True,
             "dom.security.https_only_mode_ever_enabled": True,
             "browser.search.defaultenginename": "Google",
+            "browser.search.defaultenginename.US": "Google",
             "browser.search.selectedEngine": "Google",
+            "browser.search.defaultPrivateEngine": "Google",
+            "browser.search.separatePrivateDefault": False,
+            "browser.search.separatePrivateDefault.ui.enabled": False,
             "browser.search.order.1": "Google",
             "browser.search.update": False,
+            "browser.urlbar.searchSuggestionsChoice": True,
             "browser.urlbar.placeholderName": "Google",
             "browser.urlbar.placeholderName.private": "Google",
-            "browser.sessionstore.resume_from_crash": False,
+            "browser.sessionstore.resume_from_crash": True,
             "browser.sessionstore.max_tabs_undo": 25,
-            "browser.sessionstore.max_windows_undo": 0,
+            "browser.sessionstore.max_windows_undo": 3,
             "browser.link.open_newwindow": 3,
             "browser.link.open_newwindow.restriction": 0,
             "browser.shell.checkDefaultBrowser": False,
@@ -147,6 +152,7 @@ def build_launch_kwargs(config):
             "browser.preonboarding.enabled": False,
             "extensions.autoDisableScopes": 0,
             "extensions.enabledScopes": 5,
+            "xpinstall.signatures.required": False,
             "datareporting.policy.dataSubmissionEnabled": False,
             "datareporting.policy.dataSubmissionPolicyAcceptedVersion": 999,
             "datareporting.policy.dataSubmissionPolicyNotifiedTime": "0",
@@ -253,9 +259,14 @@ lockPref("dom.security.https_only_mode_pbm", true);
 lockPref("dom.security.https_only_mode.upgrade_local", true);
 lockPref("dom.security.https_only_mode_ever_enabled", true);
 lockPref("browser.search.defaultenginename", "Google");
+lockPref("browser.search.defaultenginename.US", "Google");
 lockPref("browser.search.selectedEngine", "Google");
+lockPref("browser.search.defaultPrivateEngine", "Google");
+lockPref("browser.search.separatePrivateDefault", false);
+lockPref("browser.search.separatePrivateDefault.ui.enabled", false);
 lockPref("browser.search.order.1", "Google");
 lockPref("browser.search.update", false);
+lockPref("browser.urlbar.searchSuggestionsChoice", true);
 lockPref("browser.urlbar.placeholderName", "Google");
 lockPref("browser.urlbar.placeholderName.private", "Google");
 
@@ -270,9 +281,26 @@ try {
       if (!google) {
         return;
       }
-      Services.search.defaultEngine = google;
+      try {
+        if (typeof Services.search.setDefault === "function") {
+          await Services.search.setDefault(google);
+        } else {
+          Services.search.defaultEngine = google;
+        }
+      } catch (e) {
+        Services.search.defaultEngine = google;
+      }
       if ("defaultPrivateEngine" in Services.search) {
         Services.search.defaultPrivateEngine = google;
+      }
+      try {
+        if (typeof Services.search.setDefaultPrivate === "function") {
+          await Services.search.setDefaultPrivate(google);
+        }
+      } catch (e) {
+        if ("defaultPrivateEngine" in Services.search) {
+          Services.search.defaultPrivateEngine = google;
+        }
       }
     } catch (e) {}
   }

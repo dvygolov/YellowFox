@@ -70,7 +70,7 @@ public class BrowserServiceTests : IDisposable
     }
 
     [Fact]
-    public void PrepareSharedExtensions_ShouldSkipExtensionsWithoutStableGeckoId()
+    public void PrepareSharedExtensions_ShouldAddFirefoxIdForExtensionsWithoutStableGeckoId()
     {
         var sourceDir = Path.Combine(_testDataDir, "no-id-extension");
         Directory.CreateDirectory(sourceDir);
@@ -83,9 +83,80 @@ public class BrowserServiceTests : IDisposable
             new ExtensionItem { Name = "No ID", Path = sourceDir, IsEnabled = true }
         });
 
+        Assert.Equal(1, result.InstalledCount);
+        Assert.Equal(0, result.RemovedCount);
+        Assert.Equal(0, result.SkippedCount);
+        var extensionFiles = Directory.GetFiles(Path.Combine(_testDataDir, "extensions"), "*.xpi");
+        Assert.Single(extensionFiles);
+    }
+
+    [Fact]
+    public void PrepareSharedExtensions_ShouldSkipChromeOnlyExtensionsWithUnsupportedPermissions()
+    {
+        var sourceDir = Path.Combine(_testDataDir, "unsupported-extension");
+        Directory.CreateDirectory(sourceDir);
+        File.WriteAllText(Path.Combine(sourceDir, "manifest.json"), """
+        {
+            "manifest_version": 3,
+            "name": "Blocked",
+            "version": "1.0",
+            "permissions": [
+                "webRequestAuthProvider",
+                "declarativeNetRequest"
+            ]
+        }
+        """);
+        File.WriteAllText(Path.Combine(sourceDir, "background.js"), "chrome.declarativeNetRequest.onMessage.addListener(()=>{});");
+
+        var result = BrowserService.PrepareSharedExtensions(_testDataDir, new[]
+        {
+            new ExtensionItem { Name = "Blocked", Path = sourceDir, IsEnabled = true }
+        });
+
         Assert.Equal(0, result.InstalledCount);
         Assert.Equal(0, result.RemovedCount);
         Assert.Equal(1, result.SkippedCount);
+        Assert.Empty(Directory.GetFiles(Path.Combine(_testDataDir, "extensions"), "*.xpi"));
+    }
+
+    [Fact]
+    public void PrepareSharedExtensions_ShouldNormalizeSoftChromeManifestWithoutParentError()
+    {
+        var sourceDir = Path.Combine(_testDataDir, "soft-chrome-extension");
+        Directory.CreateDirectory(sourceDir);
+        File.WriteAllText(Path.Combine(sourceDir, "manifest.json"), """
+        {
+            "manifest_version": 2,
+            "name": "Soft Chrome",
+            "version": "1.0",
+            "storage": {
+                "managed_schema": "schema.json"
+            },
+            "permissions": [
+                "storage",
+                "fontSettings"
+            ],
+            "optional_permissions": [
+                "tabs",
+                "sessions"
+            ]
+        }
+        """);
+        File.WriteAllText(Path.Combine(sourceDir, "background.js"), "browser.runtime.onInstalled.addListener(()=>{});");
+
+        var result = BrowserService.PrepareSharedExtensions(_testDataDir, new[]
+        {
+            new ExtensionItem { Name = "Soft Chrome", Path = sourceDir, IsEnabled = true }
+        });
+
+        Assert.Equal(1, result.InstalledCount);
+        Assert.Equal(0, result.RemovedCount);
+        Assert.Equal(0, result.SkippedCount);
+
+        var manifestJson = File.ReadAllText(Path.Combine(sourceDir, "manifest.json"));
+        Assert.Contains("\"browser_specific_settings\"", manifestJson);
+        Assert.DoesNotContain("\"fontSettings\"", manifestJson);
+        Assert.DoesNotContain("\"sessions\"", manifestJson);
     }
 
     [Fact]
@@ -141,11 +212,12 @@ public class BrowserServiceTests : IDisposable
         Assert.Contains("browser.toolbars.bookmarks.showInPrivateBrowsing\", true", userJs);
         Assert.Contains("browser.policies.runOncePerModification.displayBookmarksToolbar\", \"always\"", userJs);
         Assert.DoesNotContain("toolkit.legacyUserProfileCustomizations.stylesheets", userJs);
-        Assert.Contains("browser.startup.page\", 0", userJs);
+        Assert.Contains("browser.startup.page\", 3", userJs);
         Assert.Contains("browser.aboutwelcome.enabled\", false", userJs);
         Assert.Contains("browser.preonboarding.enabled\", false", userJs);
         Assert.Contains("taskbar.grouping.useprofile\", true", userJs);
         Assert.Contains("browser.startup.blankWindow\", false", userJs);
+        Assert.Contains("xpinstall.signatures.required\", false", userJs);
         Assert.Contains("keyword.enabled\", true", userJs);
         Assert.Contains("dom.event.contextmenu.enabled\", false", userJs);
         Assert.Contains("browser.fixup.fallback-to-https\", true", userJs);
@@ -156,13 +228,19 @@ public class BrowserServiceTests : IDisposable
         Assert.Contains("dom.security.https_only_mode_pbm\", true", userJs);
         Assert.Contains("dom.security.https_only_mode.upgrade_local\", true", userJs);
         Assert.Contains("browser.search.defaultenginename\", \"Google\"", userJs);
+        Assert.Contains("browser.search.defaultenginename.US\", \"Google\"", userJs);
         Assert.Contains("browser.search.selectedEngine\", \"Google\"", userJs);
+        Assert.Contains("browser.search.defaultPrivateEngine\", \"Google\"", userJs);
+        Assert.Contains("browser.search.separatePrivateDefault\", false", userJs);
         Assert.Contains("browser.search.update\", false", userJs);
+        Assert.Contains("browser.urlbar.searchSuggestionsChoice\", true", userJs);
         Assert.Contains("extensions.autoDisableScopes\", 0", userJs);
         Assert.Contains("extensions.enabledScopes\", 5", userJs);
         Assert.Contains("datareporting.policy.dataSubmissionPolicyAcceptedVersion\", 999", userJs);
         Assert.Contains("datareporting.policy.dataSubmissionPolicyNotifiedTime\", \"0\"", userJs);
-        Assert.DoesNotContain("browser.sessionstore.resume_from_crash", userJs);
+        Assert.Contains("browser.sessionstore.resume_from_crash\", true", userJs);
+        Assert.Contains("browser.sessionstore.max_tabs_undo\", 25", userJs);
+        Assert.Contains("browser.sessionstore.max_windows_undo\", 3", userJs);
         Assert.Contains("browser.link.open_newwindow\", 3", userJs);
         Assert.Contains("browser.link.open_newwindow.restriction\", 0", userJs);
         Assert.DoesNotContain("toolkit.telemetry.reportingpolicy.firstRun", userJs);
@@ -177,10 +255,13 @@ public class BrowserServiceTests : IDisposable
         Assert.Contains("dom.security.https_only_mode\", true", prefsJs);
         Assert.Contains("dom.security.https_only_mode_pbm\", true", prefsJs);
         Assert.Contains("browser.search.defaultenginename\", \"Google\"", prefsJs);
+        Assert.Contains("browser.search.defaultenginename.US\", \"Google\"", prefsJs);
+        Assert.Contains("browser.search.defaultPrivateEngine\", \"Google\"", prefsJs);
         Assert.Contains("browser.link.open_newwindow\", 3", prefsJs);
         Assert.Contains("browser.link.open_newwindow.restriction\", 0", prefsJs);
         Assert.Contains("extensions.autoDisableScopes\", 0", prefsJs);
         Assert.Contains("extensions.enabledScopes\", 5", prefsJs);
+        Assert.Contains("xpinstall.signatures.required\", false", prefsJs);
         Assert.Contains("datareporting.policy.dataSubmissionPolicyAcceptedVersion\", 999", prefsJs);
         Assert.DoesNotContain("browser.uiCustomization.state", prefsJs);
         Assert.False(File.Exists(Path.Combine(_testDataDir, "xulstore.json")));
@@ -249,7 +330,7 @@ public class BrowserServiceTests : IDisposable
     }
 
     [Fact]
-    public void PrepareSharedBookmarks_ShouldPreserveTabsSnapshotWhileClearingNativeSession()
+    public void PrepareSharedBookmarks_ShouldPreserveTabsSnapshotAndNativeSession()
     {
         var tabsStatePath = Path.Combine(_testDataDir, "tabs-state.json");
         var sessionStorePath = Path.Combine(_testDataDir, "sessionstore.jsonlz4");
@@ -262,7 +343,7 @@ public class BrowserServiceTests : IDisposable
         });
 
         Assert.True(File.Exists(tabsStatePath));
-        Assert.False(File.Exists(sessionStorePath));
+        Assert.True(File.Exists(sessionStorePath));
     }
 
     [Fact]

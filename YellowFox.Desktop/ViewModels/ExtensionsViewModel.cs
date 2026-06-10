@@ -1,6 +1,7 @@
 using System;
 using System.Collections.ObjectModel;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -86,8 +87,12 @@ public partial class ExtensionsViewModel : ViewModelBase
         try
         {
             var extension = editor.BuildExtension(new ExtensionItem());
+            var (canContinue, compatibilityMessage) = await ValidateFirefoxCompatibilityAsync(extension.Path, extension.Name);
+            if (!canContinue)
+                return;
+
             _databaseService.CreateExtension(extension);
-            StatusMessage = $"Created: {extension.Name}";
+            StatusMessage = $"Created: {extension.Name}{FormatCompatibilityMessage(compatibilityMessage)}";
             Load();
             SelectedExtension = Extensions.FirstOrDefault(item => item.Extension.Id == extension.Id);
         }
@@ -110,8 +115,12 @@ public partial class ExtensionsViewModel : ViewModelBase
         try
         {
             var extension = editor.BuildExtension(SelectedExtension.Extension);
+            var (canContinue, compatibilityMessage) = await ValidateFirefoxCompatibilityAsync(extension.Path, extension.Name);
+            if (!canContinue)
+                return;
+
             _databaseService.UpdateExtension(extension);
-            StatusMessage = $"Updated: {extension.Name}";
+            StatusMessage = $"Updated: {extension.Name}{FormatCompatibilityMessage(compatibilityMessage)}";
             Load();
             SelectedExtension = Extensions.FirstOrDefault(item => item.Extension.Id == extension.Id);
         }
@@ -143,7 +152,14 @@ public partial class ExtensionsViewModel : ViewModelBase
         {
             var fileName = System.IO.Path.GetFileNameWithoutExtension(file.Name);
             var extension = _extensionStorageService.ImportArchive(file.Path.LocalPath, fileName);
-            StatusMessage = $"Imported: {extension.Name}";
+            var (canContinue, compatibilityMessage) = await ValidateFirefoxCompatibilityAsync(extension.Path, extension.Name);
+            if (!canContinue)
+            {
+                CleanupExtensionDirectory(extension.Path);
+                return;
+            }
+
+            StatusMessage = $"Imported: {extension.Name}{FormatCompatibilityMessage(compatibilityMessage)}";
             Load();
             SelectedExtension = Extensions.FirstOrDefault(e => e.Extension.Id == extension.Id);
         }
@@ -165,7 +181,14 @@ public partial class ExtensionsViewModel : ViewModelBase
         {
             StatusMessage = "Downloading extension...";
             var extension = await _extensionStorageService.ImportFromUrlAsync(window.ExtensionUrl);
-            StatusMessage = $"Imported: {extension.Name}";
+            var (canContinue, compatibilityMessage) = await ValidateFirefoxCompatibilityAsync(extension.Path, extension.Name);
+            if (!canContinue)
+            {
+                CleanupExtensionDirectory(extension.Path);
+                return;
+            }
+
+            StatusMessage = $"Imported: {extension.Name}{FormatCompatibilityMessage(compatibilityMessage)}";
             Load();
             SelectedExtension = Extensions.FirstOrDefault(e => e.Extension.Id == extension.Id);
         }
@@ -212,29 +235,56 @@ public partial class ExtensionsViewModel : ViewModelBase
         {
             if (SelectedExtension == null)
             {
+                var sourcePath = ExtensionPath.Trim();
                 var extension = new ExtensionItem
                 {
                     Name = Name.Trim(),
                     IsEnabled = IsExtensionEnabled
                 };
 
-                extension.Path = _extensionStorageService.IsArchivePath(ExtensionPath.Trim())
-                    ? _extensionStorageService.StoreArchive(ExtensionPath.Trim(), extension.Id)
-                    : ExtensionPath.Trim();
+                extension.Path = _extensionStorageService.IsArchivePath(sourcePath)
+                    ? _extensionStorageService.StoreArchive(sourcePath, extension.Id)
+                    : sourcePath;
+                var (canContinue, compatibilityMessage) = await ValidateFirefoxCompatibilityAsync(extension.Path, extension.Name);
+                if (!canContinue)
+                {
+                    if (_extensionStorageService.IsArchivePath(sourcePath))
+                        CleanupExtensionDirectory(extension.Path);
+                    return;
+                }
 
                 _databaseService.CreateExtension(extension);
-                StatusMessage = $"Created: {extension.Name}";
+                StatusMessage = $"Created: {extension.Name}{FormatCompatibilityMessage(compatibilityMessage)}";
             }
             else
             {
                 var extension = SelectedExtension.Extension;
                 extension.Name = Name.Trim();
-                extension.Path = _extensionStorageService.IsArchivePath(ExtensionPath.Trim())
-                    ? _extensionStorageService.StoreArchive(ExtensionPath.Trim(), extension.Id)
-                    : ExtensionPath.Trim();
                 extension.IsEnabled = IsExtensionEnabled;
+                var sourcePath = ExtensionPath.Trim();
+                string? compatibilityMessage;
+                if (_extensionStorageService.IsArchivePath(sourcePath))
+                {
+                    var compatibilityPreview = ValidateArchiveCompatibility(sourcePath, extension.Name);
+                    var (previewCanContinue, previewCompatibilityMessage) = await ValidateCompatibilityResultAsync(compatibilityPreview, extension.Name);
+                    if (!previewCanContinue)
+                        return;
+
+                    extension.Path = _extensionStorageService.StoreArchive(sourcePath, extension.Id);
+                    compatibilityMessage = previewCompatibilityMessage;
+                }
+                else
+                {
+                    extension.Path = sourcePath;
+                    var validated = await ValidateFirefoxCompatibilityAsync(extension.Path, extension.Name);
+                    if (!validated.CanContinue)
+                        return;
+
+                    compatibilityMessage = validated.CompatibilityMessage;
+                }
+
                 _databaseService.UpdateExtension(extension);
-                StatusMessage = $"Updated: {extension.Name}";
+                StatusMessage = $"Updated: {extension.Name}{FormatCompatibilityMessage(compatibilityMessage)}";
             }
 
             Load();
@@ -350,6 +400,108 @@ public partial class ExtensionsViewModel : ViewModelBase
             });
 
         await box.ShowWindowDialogAsync(mainWindow!);
+    }
+
+    private static string FormatCompatibilityMessage(string? compatibilityMessage)
+    {
+        if (string.IsNullOrWhiteSpace(compatibilityMessage))
+            return string.Empty;
+
+        return $" (compatibility: {compatibilityMessage})";
+    }
+
+    private async Task<(bool CanContinue, string? CompatibilityMessage)> ValidateFirefoxCompatibilityAsync(
+        string extensionPath,
+        string extensionName)
+    {
+        var result = _extensionStorageService.GetCompatibilityResult(extensionPath, extensionName);
+        return await ValidateCompatibilityResultAsync(result, extensionName);
+    }
+
+    private async Task<(bool CanContinue, string? CompatibilityMessage)> ValidateCompatibilityResultAsync(
+        ExtensionStorageService.ExtensionCompatibilityResult result,
+        string extensionName)
+    {
+        if (result.IsCompatible)
+            return (true, result.Message);
+
+        if (result.HasWarnings)
+        {
+            var shouldContinue = await ShowCompatibilityWarningAsync(extensionName, result.Message);
+            return (shouldContinue, result.Message);
+        }
+
+        await ShowMessage(
+            "Incompatible Extension",
+            string.IsNullOrWhiteSpace(result.Message)
+                ? $"Extension '{extensionName}' is not compatible with Firefox."
+                : result.Message);
+
+        return (false, result.Message);
+    }
+
+    private ExtensionStorageService.ExtensionCompatibilityResult ValidateArchiveCompatibility(string archivePath, string extensionName)
+    {
+        var tempFolder = Path.Combine(Path.GetTempPath(), "YellowFox", "extension-compatibility-preview", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempFolder);
+
+        try
+        {
+            ZipFile.ExtractToDirectory(archivePath, tempFolder, overwriteFiles: true);
+            return _extensionStorageService.GetCompatibilityResult(tempFolder, extensionName);
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(tempFolder, recursive: true);
+            }
+            catch
+            {
+                // Ignore cleanup issues while checking compatibility.
+            }
+        }
+    }
+
+    private async Task<bool> ShowCompatibilityWarningAsync(string extensionName, string? compatibilityMessage)
+    {
+        var warningText = string.IsNullOrWhiteSpace(compatibilityMessage)
+            ? "This extension appears to be Chrome-only and may not work correctly in Firefox."
+            : compatibilityMessage;
+
+        var box = MessageBoxManager.GetMessageBoxCustom(
+            new MessageBoxCustomParams
+            {
+                ContentTitle = "Potential Firefox Compatibility Issue",
+                ContentMessage = $"Extension '{extensionName}' may include Chrome-only APIs and can fail in Firefox.\n\n{warningText}\n\nContinue adding it anyway?",
+                ButtonDefinitions = new[]
+                {
+                    new ButtonDefinition { Name = "Continue", IsDefault = true },
+                    new ButtonDefinition { Name = "Cancel", IsCancel = true }
+                },
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                MinWidth = 420,
+                MaxWidth = 640,
+                SizeToContent = SizeToContent.WidthAndHeight
+            });
+
+        var result = await box.ShowWindowDialogAsync(GetMainWindow());
+        return result == "Continue";
+    }
+
+    private void CleanupExtensionDirectory(string? extensionPath)
+    {
+        if (string.IsNullOrWhiteSpace(extensionPath) || !Directory.Exists(extensionPath))
+            return;
+
+        try
+        {
+            Directory.Delete(extensionPath, recursive: true);
+        }
+        catch
+        {
+            // Ignore cleanup issues for temporary extension directories.
+        }
     }
 
     private async Task<bool> ShowExtensionEditorAsync(ExtensionEditorViewModel editor)

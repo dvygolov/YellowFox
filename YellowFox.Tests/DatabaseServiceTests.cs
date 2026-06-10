@@ -240,6 +240,53 @@ public class DatabaseServiceTests : IDisposable
         Assert.Empty(database.GetAllBookmarks());
     }
 
+    [Fact]
+    public void UpdateBookmarks_ShouldMoveBookmarkAndPersistSiblingOrder()
+    {
+        var database = new DatabaseService(_testDataDir, disablePooling: true);
+        var folder = new BookmarkItem
+        {
+            Title = "Folder",
+            IsFolder = true
+        };
+        var first = new BookmarkItem
+        {
+            Title = "First",
+            Url = "https://first.example"
+        };
+        var second = new BookmarkItem
+        {
+            Title = "Second",
+            Url = "https://second.example"
+        };
+        database.CreateBookmark(folder);
+        database.CreateBookmark(first);
+        database.CreateBookmark(second);
+
+        var all = database.GetAllBookmarks();
+        var savedFolder = all.Single(item => item.Id == folder.Id);
+        var savedFirst = all.Single(item => item.Id == first.Id);
+        var savedSecond = all.Single(item => item.Id == second.Id);
+        savedFirst.ParentId = savedFolder.Id;
+        savedFirst.SortOrder = 0;
+        savedSecond.SortOrder = 0;
+        savedFolder.SortOrder = 1;
+
+        database.UpdateBookmarks(all);
+        var saved = database.GetAllBookmarks();
+
+        Assert.Contains(saved, item => item.Id == first.Id
+                                      && item.ParentId == folder.Id
+                                      && item.Folder == "Folder"
+                                      && item.SortOrder == 0);
+        Assert.Contains(saved, item => item.Id == second.Id
+                                      && item.ParentId == null
+                                      && item.SortOrder == 0);
+        Assert.Contains(saved, item => item.Id == folder.Id
+                                      && item.ParentId == null
+                                      && item.SortOrder == 1);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_testDataDir))
