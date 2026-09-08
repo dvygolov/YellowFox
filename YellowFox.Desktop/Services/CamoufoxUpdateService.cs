@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
@@ -11,6 +12,7 @@ namespace YellowFox.Desktop.Services;
 public sealed class CamoufoxUpdateService
 {
     private readonly SettingsService _settingsService;
+    public string? LastCheckError { get; private set; }
 
     public CamoufoxUpdateService(SettingsService settingsService)
     {
@@ -55,18 +57,21 @@ public sealed class CamoufoxUpdateService
 
     public async Task<CamoufoxUpdateInfo?> CheckForUpdateAsync(CancellationToken cancellationToken = default)
     {
+        LastCheckError = null;
         try
         {
             var result = await RunInstallerScriptAsync("--check-update", TimeSpan.FromSeconds(60), cancellationToken);
             if (result.ExitCode != 0 || string.IsNullOrWhiteSpace(result.StandardOutput))
-                return null;
+                throw new InvalidOperationException(result.StandardError.Trim());
 
             var options = new JsonSerializerOptions
             {
                 PropertyNameCaseInsensitive = true
             };
             var payload = JsonSerializer.Deserialize<CamoufoxUpdatePayload>(result.StandardOutput.Trim(), options);
-            if (payload?.Latest == null || payload.UpdateAvailable != true)
+            if (payload?.Latest == null || payload.UpdateAvailable == null)
+                throw new InvalidOperationException("Некорректный ответ сервера обновлений.");
+            if (payload.UpdateAvailable != true)
                 return null;
 
             return new CamoufoxUpdateInfo(
@@ -76,20 +81,21 @@ public sealed class CamoufoxUpdateService
                 payload.Latest.Build ?? "unknown",
                 payload.Latest.AssetUpdatedAt);
         }
-        catch
+        catch (Exception ex)
         {
+            LastCheckError = ex.Message;
             return null;
         }
     }
 
-    public async Task<CamoufoxUpdateResult> InstallLatestAsync(CancellationToken cancellationToken = default)
+    public async Task<CamoufoxUpdateResult> InstallLatestAsync(CancellationToken cancellationToken = default,
+        string? version = null, IProgress<string>? progress = null)
     {
         try
         {
-            var result = await RunInstallerScriptAsync("--install-latest", TimeSpan.FromMinutes(30), cancellationToken);
-            var message = string.IsNullOrWhiteSpace(result.StandardOutput)
-                ? result.StandardError
-                : result.StandardOutput;
+            var result = await RunInstallerScriptAsync(version == null ? "--install-latest" : "--install-version",
+                TimeSpan.FromMinutes(30), cancellationToken, version, progress);
+            var message = result.ExitCode == 0 ? result.StandardOutput : result.StandardError;
 
             return result.ExitCode == 0
                 ? CamoufoxUpdateResult.Success(message.Trim())
@@ -169,7 +175,8 @@ public sealed class CamoufoxUpdateService
         }
     }
 
-    private async Task<ScriptResult> RunInstallerScriptAsync(string argument, TimeSpan timeout, CancellationToken cancellationToken)
+    private async Task<ScriptResult> RunInstallerScriptAsync(string argument, TimeSpan timeout, CancellationToken cancellationToken,
+        string? version = null, IProgress<string>? progress = null)
     {
         var pythonDir = ResolvePythonScriptsPath();
         var launcher = ResolvePythonLauncher(pythonDir);
@@ -191,12 +198,14 @@ public sealed class CamoufoxUpdateService
         ApplyLocalPythonEnvironment(process.StartInfo, pythonDir);
         process.StartInfo.ArgumentList.Add(script);
         process.StartInfo.ArgumentList.Add(argument);
+        if (version != null)
+            process.StartInfo.ArgumentList.Add(version);
 
         if (!process.Start())
             throw new InvalidOperationException("Failed to start Camoufox installer.");
 
         var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        var stderrTask = ReadProgressAsync(process.StandardError, progress);
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(timeout);
@@ -205,15 +214,43 @@ public sealed class CamoufoxUpdateService
         {
             await process.WaitForExitAsync(timeoutCts.Token);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
             TryKill(process);
+            await process.WaitForExitAsync(CancellationToken.None);
+            await stderrTask;
+            if (cancellationToken.IsCancellationRequested)
+                throw new OperationCanceledException("Обновление отменено.", cancellationToken);
             throw new TimeoutException("Camoufox update check timed out.");
         }
 
         var stdout = await stdoutTask;
         var stderr = await stderrTask;
         return new ScriptResult(process.ExitCode, stdout, stderr);
+    }
+
+    private static async Task<string> ReadProgressAsync(StreamReader reader, IProgress<string>? progress)
+    {
+        var output = new StringBuilder();
+        while (await reader.ReadLineAsync() is { } line)
+        {
+            output.AppendLine(line);
+            progress?.Report(line);
+        }
+        return output.ToString();
+    }
+
+    public bool HasRunningBrowser()
+    {
+        foreach (var process in Process.GetProcessesByName("camoufox"))
+        {
+            using (process)
+            {
+                try { if (!process.HasExited) return true; }
+                catch (InvalidOperationException) { }
+            }
+        }
+        return false;
     }
 
     private string ResolvePythonScriptsPath()

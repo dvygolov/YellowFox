@@ -30,13 +30,22 @@ This will install:
 - `cloverlabs-camoufox[geoip]` - The anti-detect browser package
 - `playwright` - Browser automation framework
 
-Then install the YellowFox target Camoufox browser build. This pins the active
-browser to `coryking/stable/142.0.1-fork.26` and supports resumable downloads:
+Then install the latest official Windows x64 Camoufox browser build. YellowFox
+checks GitHub on startup and offers updates, with a manual check in the footer.
+Close browser profiles before installing. The updater verifies SHA-256, installs
+the complete release into a separate folder, and atomically switches the active
+version after extraction. Old browser files remain; profile downgrade is not guaranteed.
 
 ```powershell
 python install-camoufox-browser.py
-camoufox version
+python install-camoufox-browser.py --check-installed
 ```
+
+Use `--check-update` for JSON update status and `--install-latest` to update from
+the command line. `--install-version 152.0.4-beta.30` installs an exact official
+release, preventing a newer release published during download from being substituted.
+Automatic downgrades and GitHub prereleases are excluded. A release named `beta.*`
+can still be stable according to GitHub's prerelease flag.
 
 ### 3. Verify Installation
 

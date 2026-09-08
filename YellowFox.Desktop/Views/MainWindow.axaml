@@ -58,19 +58,25 @@
                 BorderBrush="#3E3E42"
                 BorderThickness="0,1,0,0"
                 Padding="12,6">
-            <Grid ColumnDefinitions="Auto,*">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto">
                 <TextBlock Grid.Column="0"
                            Text="{Binding YellowFoxVersionStatus}"
                            Foreground="#9AA1A8"
                            FontSize="12"
                            HorizontalAlignment="Left"
                            VerticalAlignment="Center" />
-                <TextBlock Grid.Column="1"
+                <TextBlock Grid.Column="1" Text="{Binding BrowserUpdateStatus}" Margin="16,0"
+                           ToolTip.Tip="{Binding BrowserUpdateStatus}"
+                           Foreground="#9AA1A8" FontSize="12" VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis" />
+                <TextBlock Grid.Column="2"
                            Text="{Binding CamoufoxVersionStatus}"
                            Foreground="#9AA1A8"
                            FontSize="12"
                            HorizontalAlignment="Right"
                            VerticalAlignment="Center" />
+                <Button Grid.Column="3" Content="Проверить обновления" Margin="12,0,0,0"
+                        FontSize="12" Command="{Binding CheckBrowserUpdateCommand}" />
             </Grid>
         </Border>
 

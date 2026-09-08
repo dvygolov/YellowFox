@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Install the YellowFox target Camoufox browser build with resumable download."""
-
+"""Install official Windows x64 Camoufox releases beside the active browser."""
 from __future__ import annotations
 
-import json
 import argparse
-import shutil
+import contextlib
+import hashlib
+import json
+import os
+import re
+import sys
+import tempfile
 import time
 import zipfile
 from pathlib import Path
@@ -14,217 +18,258 @@ import requests
 from yellowfox_camoufox_home import configure_camoufox_home
 
 configure_camoufox_home()
+from camoufox.multiversion import BROWSERS_DIR, COMPAT_FLAG, CONFIG_FILE
 
-from camoufox.multiversion import BROWSERS_DIR, COMPAT_FLAG, CONFIG_FILE, REPO_CACHE_FILE
-
-
-TARGET_REPO = "coryking"
-TARGET_VERSION = "142.0.1"
-TARGET_BUILD = "fork.26"
-TARGET_FOLDER = f"{TARGET_VERSION}-{TARGET_BUILD}"
-TARGET_ACTIVE = f"browsers/{TARGET_REPO}/{TARGET_FOLDER}"
+TARGET_REPO = "official"
+GITHUB_REPO = "daijro/camoufox"
+FOLDER_PATTERN = re.compile(r"\d+(?:\.\d+)+-[A-Za-z]+\.\d+")
 CHUNK_SIZE = 1024 * 256
-MAX_ATTEMPTS = 30
 
 
-def sync_repo_cache() -> None:
-    from camoufox.__main__ import _do_sync
-
-    _do_sync()
+def progress(message):
+    print(message, file=sys.stderr, flush=True)
 
 
-def load_repo_cache(force_sync: bool = False) -> dict:
-    if force_sync or not REPO_CACHE_FILE.exists():
-        sync_repo_cache()
-
-    return json.loads(REPO_CACHE_FILE.read_text(encoding="utf-8"))
+def read_config():
+    return json.loads(CONFIG_FILE.read_text(encoding="utf-8")) if CONFIG_FILE.exists() else {}
 
 
-def find_repo(cache: dict) -> dict:
-    for repo in cache.get("repos", []):
-        if repo.get("name", "").lower() == TARGET_REPO:
-            return repo
-
-    raise RuntimeError(f"Camoufox repo not found: {TARGET_REPO}")
-
-
-def asset_folder(asset: dict) -> str:
-    return f"{asset.get('version')}-{asset.get('build')}"
-
-
-def load_target_asset() -> dict:
-    if not REPO_CACHE_FILE.exists():
-        sync_repo_cache()
-
-    cache = load_repo_cache()
-    repo = find_repo(cache)
-    for version in repo.get("versions", []):
-        if version.get("version") == TARGET_VERSION and version.get("build") == TARGET_BUILD:
-            return version
-
-    sync_repo_cache()
-    cache = load_repo_cache()
-    repo = find_repo(cache)
-    for version in repo.get("versions", []):
-        if version.get("version") == TARGET_VERSION and version.get("build") == TARGET_BUILD:
-            return version
-
-    raise RuntimeError(f"Camoufox build not found: {TARGET_REPO}/{TARGET_FOLDER}")
+def atomic_json(path, payload):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
-def load_latest_asset() -> dict:
-    cache = load_repo_cache(force_sync=True)
-    repo = find_repo(cache)
-    versions = [
-        item for item in repo.get("versions", [])
-        if item.get("url") and not bool(item.get("is_prerelease", False))
-    ]
-    if not versions:
-        raise RuntimeError(f"No stable Camoufox builds found for repo: {TARGET_REPO}")
-
-    return max(versions, key=lambda item: str(item.get("asset_updated_at") or ""))
+def version_key(folder):
+    if not FOLDER_PATTERN.fullmatch(folder):
+        raise ValueError(f"Invalid browser version: {folder}")
+    version, build = folder.split("-", 1)
+    return tuple(int(n) for n in version.split(".")), int(build.rsplit(".", 1)[1])
 
 
-def current_install_state() -> dict:
-    config = json.loads(CONFIG_FILE.read_text(encoding="utf-8")) if CONFIG_FILE.exists() else {}
+def asset_folder(asset):
+    folder = f"{asset['version']}-{asset['build']}"
+    version_key(folder)
+    return folder
+
+
+def asset_from_release(release):
+    if release.get("draft") or release.get("prerelease"):
+        raise RuntimeError("The release is not marked stable by its publisher.")
+    folder = str(release.get("tag_name", "")).removeprefix("v")
+    version_key(folder)
+    name = f"camoufox-{folder}-win.x86_64.zip"
+    for item in release.get("assets", []):
+        if item.get("name") != name or item.get("state") != "uploaded":
+            continue
+        digest = item.get("digest") or ""
+        if not re.fullmatch(r"sha256:[0-9a-fA-F]{64}", digest):
+            raise RuntimeError("GitHub did not provide a SHA-256 digest for this release.")
+        url = item["browser_download_url"]
+        if not url.startswith(f"https://github.com/{GITHUB_REPO}/releases/download/"):
+            raise RuntimeError("Unexpected browser download URL.")
+        version, build = folder.split("-", 1)
+        return dict(version=version, build=build, url=url, digest=digest.lower(),
+                    asset_size=int(item["size"]), asset_id=item["id"],
+                    asset_updated_at=item["updated_at"], is_prerelease=False)
+    raise RuntimeError("This release has no Windows x64 browser archive yet.")
+
+
+def load_latest_asset(folder=None):
+    if folder:
+        version_key(folder)
+    suffix = "tags/v" + folder if folder else "latest"
+    response = requests.get(f"https://api.github.com/repos/{GITHUB_REPO}/releases/{suffix}",
+                            headers={"Accept": "application/vnd.github+json", "User-Agent": "YellowFox-Updater"},
+                            timeout=(10, 25))
+    response.raise_for_status()
+    return asset_from_release(response.json())
+
+
+def current_install_state():
+    config = read_config()
     active = str(config.get("active_version") or "")
-    pinned = str(config.get("pinned") or "")
-    current_folder = pinned or active.rsplit("/", 1)[-1]
-    version_path = BROWSERS_DIR / TARGET_REPO / current_folder / "version.json" if current_folder else None
+    parts = active.replace("\\", "/").split("/")
+    repo = parts[-2] if len(parts) == 3 and parts[0] == "browsers" else str(config.get("channel") or "").split("/")[0]
+    folder = str(config.get("pinned") or (parts[-1] if len(parts) == 3 else ""))
     metadata = {}
-    if version_path and version_path.exists():
-        metadata = json.loads(version_path.read_text(encoding="utf-8"))
-
-    return {
-        "active_version": active,
-        "folder": current_folder,
-        "version": metadata.get("version"),
-        "build": metadata.get("build"),
-        "asset_updated_at": metadata.get("asset_updated_at"),
-        "installed": bool(version_path and version_path.exists()),
-    }
+    installed = False
+    if re.fullmatch(r"[a-zA-Z0-9_-]+", repo) and FOLDER_PATTERN.fullmatch(folder):
+        directory = BROWSERS_DIR / repo / folder
+        if (directory / "version.json").exists():
+            metadata = json.loads((directory / "version.json").read_text(encoding="utf-8"))
+            installed = (directory / "camoufox.exe").is_file()
+    return dict(active_version=active, repo=repo, folder=folder, installed=installed,
+                version=metadata.get("version"), build=metadata.get("build"),
+                asset_updated_at=metadata.get("asset_updated_at"))
 
 
-def check_update() -> dict:
+def is_update_available(current, latest):
+    if not current["installed"]:
+        return True
+    return version_key(asset_folder(latest)) > version_key(current["folder"])
+
+
+def check_update():
     latest = load_latest_asset()
     current = current_install_state()
-    latest_folder = asset_folder(latest)
-    return {
-        "current": current,
-        "latest": {
-            "folder": latest_folder,
-            "version": latest.get("version"),
-            "build": latest.get("build"),
-            "asset_updated_at": latest.get("asset_updated_at"),
-            "is_prerelease": bool(latest.get("is_prerelease", False)),
-        },
-        "update_available": current.get("folder") != latest_folder,
-    }
+    return dict(current=current, latest={**latest, "folder": asset_folder(latest)},
+                update_available=is_update_available(current, latest))
 
 
-def download_with_resume(url: str, destination: Path, expected_size: int) -> None:
+def download_with_resume(url, destination, expected_size):
     destination.parent.mkdir(parents=True, exist_ok=True)
-
-    for attempt in range(1, MAX_ATTEMPTS + 1):
-        current_size = destination.stat().st_size if destination.exists() else 0
-        if current_size == expected_size:
+    for attempt in range(1, 4):
+        size = destination.stat().st_size if destination.exists() else 0
+        if size == expected_size:
             return
-        if current_size > expected_size:
+        if size > expected_size:
             destination.unlink()
-            current_size = 0
+            size = 0
+        try:
+            with requests.get(url, headers={"Range": f"bytes={size}-"} if size else {},
+                              stream=True, timeout=(15, 60)) as response:
+                response.raise_for_status()
+                if response.status_code == 206:
+                    if not response.headers.get("Content-Range", "").startswith(f"bytes {size}-"):
+                        raise RuntimeError("Invalid download resume range.")
+                elif response.status_code == 200:
+                    size = 0
+                else:
+                    raise RuntimeError(f"Unexpected download status: {response.status_code}")
+                last_percent = -1
+                with destination.open("ab" if size else "wb") as handle:
+                    for chunk in response.iter_content(CHUNK_SIZE):
+                        if not chunk:
+                            continue
+                        handle.write(chunk)
+                        size += len(chunk)
+                        percent = size * 100 // expected_size
+                        if percent != last_percent:
+                            progress(f"Загрузка ядра: {percent}% ({size // 1048576} / {expected_size // 1048576} МБ)")
+                            last_percent = percent
+            if size == expected_size:
+                return
+        except requests.RequestException:
+            if attempt == 3:
+                raise
+        if attempt < 3:
+            progress("Соединение прервано. Повторная загрузка…")
+            time.sleep(2)
+    raise RuntimeError("Incomplete browser download.")
 
-        headers = {"Range": f"bytes={current_size}-"} if current_size else {}
-        print(f"Downloading Camoufox {TARGET_FOLDER}: attempt {attempt}, {current_size}/{expected_size} bytes")
 
-        with requests.get(url, headers=headers, stream=True, timeout=(60, 120)) as response:
-            if current_size and response.status_code == 200:
-                destination.unlink(missing_ok=True)
-                current_size = 0
-            response.raise_for_status()
-
-            mode = "ab" if current_size and response.status_code == 206 else "wb"
-            with destination.open(mode) as file:
-                for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
-                    if chunk:
-                        file.write(chunk)
-
-        downloaded = destination.stat().st_size if destination.exists() else 0
-        if downloaded == expected_size:
-            return
-
-        time.sleep(5)
-
-    downloaded = destination.stat().st_size if destination.exists() else 0
-    raise RuntimeError(f"Download incomplete: {downloaded}/{expected_size} bytes")
+def verify_archive(path, asset):
+    progress("Проверка SHA-256…")
+    with path.open("rb") as handle:
+        actual = "sha256:" + hashlib.file_digest(handle, "sha256").hexdigest()
+    if path.stat().st_size != asset["asset_size"] or actual != asset["digest"]:
+        path.unlink(missing_ok=True)
+        raise RuntimeError("Archive checksum mismatch. Retry the update to download a fresh copy.")
 
 
-def install_zip(zip_path: Path, asset: dict) -> None:
-    folder = asset_folder(asset)
-    active = f"browsers/{TARGET_REPO}/{folder}"
-    install_path = BROWSERS_DIR / TARGET_REPO / folder
-    version_path = install_path / "version.json"
-
-    if version_path.exists():
-        print(f"Camoufox {TARGET_REPO}/stable/{folder} already installed.")
-    else:
-        if install_path.exists():
-            shutil.rmtree(install_path)
-        install_path.mkdir(parents=True, exist_ok=True)
-
-        print(f"Extracting Camoufox to {install_path}")
-        with zipfile.ZipFile(zip_path) as archive:
-            archive.extractall(install_path)
-
-        metadata = {
-            "asset_size": asset.get("asset_size"),
-            "build": asset.get("build"),
-            "version": asset.get("version"),
-            "prerelease": bool(asset.get("is_prerelease", False)),
-            "asset_id": asset.get("asset_id"),
-            "asset_updated_at": asset.get("asset_updated_at"),
-        }
-        version_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-
-    config = json.loads(CONFIG_FILE.read_text(encoding="utf-8")) if CONFIG_FILE.exists() else {}
-    config["active_version"] = active
-    config["channel"] = f"{TARGET_REPO}/stable"
-    config["pinned"] = folder
+@contextlib.contextmanager
+def update_lock():
     CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-    CONFIG_FILE.write_text(json.dumps(config, indent=2), encoding="utf-8")
-    COMPAT_FLAG.touch()
+    with (CONFIG_FILE.parent / "update.lock").open("a+b") as handle:
+        handle.seek(0)
+        if os.name == "nt":
+            import msvcrt
+            if not handle.read(1):
+                handle.write(b"0")
+                handle.flush()
+            handle.seek(0)
+            try:
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError as error:
+                raise RuntimeError("Another browser update is already running.") from error
+        else:
+            import fcntl
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
 
-    print(f"Active Camoufox browser: {TARGET_REPO}/stable/{folder}")
 
-
-def install_asset(asset: dict) -> None:
+def install_zip(zip_path, asset):
     folder = asset_folder(asset)
-    expected_size = int(asset["asset_size"])
-    zip_path = CONFIG_FILE.parent / f"camoufox-{folder}-win.x86_64.zip"
-    version_path = BROWSERS_DIR / TARGET_REPO / folder / "version.json"
-    if not version_path.exists():
-        download_with_resume(asset["url"], zip_path, expected_size)
-    install_zip(zip_path, asset)
+    parent = BROWSERS_DIR / TARGET_REPO
+    target = parent / folder
+    parent.mkdir(parents=True, exist_ok=True)
+    if not (target / "version.json").exists() or not (target / "camoufox.exe").exists():
+        verify_archive(zip_path, asset)
+        progress("Распаковка файлов ядра…")
+        with tempfile.TemporaryDirectory(dir=parent, prefix=".install-") as temporary:
+            staging = Path(temporary) / "browser"
+            staging.mkdir()
+            with zipfile.ZipFile(zip_path) as archive:
+                for member in archive.infolist():
+                    resolved = (staging / member.filename.replace("\\", "/")).resolve()
+                    if not resolved.is_relative_to(staging.resolve()) or (member.external_attr >> 16) & 0o170000 == 0o120000:
+                        raise RuntimeError("Unsafe browser archive entry.")
+                archive.extractall(staging)
+            for required in ("camoufox.exe", "application.ini", "omni.ja"):
+                if not (staging / required).is_file():
+                    raise RuntimeError(f"Incomplete browser archive: {required} missing.")
+            atomic_json(staging / "version.json", {**asset, "prerelease": False})
+            if target.exists():
+                # Preserve an incomplete previous install rather than touching active files.
+                os.replace(target, parent / (folder + ".incomplete-" + str(time.time_ns())))
+            os.replace(staging, target)
+    progress("Переключение на новое ядро…")
+    config = read_config()
+    active = f"browsers/{TARGET_REPO}/{folder}"
+    if config.get("active_version") != active:
+        config["previous_version"] = config.get("active_version")
+    config.update(active_version=active, channel=f"{TARGET_REPO}/stable", pinned=folder)
+    COMPAT_FLAG.touch()
+    atomic_json(CONFIG_FILE, config)
+    return current_install_state()
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Install or update YellowFox Camoufox browser builds.")
-    parser.add_argument("--check-installed", action="store_true", help="Print JSON current installation status and exit.")
-    parser.add_argument("--check-update", action="store_true", help="Print JSON update status and exit.")
-    parser.add_argument("--install-latest", action="store_true", help="Install the latest stable Camoufox build.")
+def install_asset(asset):
+    with update_lock():
+        current = current_install_state()
+        if current["installed"] and version_key(current["folder"]) > version_key(asset_folder(asset)):
+            raise RuntimeError("Refusing to downgrade the active browser.")
+        archive = CONFIG_FILE.parent / f"camoufox-{asset_folder(asset)}-win.x86_64.zip"
+        target = BROWSERS_DIR / TARGET_REPO / asset_folder(asset)
+        if not (target / "version.json").exists() or not (target / "camoufox.exe").exists():
+            download_with_resume(asset["url"], archive, asset["asset_size"])
+        return install_zip(archive, asset)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument("--check-installed", action="store_true")
+    action.add_argument("--check-update", action="store_true")
+    action.add_argument("--install-latest", action="store_true")
+    action.add_argument("--install-version", metavar="VERSION-BUILD")
     args = parser.parse_args()
-
     if args.check_installed:
-        print(json.dumps(current_install_state(), ensure_ascii=False))
-        return 0
-
-    if args.check_update:
-        print(json.dumps(check_update(), ensure_ascii=False))
-        return 0
-
-    asset = load_latest_asset() if args.install_latest else load_target_asset()
-    install_asset(asset)
+        result = current_install_state()
+    elif args.check_update:
+        result = check_update()
+    else:
+        result = install_asset(load_latest_asset(args.install_version))
+    print(json.dumps(result, ensure_ascii=False), flush=True)
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except Exception as error:
+        progress(str(error))
+        raise SystemExit(1)

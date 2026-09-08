@@ -304,6 +304,19 @@ class BrokerState:
                 "title": None,
             }
 
+    def status(self):
+        try:
+            browser_connected = bool(self.browser.is_connected())
+        except Exception:
+            browser_connected = False
+
+        return {
+            "serverProcessPid": self.server_process.pid,
+            "playwrightServerRunning": self.server_process.poll() is None,
+            "playwrightServerReturnCode": self.server_process.returncode,
+            "browserConnected": browser_connected,
+        }
+
     def close(self):
         with self.lock:
             if self.closed:
@@ -354,6 +367,9 @@ def make_handler(state):
                     return
                 if parsed.path == "/health":
                     self._send(200, {"ok": True})
+                    return
+                if parsed.path == "/status":
+                    self._send(200, {"ok": True, **state.status()})
                     return
                 self._send(404, {"ok": False, "error": "not_found"})
             except Exception as exc:

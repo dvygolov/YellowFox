@@ -1,5 +1,35 @@
 const playwright = require(process.cwd());
 
+let lastPageErrorLocationBugLogAt = 0;
+let suppressedPageErrorLocationBugCount = 0;
+
+function isKnownPageErrorLocationBug(error) {
+  const message = String(error && error.message || "");
+  const stack = String(error && error.stack || "");
+  return message.includes("Cannot read properties of undefined (reading 'url')") &&
+    stack.includes("FFBrowserContext") &&
+    stack.includes("coreBundle.js:49624");
+}
+
+process.on("uncaughtException", (error) => {
+  if (isKnownPageErrorLocationBug(error)) {
+    suppressedPageErrorLocationBugCount += 1;
+    const now = Date.now();
+    if (now - lastPageErrorLocationBugLogAt > 30000) {
+      console.error(
+        `YellowFox suppressed Playwright pageError.location crash. Count=${suppressedPageErrorLocationBugCount}`,
+        error.stack || error.message || error
+      );
+      lastPageErrorLocationBugLogAt = now;
+      suppressedPageErrorLocationBugCount = 0;
+    }
+    return;
+  }
+
+  console.error("Unhandled exception in YellowFox persistent server:", error && error.stack || error);
+  process.exit(1);
+});
+
 function collectData() {
   return new Promise((resolve) => {
     let data = "";

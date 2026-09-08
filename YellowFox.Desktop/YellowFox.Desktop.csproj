@@ -26,8 +26,8 @@
     <None Update="settings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Update="..\python\**\*">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    <None Include="..\python\*.py;..\python\*.js;..\python\*.txt;..\python\*.bat;..\python\*.sh">
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
       <Link>python\%(RecursiveDir)%(Filename)%(Extension)</Link>
     </None>
     <None Include="..\extensions\**\*">

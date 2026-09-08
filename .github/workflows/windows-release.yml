@@ -74,7 +74,8 @@ jobs:
 
           First run requirements:
           - Install Python dependencies if the bundled publish does not include a local Python runtime.
-          - Run python/install-camoufox-browser.py to install the pinned Camoufox/Clover browser build.
+          - YellowFox checks for official Camoufox core updates at startup.
+          - Run python/install-camoufox-browser.py to install the latest official Windows x64 core manually.
           "@ | Set-Content -Path artifacts/publish/README-RELEASE.txt -Encoding UTF8
 
       - name: Package

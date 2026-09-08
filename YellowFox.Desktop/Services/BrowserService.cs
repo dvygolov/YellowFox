@@ -187,9 +187,9 @@ public class BrowserService
                     : string.Empty;
                 await WriteLogAsync(logPath, "INFO", $"Proxy validation passed. IP={validation.ExternalIp ?? "unknown"}{countryLog}, latency={validation.LatencyMs}ms.");
                 browserProxy = proxy;
-                if (IsAuthenticatedSocks5(proxy))
+                if (RequiresLocalProxyAuthBridge(proxy))
                 {
-                    var bridge = await StartSocks5AuthBridgeAsync(proxy, logPath);
+                    var bridge = await StartProxyAuthBridgeAsync(proxy, logPath);
                     proxyBridgeProcess = bridge.Process;
                     proxyBridgeConfigPath = bridge.ConfigPath;
                     browserProxy = bridge.BrowserProxy;
@@ -270,10 +270,12 @@ public class BrowserService
             var endpoints = await WaitForBrokerEndpointsAsync(process, TimeSpan.FromSeconds(120));
             await WriteLogAsync(logPath, "INFO", $"Received Playwright endpoint: {endpoints.PlaywrightEndpoint}");
             await WriteLogAsync(logPath, "INFO", $"Received broker endpoint: {endpoints.BrokerUrl}");
+            _ = DrainProcessOutputAsync(process.StandardOutput, logPath, "Broker stdout");
+            _ = DrainProcessOutputAsync(process.StandardError, logPath, "Broker stderr");
             var browserProcessIds = GetCamoufoxProcessIds()
                 .Except(existingCamoufoxPids)
                 .ToList();
-            await WriteLogAsync(logPath, "INFO", $"Tracked Camoufox process count: {browserProcessIds.Count}.");
+            await WriteLogAsync(logPath, "INFO", $"Tracked Camoufox process count: {browserProcessIds.Count}. PIDs={string.Join(",", browserProcessIds)}");
 
             var instance = new RunningInstance
             {
@@ -305,7 +307,7 @@ public class BrowserService
 
             await RestoreTabsAsync(profileId, instance, logPath);
             _ = RunTabsSnapshotLoopAsync(profileId, instance, logPath);
-            _ = RunBrowserWindowMonitorAsync(profileId, instance, logPath);
+            _ = RunBrowserProcessMonitorAsync(profileId, instance, logPath);
 
             await WriteLogAsync(logPath, "INFO", $"Profile '{profile.Name}' started successfully.");
             NotifyProfileRunningStateChanged(profileId, true);
@@ -2664,13 +2666,17 @@ public class BrowserService
         return result;
     }
 
-    private async Task<ProxyBridgeLaunch> StartSocks5AuthBridgeAsync(ModelProxy proxy, string logPath)
+    private async Task<ProxyBridgeLaunch> StartProxyAuthBridgeAsync(ModelProxy proxy, string logPath)
     {
         var pythonDir = ResolvePythonScriptsPath();
         var launcher = ResolvePythonLauncher(pythonDir);
-        var bridgeScript = Path.Combine(pythonDir, "socks5-auth-bridge.py");
+        var proxyType = NormalizeProxyScheme(proxy.Type);
+        var bridgeScriptName = string.Equals(proxyType, "socks5", StringComparison.OrdinalIgnoreCase)
+            ? "socks5-auth-bridge.py"
+            : "http-auth-bridge.py";
+        var bridgeScript = Path.Combine(pythonDir, bridgeScriptName);
         if (!File.Exists(bridgeScript))
-            throw new FileNotFoundException($"SOCKS5 bridge script not found: {bridgeScript}");
+            throw new FileNotFoundException($"Proxy auth bridge script not found: {bridgeScript}");
 
         var configPath = Path.GetTempFileName();
         var configJson = JsonSerializer.Serialize(new
@@ -2694,26 +2700,26 @@ public class BrowserService
 
         var process = Process.Start(startInfo);
         if (process == null)
-            throw new InvalidOperationException("Failed to start SOCKS5 auth bridge.");
+            throw new InvalidOperationException("Failed to start proxy auth bridge.");
 
         try
         {
             var lineTask = process.StandardOutput.ReadLineAsync();
             var completed = await Task.WhenAny(lineTask, Task.Delay(TimeSpan.FromSeconds(5)));
             if (completed != lineTask)
-                throw new InvalidOperationException("SOCKS5 auth bridge did not report a local endpoint.");
+                throw new InvalidOperationException("Proxy auth bridge did not report a local endpoint.");
 
             var endpoint = await lineTask;
             if (string.IsNullOrWhiteSpace(endpoint) ||
                 !Uri.TryCreate(endpoint.Trim(), UriKind.Absolute, out var uri) ||
-                !string.Equals(uri.Scheme, "socks5", StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(uri.Scheme, proxyType, StringComparison.OrdinalIgnoreCase) ||
                 uri.Port <= 0)
             {
-                throw new InvalidOperationException("SOCKS5 auth bridge returned an invalid local endpoint.");
+                throw new InvalidOperationException("Proxy auth bridge returned an invalid local endpoint.");
             }
 
             var port = uri.Port;
-            await WriteLogAsync(logPath, "INFO", $"Started SOCKS5 auth bridge on 127.0.0.1:{port}.");
+            await WriteLogAsync(logPath, "INFO", $"Started {proxyType.ToUpperInvariant()} auth bridge on 127.0.0.1:{port}.");
             return new ProxyBridgeLaunch
             {
                 Process = process,
@@ -2721,7 +2727,7 @@ public class BrowserService
                 BrowserProxy = new ModelProxy
                 {
                     Name = $"{proxy.Name} local bridge",
-                    Type = "socks5",
+                    Type = proxyType,
                     Host = "127.0.0.1",
                     Port = port,
                     IsEnabled = true
@@ -2735,10 +2741,10 @@ public class BrowserService
         }
     }
 
-    private static bool IsAuthenticatedSocks5(ModelProxy proxy)
+    internal static bool RequiresLocalProxyAuthBridge(ModelProxy proxy)
     {
-        return string.Equals(ModelProxy.NormalizeType(proxy.Type), "socks5", StringComparison.OrdinalIgnoreCase) &&
-               (!string.IsNullOrWhiteSpace(proxy.Username) || !string.IsNullOrWhiteSpace(proxy.Password));
+        _ = ModelProxy.NormalizeType(proxy.Type);
+        return !string.IsNullOrWhiteSpace(proxy.Username) || !string.IsNullOrWhiteSpace(proxy.Password);
     }
 
     private async Task<CamoufoxContextFingerprint> GenerateCamoufoxContextFingerprintAsync(Profile profile, ModelProxy? proxy, string logPath)
@@ -2997,12 +3003,12 @@ public class BrowserService
                 {
                     process.Kill(entireProcessTree: true);
                     await process.WaitForExitAsync();
-                    await WriteLogAsync(logPath, "INFO", "Stopped SOCKS5 auth bridge.");
+                    await WriteLogAsync(logPath, "INFO", "Stopped proxy auth bridge.");
                 }
             }
             catch (Exception ex)
             {
-                await WriteLogAsync(logPath, "WARN", $"SOCKS5 auth bridge stop warning: {ex.Message}");
+                await WriteLogAsync(logPath, "WARN", $"Proxy auth bridge stop warning: {ex.Message}");
             }
         }
 
@@ -3248,7 +3254,55 @@ public class BrowserService
         }
     }
 
-    private async Task RunBrowserWindowMonitorAsync(string profileId, RunningInstance instance, string logPath)
+    private async Task HandleBrowserRuntimeLostAsync(string profileId)
+    {
+        RunningInstance? instance;
+        lock (_runningInstancesLock)
+        {
+            if (!_runningInstances.TryGetValue(profileId, out instance) || instance == null)
+                return;
+
+            _runningInstances.Remove(profileId);
+        }
+
+        if (instance.IsStopping)
+            return;
+
+        var profile = _databaseService.GetProfile(profileId);
+        var profileName = profile?.Name ?? profileId;
+        var logPath = _databaseService.GetProfileLogFilePath(profileId, profileName);
+
+        try
+        {
+            instance.IsStopping = true;
+            instance.SnapshotCts?.Cancel();
+            await TryPersistTabsSnapshotAsync(profileId, instance, logPath, writeInfoLog: true);
+            instance.Playwright?.Dispose();
+            if (instance.Process != null)
+            {
+                var exited = await WaitForProcessExitAsync(instance.Process, TimeSpan.FromSeconds(3));
+                if (!exited)
+                    await KillProcessTreeAsync(instance.Process.Id, logPath);
+            }
+            await KillTrackedBrowserProcessesAsync(instance.BrowserProcessIds, logPath);
+            await StopProxyBridgeAsync(instance.ProxyBridgeProcess, instance.ProxyBridgeConfigPath, logPath);
+
+            if (File.Exists(instance.TempConfigPath))
+                File.Delete(instance.TempConfigPath);
+
+            await WriteLogAsync(logPath, "INFO", $"Browser runtime disappeared for profile '{profileName}'. Marked as stopped.");
+        }
+        catch (Exception ex)
+        {
+            await WriteLogAsync(logPath, "WARN", $"Browser-runtime-lost handling warning: {ex.Message}");
+        }
+        finally
+        {
+            NotifyProfileRunningStateChanged(profileId, false);
+        }
+    }
+
+    private async Task RunBrowserProcessMonitorAsync(string profileId, RunningInstance instance, string logPath)
     {
         var cts = instance.SnapshotCts;
         if (cts == null)
@@ -3257,17 +3311,60 @@ public class BrowserService
         try
         {
             await Task.Delay(instance.WindowMonitorStartupDelay, cts.Token);
-            var missingVisibleWindowCount = 0;
+            var missingBrowserProcessCount = 0;
+            var invisibleWindowLogged = false;
+            var brokerProcessFallbackLogged = false;
+            var exitedPlaywrightServerLogged = false;
             while (!cts.IsCancellationRequested)
             {
-                if (HasVisibleTrackedBrowserWindow(instance))
+                var hasTrackedBrowserProcess = IsAnyTrackedBrowserProcessRunning(instance.BrowserProcessIds);
+                var brokerStatus = await TryGetBrokerStatusAsync(instance);
+                var brokerReportsBrowserAlive = brokerStatus?.BrowserConnected == true;
+
+                if (brokerStatus is { PlaywrightServerRunning: false, BrowserConnected: true } && !exitedPlaywrightServerLogged)
                 {
-                    missingVisibleWindowCount = 0;
+                    await WriteLogAsync(
+                        logPath,
+                        "WARN",
+                        $"Playwright server process is no longer running, but the broker is still connected to the browser. ServerPid={brokerStatus.ServerProcessPid}, ReturnCode={brokerStatus.PlaywrightServerReturnCode?.ToString() ?? "unknown"}.");
+                    exitedPlaywrightServerLogged = true;
                 }
-                else if (++missingVisibleWindowCount >= 3)
+
+                if (hasTrackedBrowserProcess)
                 {
-                    await WriteLogAsync(logPath, "INFO", "No visible Camoufox window detected. Treating profile as stopped.");
-                    await HandleBrowserWindowClosedAsync(profileId);
+                    missingBrowserProcessCount = 0;
+                    if (HasVisibleTrackedBrowserWindow(instance))
+                    {
+                        invisibleWindowLogged = false;
+                    }
+                    else if (!invisibleWindowLogged)
+                    {
+                        await WriteLogAsync(logPath, "INFO", "No visible Camoufox window detected, but the tracked browser process is still running. Keeping profile running.");
+                        invisibleWindowLogged = true;
+                    }
+                }
+                else if (instance.BrowserProcessIds.Count == 0 && brokerReportsBrowserAlive)
+                {
+                    missingBrowserProcessCount = 0;
+                    if (!brokerProcessFallbackLogged)
+                    {
+                        await WriteLogAsync(logPath, "WARN", "No tracked Camoufox process IDs are available. Using broker browser connection as a fallback.");
+                        brokerProcessFallbackLogged = true;
+                    }
+                }
+                else if (instance.BrowserProcessIds.Count == 0 && brokerStatus == null && IsProcessRunning(instance.Process))
+                {
+                    missingBrowserProcessCount = 0;
+                    if (!brokerProcessFallbackLogged)
+                    {
+                        await WriteLogAsync(logPath, "WARN", "No tracked Camoufox process IDs are available. Using broker process liveness as a fallback.");
+                        brokerProcessFallbackLogged = true;
+                    }
+                }
+                else if (++missingBrowserProcessCount >= 3)
+                {
+                    await WriteLogAsync(logPath, "INFO", "Tracked Camoufox process is no longer running. Treating profile as stopped.");
+                    await HandleBrowserRuntimeLostAsync(profileId);
                     return;
                 }
 
@@ -3280,7 +3377,7 @@ public class BrowserService
         }
         catch (Exception ex)
         {
-            await WriteLogAsync(logPath, "WARN", $"Browser window monitor warning: {ex.Message}");
+            await WriteLogAsync(logPath, "WARN", $"Browser process monitor warning: {ex.Message}");
         }
     }
 
@@ -3666,6 +3763,42 @@ public class BrowserService
         return false;
     }
 
+    internal static bool IsAnyTrackedBrowserProcessRunning(IEnumerable<int> processIds)
+    {
+        foreach (var processId in processIds.Distinct())
+        {
+            try
+            {
+                using var process = Process.GetProcessById(processId);
+                process.Refresh();
+                if (!process.HasExited && string.Equals(process.ProcessName, "camoufox", StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            catch
+            {
+                // PID may already be gone or inaccessible.
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsProcessRunning(Process? process)
+    {
+        if (process == null)
+            return false;
+
+        try
+        {
+            process.Refresh();
+            return !process.HasExited;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static bool HasVisibleTopLevelWindowForProcessIds(IReadOnlySet<int> processIds)
     {
         if (processIds.Count == 0)
@@ -3818,6 +3951,30 @@ public class BrowserService
         throw new TimeoutException("Timed out waiting for Camoufox broker and Playwright endpoints.");
     }
 
+    private static async Task DrainProcessOutputAsync(TextReader reader, string logPath, string source)
+    {
+        try
+        {
+            while (await reader.ReadLineAsync() is { } line)
+            {
+                if (!string.IsNullOrWhiteSpace(line))
+                    await WriteLogAsync(logPath, "INFO", $"{source}: {line}");
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+            // Expected when the process is being torn down.
+        }
+        catch (InvalidOperationException)
+        {
+            // The stream can be unavailable after startup failure handling.
+        }
+        catch (Exception ex)
+        {
+            await WriteLogAsync(logPath, "WARN", $"{source} drain warning: {ex.Message}");
+        }
+    }
+
     private sealed record BrokerEndpoints(string BrokerUrl, string PlaywrightEndpoint);
 
     private static async Task<T> BrokerGetAsync<T>(string brokerUrl, string path)
@@ -3829,6 +3986,21 @@ public class BrowserService
             ?? throw new InvalidOperationException("Broker returned an empty response.");
         ThrowIfBrokerError(payload, json);
         return payload;
+    }
+
+    private static async Task<BrokerStatusResponse?> TryGetBrokerStatusAsync(RunningInstance instance)
+    {
+        if (string.IsNullOrWhiteSpace(instance.BrokerUrl))
+            return null;
+
+        try
+        {
+            return await BrokerGetAsync<BrokerStatusResponse>(instance.BrokerUrl, "status");
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static async Task<T> BrokerPostAsync<T>(string brokerUrl, string path, object body)
@@ -3897,6 +4069,14 @@ public class BrowserService
     private sealed class BrokerCookieResponse : BrokerOkResponse
     {
         public int? Count { get; set; }
+    }
+
+    private sealed class BrokerStatusResponse : BrokerOkResponse
+    {
+        public int? ServerProcessPid { get; set; }
+        public bool PlaywrightServerRunning { get; set; }
+        public int? PlaywrightServerReturnCode { get; set; }
+        public bool BrowserConnected { get; set; }
     }
 
     private sealed class BrokerPagesResponse : BrokerOkResponse

@@ -4,7 +4,10 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Data.Core;
 using Avalonia.Data.Core.Plugins;
 using System.Linq;
+using System;
 using System.Threading.Tasks;
+using Avalonia.Layout;
+using Avalonia.Media;
 using Avalonia.Markup.Xaml;
 using MsBox.Avalonia;
 using MsBox.Avalonia.Dto;
@@ -20,6 +23,7 @@ public partial class App : Application
 {
     private BrowserService? _browserService;
     private AgentPipeServer? _agentPipeServer;
+    private static bool _checkingBrowserUpdate;
     
     public override void Initialize()
     {
@@ -52,6 +56,7 @@ public partial class App : Application
                 DataContext = mainWindowViewModel,
             };
             desktop.MainWindow = mainWindow;
+            mainWindowViewModel.BrowserUpdateRequested = () => CheckCamoufoxUpdateAsync(mainWindow, mainWindowViewModel, camoufoxUpdateService);
             mainWindow.Opened += async (_, _) => await CheckCamoufoxEnvironmentAsync(mainWindow, mainWindowViewModel, camoufoxUpdateService);
 
             // Handle application exit
@@ -134,7 +139,7 @@ public partial class App : Application
         if (!shouldInstall)
             return;
 
-        var result = await camoufoxUpdateService.InstallLatestAsync();
+        var result = await InstallBrowserWithProgressAsync(owner, camoufoxUpdateService);
         await ShowMessageAsync(
             owner,
             result.IsSuccess ? "Camoufox установлен" : "Ошибка установки Camoufox",
@@ -151,20 +156,45 @@ public partial class App : Application
         MainWindowViewModel mainWindowViewModel,
         CamoufoxUpdateService camoufoxUpdateService)
     {
+        if (_checkingBrowserUpdate)
+            return;
+        _checkingBrowserUpdate = true;
+        mainWindowViewModel.BrowserUpdateStatus = "Проверка обновлений ядра…";
+        try
+        {
+            await CheckCamoufoxUpdateCoreAsync(owner, mainWindowViewModel, camoufoxUpdateService);
+        }
+        finally
+        {
+            _checkingBrowserUpdate = false;
+        }
+    }
+
+    private static async Task CheckCamoufoxUpdateCoreAsync(Window owner,
+        MainWindowViewModel mainWindowViewModel, CamoufoxUpdateService camoufoxUpdateService)
+    {
         var update = await camoufoxUpdateService.CheckForUpdateAsync();
         if (update == null)
+        {
+            mainWindowViewModel.BrowserUpdateStatus = camoufoxUpdateService.LastCheckError == null
+                ? "Ядро обновлено до последней версии"
+                : "Проверка не удалась: " + camoufoxUpdateService.LastCheckError;
             return;
+        }
+
+        mainWindowViewModel.BrowserUpdateStatus = $"Доступно ядро {update.LatestFolder}";
 
         var shouldUpdate = await ShowYesNoAsync(
             owner,
             "Обновление Camoufox",
             $"Доступна новая версия Camoufox: {update.LatestFolder}.\n" +
             $"Текущая версия: {update.CurrentFolder}.\n\n" +
-            "Обновить сейчас?");
+            "Будут загружены все файлы официального ядра. Старая сборка сохранится.\n" +
+            "Перед установкой закройте профили браузера.\n\nОбновить сейчас?");
         if (!shouldUpdate)
             return;
 
-        var result = await camoufoxUpdateService.InstallLatestAsync();
+        var result = await InstallBrowserWithProgressAsync(owner, camoufoxUpdateService, update.LatestFolder);
         await ShowMessageAsync(
             owner,
             result.IsSuccess ? "Camoufox обновлён" : "Ошибка обновления Camoufox",
@@ -173,7 +203,51 @@ public partial class App : Application
                 : $"Не удалось обновить Camoufox.\n\n{result.Message}");
 
         if (result.IsSuccess)
+        {
+            mainWindowViewModel.BrowserUpdateStatus = "Ядро обновлено";
             await mainWindowViewModel.RefreshCamoufoxVersionAsync();
+        }
+        else
+            mainWindowViewModel.BrowserUpdateStatus = "Обновление не выполнено. Можно повторить проверку.";
+    }
+
+    private static async Task<CamoufoxUpdateResult> InstallBrowserWithProgressAsync(
+        Window owner, CamoufoxUpdateService service, string? version = null)
+    {
+        if (service.HasRunningBrowser())
+            return CamoufoxUpdateResult.Failure("Закройте профили Camoufox и повторите проверку обновлений кнопкой внизу окна.");
+
+        var status = new TextBlock { Text = "Подготовка загрузки…", TextWrapping = TextWrapping.Wrap };
+        var dialog = new Window
+        {
+            Title = "Обновление ядра Camoufox",
+            Width = 500, SizeToContent = SizeToContent.Height, CanResize = false,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Content = new StackPanel
+            {
+                Margin = new Thickness(24), Spacing = 16,
+                Children =
+                {
+                    new TextBlock { Text = version == null ? "Установка Camoufox" : $"Установка {version}", FontSize = 18 },
+                    status,
+                    new ProgressBar { IsIndeterminate = true, Height = 6 },
+                    new TextBlock { Text = "Дождитесь окончания загрузки и распаковки.", TextWrapping = TextWrapping.Wrap }
+                }
+            }
+        };
+        var finished = false;
+        dialog.Closing += (_, e) => e.Cancel = !finished;
+        var shown = dialog.ShowDialog(owner);
+        try
+        {
+            return await service.InstallLatestAsync(version: version, progress: new Progress<string>(line => status.Text = line));
+        }
+        finally
+        {
+            finished = true;
+            dialog.Close();
+            await shown;
+        }
     }
 
     private static async Task<bool> ShowYesNoAsync(Window owner, string title, string message)

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Data.Sqlite;
 using YellowFox.Desktop.Models;
 using YellowFox.Desktop.Services;
@@ -29,6 +30,41 @@ public class BrowserServiceTests : IDisposable
         Assert.False(BrowserService.IsExtensionPathUsable(invalidExtensionDir));
         Assert.False(BrowserService.IsExtensionPathUsable(extensionFile));
         Assert.False(BrowserService.IsExtensionPathUsable(Path.Combine(_testDataDir, "missing")));
+    }
+
+    [Fact]
+    public void IsAnyTrackedBrowserProcessRunning_ShouldIgnoreMissingAndNonCamoufoxPids()
+    {
+        using var currentProcess = Process.GetCurrentProcess();
+
+        Assert.False(BrowserService.IsAnyTrackedBrowserProcessRunning(Array.Empty<int>()));
+        Assert.False(BrowserService.IsAnyTrackedBrowserProcessRunning(new[] { -1, currentProcess.Id }));
+    }
+
+    [Fact]
+    public void RequiresLocalProxyAuthBridge_ShouldOnlyRequireBridgeForAuthenticatedProxies()
+    {
+        Assert.False(BrowserService.RequiresLocalProxyAuthBridge(new Proxy
+        {
+            Type = "http",
+            Host = "127.0.0.1",
+            Port = 8080
+        }));
+        Assert.True(BrowserService.RequiresLocalProxyAuthBridge(new Proxy
+        {
+            Type = "http",
+            Host = "proxy.example",
+            Port = 8000,
+            Username = "user",
+            Password = "password"
+        }));
+        Assert.True(BrowserService.RequiresLocalProxyAuthBridge(new Proxy
+        {
+            Type = "socks5",
+            Host = "proxy.example",
+            Port = 1080,
+            Username = "user"
+        }));
     }
 
     [Fact]

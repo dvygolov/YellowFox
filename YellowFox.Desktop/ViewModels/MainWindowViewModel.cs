@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using System.Threading.Tasks;
+using System;
 using YellowFox.Desktop;
 using YellowFox.Desktop.Services;
 
@@ -20,6 +21,18 @@ public partial class MainWindowViewModel : ViewModelBase
 
     [ObservableProperty]
     private string _camoufoxVersionStatus = "Camoufox: checking...";
+
+    [ObservableProperty]
+    private string _browserUpdateStatus = "";
+
+    public Func<Task>? BrowserUpdateRequested { get; set; }
+
+    [RelayCommand]
+    private async Task CheckBrowserUpdate()
+    {
+        if (BrowserUpdateRequested != null)
+            await BrowserUpdateRequested();
+    }
 
     public string YellowFoxVersionStatus => $"YellowFox: {YellowFoxBuildInfo.Version}";
 
