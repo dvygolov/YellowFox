@@ -98,6 +98,31 @@ public class BrowserServiceTests : IDisposable
     }
 
     [Fact]
+    public void IsProfileRuntimeProcess_ShouldMatchOnlyRuntimeProcessesOfThatProfile()
+    {
+        const string profileDir = @"D:\YellowFox\data\profiles\abc";
+
+        // Win32_Process reports the image name with its extension, System.Diagnostics without it.
+        Assert.True(BrowserService.IsProfileRuntimeProcess(
+            "camoufox.exe",
+            @"D:\repo\python\.camoufox\browsers\official\152.0.4-beta.30\camoufox.exe -no-remote -profile D:\YellowFox\data\profiles\abc -juggler-pipe",
+            profileDir));
+        Assert.True(BrowserService.IsProfileRuntimeProcess(
+            "python.exe",
+            @"D:\repo\python\venv\Scripts\python.exe D:\repo\python\camoufox-broker.py C:\Tmp\tmp1.tmp --profile-dir ""D:\YellowFox\data\profiles\abc""",
+            profileDir));
+        Assert.True(BrowserService.IsProfileRuntimeProcess("node", @"node.exe launchPersistentServer.js D:\YELLOWFOX\DATA\PROFILES\ABC", profileDir));
+
+        // Another profile, another process kind, or an unreadable command line must never match.
+        Assert.False(BrowserService.IsProfileRuntimeProcess("camoufox.exe", @"camoufox.exe -profile D:\YellowFox\data\profiles\other", profileDir));
+        Assert.False(BrowserService.IsProfileRuntimeProcess("notepad.exe", @"notepad.exe D:\YellowFox\data\profiles\abc\notes.txt", profileDir));
+        Assert.False(BrowserService.IsProfileRuntimeProcess("python.exe", @"python.exe D:\repo\python\http-auth-bridge.py C:\Tmp\tmp2.tmp", profileDir));
+        Assert.False(BrowserService.IsProfileRuntimeProcess("cmd.exe", @"cmd.exe /c python.exe C:\Tmp\x.py D:\YellowFox\data\profiles\abc", profileDir));
+        Assert.False(BrowserService.IsProfileRuntimeProcess("python.exe", null, profileDir));
+        Assert.False(BrowserService.IsProfileRuntimeProcess("camoufox.exe", @"camoufox.exe -profile D:\YellowFox\data\profiles\abc", " "));
+    }
+
+    [Fact]
     public void PrepareSharedExtensions_ShouldCopyManagedExtensionsAndPreserveManualOnRemoval()
     {
         var sourceDir = CreateExtensionSource("source-extension", "managed@yellowfox.test", "Managed Extension");

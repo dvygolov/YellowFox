@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Management;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
@@ -203,6 +204,9 @@ public class BrowserService
             WriteProfileIdentityPrefs(userDataDir, profile.Name);
             await WriteLogAsync(logPath, "INFO", $"Prepared profile directory and shared bookmarks: {userDataDir}");
 
+            // A runtime that died without a clean shutdown keeps the profile directory locked.
+            await ClearStaleProfileRuntimeAsync(profileId, logPath);
+
             var extensionSync = PrepareSharedExtensions(userDataDir, _databaseService.GetEnabledExtensions());
             await WriteLogAsync(logPath, "INFO", $"Synced shared extensions. Installed={extensionSync.InstalledCount}, removed={extensionSync.RemovedCount}, skipped={extensionSync.SkippedCount}.");
             var enabledExtensions = Array.Empty<string>();
@@ -258,7 +262,8 @@ public class BrowserService
                 throw new FileNotFoundException($"Camoufox broker script not found: {serverScript}");
 
             var fileName = launcher;
-            var arguments = $"\"{serverScript}\" \"{tempConfigPath}\"";
+            // The profile marker lets later starts recognise leftover runtime processes of this profile.
+            var arguments = $"\"{serverScript}\" \"{tempConfigPath}\" --profile-dir \"{userDataDir}\"";
             existingCamoufoxPids = GetCamoufoxProcessIds();
 
             var startInfo = new ProcessStartInfo
@@ -345,6 +350,7 @@ public class BrowserService
                 .Except(existingCamoufoxPids)
                 .ToList();
             await KillTrackedBrowserProcessesAsync(spawnedCamoufoxPids, logPath);
+            await ClearStaleProfileRuntimeAsync(profileId, logPath);
 
             if (proxyBridgeProcess != null)
                 await StopProxyBridgeAsync(proxyBridgeProcess, proxyBridgeConfigPath, logPath);
@@ -2562,35 +2568,6 @@ public class BrowserService
         };
     }
 
-    private async Task ImportStoredCookiesAsync(string profileId, RunningInstance instance, string logPath)
-    {
-        var path = _databaseService.GetProfileImportedCookiesFilePath(profileId);
-        if (!File.Exists(path))
-            return;
-
-        try
-        {
-            var browser = instance.Browser;
-            if (browser == null)
-                return;
-
-            var context = await GetOrCreateContextAsync(instance, logPath);
-            if (context == null)
-                return;
-
-            var cookies = ParseCookiesForImport(await File.ReadAllTextAsync(path));
-            if (cookies.Count == 0)
-                return;
-
-            await context.AddCookiesAsync(cookies);
-            await WriteLogAsync(logPath, "INFO", $"Imported stored cookies. Count={cookies.Count}.");
-        }
-        catch (Exception ex)
-        {
-            await WriteLogAsync(logPath, "WARN", $"Stored cookie import warning: {ex.Message}");
-        }
-    }
-
     private async Task AddStoredLocalStorageInitScriptAsync(string profileId, RunningInstance instance, string logPath)
     {
         var path = _databaseService.GetProfileImportedLocalStorageFilePath(profileId);
@@ -3893,6 +3870,126 @@ public class BrowserService
 
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+    /// <summary>
+    /// Clears the leftovers of a browser runtime that died without a clean shutdown. Those
+    /// leftovers keep the profile directory busy (processes plus the browser lock file), and
+    /// the next launch then stalls until the broker startup times out. Only call this while the
+    /// profile is not meant to be running.
+    /// </summary>
+    private async Task ClearStaleProfileRuntimeAsync(string profileId, string logPath)
+    {
+        var userDataDir = _databaseService.GetProfileDataDirectory(profileId);
+        var reaped = await ReapProfileRuntimeProcessesAsync(userDataDir, logPath);
+        if (reaped > 0)
+            await WriteLogAsync(logPath, "INFO", $"Reaped {reaped} leftover profile runtime process(es).");
+
+        var lockPath = Path.Combine(userDataDir, "parent.lock");
+        for (var attempt = 1; attempt <= 5 && File.Exists(lockPath); attempt++)
+        {
+            try
+            {
+                File.Delete(lockPath);
+                await WriteLogAsync(logPath, "INFO", "Removed stale browser lock file.");
+                break;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                if (attempt == 5)
+                    await WriteLogAsync(logPath, "WARN", $"Could not remove the browser lock file: {ex.Message}");
+                else
+                    await Task.Delay(200);
+            }
+        }
+    }
+
+    private static async Task<int> ReapProfileRuntimeProcessesAsync(string profileDir, string logPath)
+    {
+        var reaped = 0;
+        foreach (var processId in await FindProfileRuntimeProcessIds(profileDir, logPath))
+        {
+            try
+            {
+                using var process = Process.GetProcessById(processId);
+                if (process.HasExited)
+                    continue;
+
+                var name = process.ProcessName;
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync();
+                reaped++;
+                await WriteLogAsync(logPath, "INFO", $"Killed leftover profile runtime process PID={processId} ({name}).");
+            }
+            catch (ArgumentException)
+            {
+                // PID no longer exists.
+            }
+            catch (InvalidOperationException)
+            {
+                // Process exited while being inspected.
+            }
+            catch (Exception ex)
+            {
+                await WriteLogAsync(logPath, "WARN", $"Leftover profile runtime cleanup warning for PID {processId}: {ex.Message}");
+            }
+        }
+
+        return reaped;
+    }
+
+    private static async Task<List<int>> FindProfileRuntimeProcessIds(string profileDir, string logPath)
+    {
+        var processIds = new List<int>();
+        if (!OperatingSystem.IsWindows() || string.IsNullOrWhiteSpace(profileDir))
+            return processIds;
+
+        try
+        {
+            using var searcher = new ManagementObjectSearcher("SELECT ProcessId, Name, CommandLine FROM Win32_Process");
+            using var results = searcher.Get();
+            foreach (var item in results)
+            {
+                using (item)
+                {
+                    if (!IsProfileRuntimeProcess(item["Name"]?.ToString(), item["CommandLine"]?.ToString(), profileDir))
+                        continue;
+
+                    if (int.TryParse(item["ProcessId"]?.ToString(), out var processId) && processId != Environment.ProcessId)
+                        processIds.Add(processId);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            await WriteLogAsync(logPath, "WARN", $"Could not enumerate leftover profile runtime processes: {ex.Message}");
+        }
+
+        return processIds;
+    }
+
+    /// <summary>
+    /// True for a Camoufox/python/node process that was started for the given profile directory.
+    /// Other profiles, the user's own browser and unrelated processes never match.
+    /// </summary>
+    internal static bool IsProfileRuntimeProcess(string? processName, string? commandLine, string profileDir)
+    {
+        if (string.IsNullOrWhiteSpace(processName) || string.IsNullOrWhiteSpace(commandLine) || string.IsNullOrWhiteSpace(profileDir))
+            return false;
+
+        // Win32_Process reports "python.exe" while System.Diagnostics reports "python".
+        var name = processName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+            ? processName[..^4]
+            : processName;
+
+        var isRuntimeProcess = name.Equals("camoufox", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("python", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("python3", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("node", StringComparison.OrdinalIgnoreCase);
+        if (!isRuntimeProcess)
+            return false;
+
+        return commandLine.Contains(profileDir, StringComparison.OrdinalIgnoreCase);
+    }
 
     private static async Task KillTrackedBrowserProcessesAsync(IReadOnlyCollection<int> processIds, string logPath)
     {

@@ -285,6 +285,14 @@ python -m pip show cloverlabs-camoufox
 python python/install-camoufox-browser.py
 ```
 
+### Profile does not start after the browser died
+
+A browser runtime that died without a clean shutdown leaves its processes and the
+profile lock file behind, and the next start then hangs until the broker startup
+times out. Starting the profile clears those leftovers first (the profile log
+shows `Reaped … leftover profile runtime process(es)` and `Removed stale browser
+lock file.`), so a simple retry is enough.
+
 ### Proxy works in a browser but YellowFox import/open fails
 
 Check the profile log and proxy validator output. Some flows use broker HTTP
