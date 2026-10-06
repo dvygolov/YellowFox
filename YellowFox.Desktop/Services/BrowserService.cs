@@ -211,7 +211,6 @@ public class BrowserService
             await WriteLogAsync(logPath, "INFO", $"Synced shared extensions. Installed={extensionSync.InstalledCount}, removed={extensionSync.RemovedCount}, skipped={extensionSync.SkippedCount}.");
             var enabledExtensions = Array.Empty<string>();
             var contextFingerprint = await GenerateCamoufoxContextFingerprintAsync(profile, browserProxy, logPath);
-            var initialUrls = ReadTabsSnapshotUrls(profileId);
             importedCookiePlan = ResolveImportedCookiePlan(
                 _databaseService.GetProfileImportedCookiesFilePath(profileId),
                 _databaseService.GetProfileImportedCookiesPendingFilePath(profileId));
@@ -306,10 +305,7 @@ public class BrowserService
                 ContextInitScript = contextFingerprint.InitScript,
                 ContextOptionsPath = contextFingerprint.OptionsPath,
                 ContextInitScriptPath = contextFingerprint.InitScriptPath,
-                IsPersistentServer = true,
-                WindowMonitorStartupDelay = initialUrls.Count > 0
-                    ? TimeSpan.FromSeconds(Math.Min(120, Math.Max(60, initialUrls.Count * 20)))
-                    : TimeSpan.FromSeconds(10)
+                IsPersistentServer = true
             };
 
             lock (_runningInstancesLock)
@@ -878,7 +874,6 @@ public class BrowserService
         public string? ContextInitScriptPath { get; set; }
         public bool ContextInitScriptApplied { get; set; }
         public bool IsPersistentServer { get; set; }
-        public TimeSpan WindowMonitorStartupDelay { get; set; } = TimeSpan.FromSeconds(10);
     }
 
     internal sealed record ExtensionSyncResult(int InstalledCount, int RemovedCount, int SkippedCount);
@@ -3345,14 +3340,42 @@ public class BrowserService
 
         try
         {
-            await Task.Delay(instance.WindowMonitorStartupDelay, cts.Token);
             var missingBrowserProcessCount = 0;
+            var windowCloseTracker = new BrowserWindowCloseTracker();
             var invisibleWindowLogged = false;
             var brokerProcessFallbackLogged = false;
             var exitedPlaywrightServerLogged = false;
             while (!cts.IsCancellationRequested)
             {
                 var hasTrackedBrowserProcess = IsAnyTrackedBrowserProcessRunning(instance.BrowserProcessIds);
+                var windowVisible = hasTrackedBrowserProcess && HasVisibleTrackedBrowserWindow(instance);
+
+                if (windowVisible)
+                    invisibleWindowLogged = false;
+
+                // A window that was on screen and then disappeared means the user closed it, even
+                // while the Camoufox process tree keeps winding down. Stopping the profile here
+                // avoids showing it as running for a minute or longer after the close.
+                if (windowCloseTracker.Observe(hasTrackedBrowserProcess, windowVisible))
+                {
+                    await WriteLogAsync(logPath, "INFO", "Camoufox window closed. Treating profile as stopped.");
+                    await HandleBrowserWindowClosedAsync(profileId);
+                    return;
+                }
+
+                if (hasTrackedBrowserProcess && windowCloseTracker.WindowSeen && !windowVisible)
+                {
+                    missingBrowserProcessCount = 0;
+                    if (!invisibleWindowLogged)
+                    {
+                        await WriteLogAsync(logPath, "INFO", "No visible Camoufox window detected, but the tracked browser process is still running. Waiting for the window before stopping the profile.");
+                        invisibleWindowLogged = true;
+                    }
+
+                    await Task.Delay(TimeSpan.FromSeconds(2), cts.Token);
+                    continue;
+                }
+
                 var brokerStatus = await TryGetBrokerStatusAsync(instance);
                 var brokerReportsBrowserAlive = brokerStatus?.BrowserConnected == true;
 
@@ -3368,13 +3391,9 @@ public class BrowserService
                 if (hasTrackedBrowserProcess)
                 {
                     missingBrowserProcessCount = 0;
-                    if (HasVisibleTrackedBrowserWindow(instance))
+                    if (!windowVisible && !invisibleWindowLogged)
                     {
-                        invisibleWindowLogged = false;
-                    }
-                    else if (!invisibleWindowLogged)
-                    {
-                        await WriteLogAsync(logPath, "INFO", "No visible Camoufox window detected, but the tracked browser process is still running. Keeping profile running.");
+                        await WriteLogAsync(logPath, "INFO", "Camoufox window has not appeared yet. Keeping profile running until it shows up.");
                         invisibleWindowLogged = true;
                     }
                 }
@@ -3608,28 +3627,6 @@ public class BrowserService
         catch (Exception ex)
         {
             await WriteLogAsync(logPath, "WARN", $"Tab restore warning: {ex.Message}");
-        }
-    }
-
-    private IReadOnlyList<string> ReadTabsSnapshotUrls(string profileId)
-    {
-        try
-        {
-            var snapshotPath = _databaseService.GetProfileTabsStateFilePath(profileId);
-            if (!File.Exists(snapshotPath))
-                return Array.Empty<string>();
-
-            var snapshot = JsonSerializer.Deserialize<TabsSnapshot>(File.ReadAllText(snapshotPath));
-            var urls = snapshot?.Urls?
-                .Where(IsRestorableUrl)
-                .Select(url => url.Trim())
-                .Where(url => !string.IsNullOrWhiteSpace(url))
-                .ToList();
-            return urls ?? (IReadOnlyList<string>)Array.Empty<string>();
-        }
-        catch
-        {
-            return Array.Empty<string>();
         }
     }
 
@@ -4402,5 +4399,39 @@ public sealed class ProfileRunningStateChangedEventArgs : EventArgs
     {
         ProfileId = profileId;
         IsRunning = isRunning;
+    }
+}
+
+/// <summary>
+/// Tracks whether a Camoufox window that was once on screen has disappeared. It lets the
+/// profile stop as soon as the user closes the window instead of waiting for the whole
+/// process tree to unwind, which can take a minute or hang forever.
+/// </summary>
+internal sealed class BrowserWindowCloseTracker
+{
+    internal const int MissingWindowChecksToStop = 3;
+
+    public bool WindowSeen { get; private set; }
+    public int MissingWindowChecks { get; private set; }
+
+    public bool Observe(bool hasTrackedBrowserProcess, bool windowVisible)
+    {
+        if (windowVisible)
+        {
+            WindowSeen = true;
+            MissingWindowChecks = 0;
+            return false;
+        }
+
+        // A window that has never been seen belongs to a browser that is still starting up,
+        // so it must not stop the profile just because the window is not on screen yet.
+        if (!hasTrackedBrowserProcess || !WindowSeen)
+        {
+            MissingWindowChecks = 0;
+            return false;
+        }
+
+        MissingWindowChecks++;
+        return MissingWindowChecks >= MissingWindowChecksToStop;
     }
 }

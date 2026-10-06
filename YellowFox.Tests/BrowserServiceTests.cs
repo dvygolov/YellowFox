@@ -42,6 +42,58 @@ public class BrowserServiceTests : IDisposable
     }
 
     [Fact]
+    public void BrowserWindowCloseTracker_ShouldNotStopWhileWindowHasNeverBeenSeen()
+    {
+        var tracker = new BrowserWindowCloseTracker();
+
+        for (var i = 0; i < BrowserWindowCloseTracker.MissingWindowChecksToStop + 2; i++)
+            Assert.False(tracker.Observe(hasTrackedBrowserProcess: true, windowVisible: false));
+
+        Assert.False(tracker.WindowSeen);
+    }
+
+    [Fact]
+    public void BrowserWindowCloseTracker_ShouldStopAfterWindowDisappears()
+    {
+        var tracker = new BrowserWindowCloseTracker();
+
+        Assert.False(tracker.Observe(hasTrackedBrowserProcess: true, windowVisible: true));
+
+        for (var i = 1; i < BrowserWindowCloseTracker.MissingWindowChecksToStop; i++)
+            Assert.False(tracker.Observe(hasTrackedBrowserProcess: true, windowVisible: false));
+
+        Assert.True(tracker.Observe(hasTrackedBrowserProcess: true, windowVisible: false));
+    }
+
+    [Fact]
+    public void BrowserWindowCloseTracker_ShouldResetWhenWindowReturns()
+    {
+        var tracker = new BrowserWindowCloseTracker();
+
+        Assert.False(tracker.Observe(hasTrackedBrowserProcess: true, windowVisible: true));
+        Assert.False(tracker.Observe(hasTrackedBrowserProcess: true, windowVisible: false));
+        Assert.False(tracker.Observe(hasTrackedBrowserProcess: true, windowVisible: true));
+
+        for (var i = 1; i < BrowserWindowCloseTracker.MissingWindowChecksToStop; i++)
+            Assert.False(tracker.Observe(hasTrackedBrowserProcess: true, windowVisible: false));
+
+        Assert.True(tracker.Observe(hasTrackedBrowserProcess: true, windowVisible: false));
+    }
+
+    [Fact]
+    public void BrowserWindowCloseTracker_ShouldIgnoreWindowGoneWhenProcessIsAlreadyGone()
+    {
+        var tracker = new BrowserWindowCloseTracker();
+
+        Assert.False(tracker.Observe(hasTrackedBrowserProcess: true, windowVisible: true));
+
+        for (var i = 0; i < BrowserWindowCloseTracker.MissingWindowChecksToStop + 2; i++)
+            Assert.False(tracker.Observe(hasTrackedBrowserProcess: false, windowVisible: false));
+
+        Assert.Equal(0, tracker.MissingWindowChecks);
+    }
+
+    [Fact]
     public void RequiresLocalProxyAuthBridge_ShouldOnlyRequireBridgeForAuthenticatedProxies()
     {
         Assert.False(BrowserService.RequiresLocalProxyAuthBridge(new Proxy
