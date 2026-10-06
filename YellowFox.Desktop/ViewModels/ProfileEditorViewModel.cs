@@ -13,6 +13,7 @@ public partial class ProfileEditorViewModel : ViewModelBase
     private readonly DatabaseService _databaseService;
     private readonly Profile? _existingProfile;
     private readonly bool _isCloneMode;
+    private readonly string? _initialFolderId;
     
     [ObservableProperty]
     private string _name = string.Empty;
@@ -37,11 +38,12 @@ public partial class ProfileEditorViewModel : ViewModelBase
     public bool IsEditMode => _existingProfile != null && !_isCloneMode;
     public string Title => _isCloneMode ? "Clone Profile" : (IsEditMode ? "Edit Profile" : "New Profile");
     
-    public ProfileEditorViewModel(DatabaseService databaseService, Profile? existingProfile, bool isCloneMode = false)
+    public ProfileEditorViewModel(DatabaseService databaseService, Profile? existingProfile, bool isCloneMode = false, string? initialFolderId = null)
     {
         _databaseService = databaseService;
         _existingProfile = existingProfile;
         _isCloneMode = isCloneMode;
+        _initialFolderId = initialFolderId;
 
         LoadProxies(existingProfile?.ProxyId);
         
@@ -107,6 +109,11 @@ public partial class ProfileEditorViewModel : ViewModelBase
                 MaxHeight = SelectedScreenPreset.Height
             }
         };
+
+        if (_existingProfile == null)
+            profile.FolderId = _initialFolderId;
+        else if (_isCloneMode)
+            profile.FolderId = _existingProfile.FolderId;
         
         if (_existingProfile != null && !_isCloneMode)
         {

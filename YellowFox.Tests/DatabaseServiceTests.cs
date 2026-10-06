@@ -287,6 +287,78 @@ public class DatabaseServiceTests : IDisposable
                                       && item.SortOrder == 1);
     }
 
+    [Fact]
+    public void CreateProfileFolder_ShouldPersistHierarchyAndSortOrder()
+    {
+        var database = new DatabaseService(_testDataDir, disablePooling: true);
+        var parent = new ProfileFolder { Name = "Parent" };
+        database.CreateProfileFolder(parent);
+        var child = new ProfileFolder { Name = "Child", ParentId = parent.Id };
+        database.CreateProfileFolder(child);
+
+        var folders = database.GetAllProfileFolders();
+
+        Assert.Contains(folders, folder => folder.Id == parent.Id && folder.ParentId == null);
+        Assert.Contains(folders, folder => folder.Id == child.Id && folder.ParentId == parent.Id);
+    }
+
+    [Fact]
+    public void ProfilePlacement_ShouldPersistFolderAndOrder()
+    {
+        var database = new DatabaseService(_testDataDir, disablePooling: true);
+        var folder = new ProfileFolder { Name = "Folder" };
+        database.CreateProfileFolder(folder);
+        var profile = new Profile { Name = "Placed Profile" };
+        database.CreateProfile(profile);
+
+        database.UpdateProfilePlacement(profile.Id, folder.Id, 3);
+
+        var saved = database.GetProfile(profile.Id);
+        Assert.NotNull(saved);
+        Assert.Equal(folder.Id, saved!.FolderId);
+        Assert.Equal(3, saved.SortOrder);
+    }
+
+    [Fact]
+    public void DeleteProfileFolder_ShouldMoveProfilesToParentFolder()
+    {
+        var database = new DatabaseService(_testDataDir, disablePooling: true);
+        var parent = new ProfileFolder { Name = "Parent" };
+        database.CreateProfileFolder(parent);
+        var child = new ProfileFolder { Name = "Child", ParentId = parent.Id };
+        database.CreateProfileFolder(child);
+        var profile = new Profile { Name = "Nested Profile", FolderId = child.Id };
+        database.CreateProfile(profile);
+
+        database.DeleteProfileFolder(child.Id);
+
+        Assert.DoesNotContain(database.GetAllProfileFolders(), folder => folder.Id == child.Id);
+        var saved = database.GetProfile(profile.Id);
+        Assert.NotNull(saved);
+        Assert.Equal(parent.Id, saved!.FolderId);
+    }
+
+    [Fact]
+    public void DeleteProfileFolder_WithNestedFolders_ShouldDeleteWholeSubtreeAndKeepProfiles()
+    {
+        var database = new DatabaseService(_testDataDir, disablePooling: true);
+        var parent = new ProfileFolder { Name = "Parent" };
+        database.CreateProfileFolder(parent);
+        var child = new ProfileFolder { Name = "Child", ParentId = parent.Id };
+        database.CreateProfileFolder(child);
+        var grandChild = new ProfileFolder { Name = "GrandChild", ParentId = child.Id };
+        database.CreateProfileFolder(grandChild);
+        var profile = new Profile { Name = "Deep Profile", FolderId = grandChild.Id };
+        database.CreateProfile(profile);
+
+        database.DeleteProfileFolder(parent.Id);
+
+        Assert.Empty(database.GetAllProfileFolders());
+        var saved = database.GetProfile(profile.Id);
+        Assert.NotNull(saved);
+        Assert.Null(saved!.FolderId);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_testDataDir))

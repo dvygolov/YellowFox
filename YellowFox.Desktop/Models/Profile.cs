@@ -10,6 +10,8 @@ public class Profile
     public string? Notes { get; set; }
     public string? ProxyId { get; set; }
     public string? DolphinProfileId { get; set; }
+    public string? FolderId { get; set; }
+    public int SortOrder { get; set; }
     public FingerprintConfig FingerprintConfig { get; set; } = new();
 }
 

@@ -60,9 +60,22 @@ public class DatabaseService
                 notes TEXT,
                 proxy_id TEXT,
                 dolphin_profile_id TEXT,
+                folder_id TEXT,
+                sort_order INTEGER NOT NULL DEFAULT 0,
                 fingerprint_config TEXT NOT NULL
             )";
         profilesCommand.ExecuteNonQuery();
+
+        var profileFoldersCommand = connection.CreateCommand();
+        profileFoldersCommand.Transaction = transaction;
+        profileFoldersCommand.CommandText = @"
+            CREATE TABLE IF NOT EXISTS profile_folders (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                parent_id TEXT,
+                sort_order INTEGER NOT NULL DEFAULT 0
+            )";
+        profileFoldersCommand.ExecuteNonQuery();
 
         var proxiesCommand = connection.CreateCommand();
         proxiesCommand.Transaction = transaction;
@@ -119,6 +132,22 @@ public class DatabaseService
             alterTableCommand.ExecuteNonQuery();
         }
 
+        if (!ColumnExists(connection, transaction, "profiles", "folder_id"))
+        {
+            var alterTableCommand = connection.CreateCommand();
+            alterTableCommand.Transaction = transaction;
+            alterTableCommand.CommandText = "ALTER TABLE profiles ADD COLUMN folder_id TEXT";
+            alterTableCommand.ExecuteNonQuery();
+        }
+
+        if (!ColumnExists(connection, transaction, "profiles", "sort_order"))
+        {
+            var alterTableCommand = connection.CreateCommand();
+            alterTableCommand.Transaction = transaction;
+            alterTableCommand.CommandText = "ALTER TABLE profiles ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0";
+            alterTableCommand.ExecuteNonQuery();
+        }
+
         if (!ColumnExists(connection, transaction, "proxies", "dolphin_proxy_id"))
         {
             var alterTableCommand = connection.CreateCommand();
@@ -165,6 +194,16 @@ public class DatabaseService
         indexCommand.Transaction = transaction;
         indexCommand.CommandText = "CREATE INDEX IF NOT EXISTS idx_profiles_proxy_id ON profiles(proxy_id)";
         indexCommand.ExecuteNonQuery();
+
+        var profileFolderIndexCommand = connection.CreateCommand();
+        profileFolderIndexCommand.Transaction = transaction;
+        profileFolderIndexCommand.CommandText = "CREATE INDEX IF NOT EXISTS idx_profiles_folder_id ON profiles(folder_id)";
+        profileFolderIndexCommand.ExecuteNonQuery();
+
+        var profileFoldersParentIndexCommand = connection.CreateCommand();
+        profileFoldersParentIndexCommand.Transaction = transaction;
+        profileFoldersParentIndexCommand.CommandText = "CREATE INDEX IF NOT EXISTS idx_profile_folders_parent_id ON profile_folders(parent_id)";
+        profileFoldersParentIndexCommand.ExecuteNonQuery();
 
         var dolphinProfileIndexCommand = connection.CreateCommand();
         dolphinProfileIndexCommand.Transaction = transaction;
@@ -349,7 +388,7 @@ public class DatabaseService
         connection.Open();
         
         var command = connection.CreateCommand();
-        command.CommandText = "SELECT id, name, notes, proxy_id, dolphin_profile_id, fingerprint_config FROM profiles ORDER BY name";
+        command.CommandText = "SELECT id, name, notes, proxy_id, dolphin_profile_id, folder_id, sort_order, fingerprint_config FROM profiles ORDER BY name";
         
         using var reader = command.ExecuteReader();
         while (reader.Read())
@@ -361,7 +400,9 @@ public class DatabaseService
                 Notes = reader.IsDBNull(2) ? null : TextSanitizer.HtmlToPlainText(reader.GetString(2)),
                 ProxyId = reader.IsDBNull(3) ? null : reader.GetString(3),
                 DolphinProfileId = reader.IsDBNull(4) ? null : reader.GetString(4),
-                FingerprintConfig = JsonSerializer.Deserialize<FingerprintConfig>(reader.GetString(5))
+                FolderId = reader.IsDBNull(5) ? null : reader.GetString(5),
+                SortOrder = reader.IsDBNull(6) ? 0 : reader.GetInt32(6),
+                FingerprintConfig = JsonSerializer.Deserialize<FingerprintConfig>(reader.GetString(7))
                     ?? new FingerprintConfig()
             };
             profiles.Add(profile);
@@ -376,7 +417,7 @@ public class DatabaseService
         connection.Open();
         
         var command = connection.CreateCommand();
-        command.CommandText = "SELECT id, name, notes, proxy_id, dolphin_profile_id, fingerprint_config FROM profiles WHERE id = @id";
+        command.CommandText = "SELECT id, name, notes, proxy_id, dolphin_profile_id, folder_id, sort_order, fingerprint_config FROM profiles WHERE id = @id";
         command.Parameters.AddWithValue("@id", id);
         
         using var reader = command.ExecuteReader();
@@ -389,7 +430,9 @@ public class DatabaseService
                 Notes = reader.IsDBNull(2) ? null : TextSanitizer.HtmlToPlainText(reader.GetString(2)),
                 ProxyId = reader.IsDBNull(3) ? null : reader.GetString(3),
                 DolphinProfileId = reader.IsDBNull(4) ? null : reader.GetString(4),
-                FingerprintConfig = JsonSerializer.Deserialize<FingerprintConfig>(reader.GetString(5))
+                FolderId = reader.IsDBNull(5) ? null : reader.GetString(5),
+                SortOrder = reader.IsDBNull(6) ? 0 : reader.GetInt32(6),
+                FingerprintConfig = JsonSerializer.Deserialize<FingerprintConfig>(reader.GetString(7))
                     ?? new FingerprintConfig()
             };
         }
@@ -404,14 +447,16 @@ public class DatabaseService
         
         var command = connection.CreateCommand();
         command.CommandText = @"
-            INSERT INTO profiles (id, name, notes, proxy_id, dolphin_profile_id, fingerprint_config)
-            VALUES (@id, @name, @notes, @proxy_id, @dolphin_profile_id, @config)";
+            INSERT INTO profiles (id, name, notes, proxy_id, dolphin_profile_id, folder_id, sort_order, fingerprint_config)
+            VALUES (@id, @name, @notes, @proxy_id, @dolphin_profile_id, @folder_id, @sort_order, @config)";
         
         command.Parameters.AddWithValue("@id", profile.Id);
         command.Parameters.AddWithValue("@name", profile.Name);
         command.Parameters.AddWithValue("@notes", ToDbNotesValue(profile.Notes));
         command.Parameters.AddWithValue("@proxy_id", (object?)profile.ProxyId ?? DBNull.Value);
         command.Parameters.AddWithValue("@dolphin_profile_id", (object?)profile.DolphinProfileId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@folder_id", (object?)profile.FolderId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@sort_order", profile.SortOrder);
         command.Parameters.AddWithValue("@config", JsonSerializer.Serialize(profile.FingerprintConfig));
         
         try
@@ -432,7 +477,7 @@ public class DatabaseService
         var command = connection.CreateCommand();
         command.CommandText = @"
             UPDATE profiles
-            SET name = @name, notes = @notes, proxy_id = @proxy_id, dolphin_profile_id = @dolphin_profile_id, fingerprint_config = @config
+            SET name = @name, notes = @notes, proxy_id = @proxy_id, dolphin_profile_id = @dolphin_profile_id, folder_id = @folder_id, sort_order = @sort_order, fingerprint_config = @config
             WHERE id = @id";
         
         command.Parameters.AddWithValue("@id", profile.Id);
@@ -440,6 +485,8 @@ public class DatabaseService
         command.Parameters.AddWithValue("@notes", ToDbNotesValue(profile.Notes));
         command.Parameters.AddWithValue("@proxy_id", (object?)profile.ProxyId ?? DBNull.Value);
         command.Parameters.AddWithValue("@dolphin_profile_id", (object?)profile.DolphinProfileId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@folder_id", (object?)profile.FolderId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@sort_order", profile.SortOrder);
         command.Parameters.AddWithValue("@config", JsonSerializer.Serialize(profile.FingerprintConfig));
         
         try
@@ -463,6 +510,198 @@ public class DatabaseService
         
         command.ExecuteNonQuery();
     }
+
+    public List<ProfileFolder> GetAllProfileFolders()
+    {
+        var folders = new List<ProfileFolder>();
+
+        using var connection = new SqliteConnection(_connectionString);
+        connection.Open();
+
+        var command = connection.CreateCommand();
+        command.CommandText = "SELECT id, name, parent_id, sort_order FROM profile_folders ORDER BY sort_order, name";
+
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            folders.Add(new ProfileFolder
+            {
+                Id = reader.GetString(0),
+                Name = reader.GetString(1),
+                ParentId = reader.IsDBNull(2) ? null : reader.GetString(2),
+                SortOrder = reader.GetInt32(3)
+            });
+        }
+
+        return folders;
+    }
+
+    public void CreateProfileFolder(ProfileFolder folder)
+    {
+        using var connection = new SqliteConnection(_connectionString);
+        connection.Open();
+
+        var command = connection.CreateCommand();
+        command.CommandText = @"
+            INSERT INTO profile_folders (id, name, parent_id, sort_order)
+            VALUES (@id, @name, @parent_id, @sort_order)";
+        command.Parameters.AddWithValue("@id", folder.Id);
+        command.Parameters.AddWithValue("@name", folder.Name.Trim());
+        command.Parameters.AddWithValue("@parent_id", (object?)folder.ParentId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@sort_order", folder.SortOrder > 0 ? folder.SortOrder : NextProfileFolderSortOrder(connection, folder.ParentId));
+        command.ExecuteNonQuery();
+    }
+
+    public void UpdateProfileFolder(ProfileFolder folder)
+    {
+        using var connection = new SqliteConnection(_connectionString);
+        connection.Open();
+
+        var command = connection.CreateCommand();
+        command.CommandText = @"
+            UPDATE profile_folders
+            SET name = @name, parent_id = @parent_id, sort_order = @sort_order
+            WHERE id = @id";
+        command.Parameters.AddWithValue("@id", folder.Id);
+        command.Parameters.AddWithValue("@name", folder.Name.Trim());
+        command.Parameters.AddWithValue("@parent_id", (object?)folder.ParentId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@sort_order", folder.SortOrder);
+        command.ExecuteNonQuery();
+    }
+
+    public void DeleteProfileFolder(string id)
+    {
+        using var connection = new SqliteConnection(_connectionString);
+        connection.Open();
+        using var transaction = connection.BeginTransaction();
+
+        string? parentId;
+        using (var parentCommand = connection.CreateCommand())
+        {
+            parentCommand.Transaction = transaction;
+            parentCommand.CommandText = "SELECT parent_id FROM profile_folders WHERE id = @id";
+            parentCommand.Parameters.AddWithValue("@id", id);
+            var scalar = parentCommand.ExecuteScalar();
+            parentId = scalar is null or DBNull ? null : (string)scalar;
+        }
+
+        var folderIds = new List<string>();
+        CollectProfileFolderIds(connection, transaction, id, folderIds);
+
+        foreach (var folderId in folderIds)
+        {
+            using var moveProfiles = connection.CreateCommand();
+            moveProfiles.Transaction = transaction;
+            moveProfiles.CommandText = "UPDATE profiles SET folder_id = @parent_id WHERE folder_id = @id";
+            moveProfiles.Parameters.AddWithValue("@parent_id", (object?)parentId ?? DBNull.Value);
+            moveProfiles.Parameters.AddWithValue("@id", folderId);
+            moveProfiles.ExecuteNonQuery();
+
+            using var deleteFolder = connection.CreateCommand();
+            deleteFolder.Transaction = transaction;
+            deleteFolder.CommandText = "DELETE FROM profile_folders WHERE id = @id";
+            deleteFolder.Parameters.AddWithValue("@id", folderId);
+            deleteFolder.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
+    }
+
+    public void UpdateProfilePlacement(string profileId, string? folderId, int sortOrder)
+    {
+        using var connection = new SqliteConnection(_connectionString);
+        connection.Open();
+
+        var command = connection.CreateCommand();
+        command.CommandText = "UPDATE profiles SET folder_id = @folder_id, sort_order = @sort_order WHERE id = @id";
+        command.Parameters.AddWithValue("@id", profileId);
+        command.Parameters.AddWithValue("@folder_id", (object?)folderId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@sort_order", sortOrder);
+        command.ExecuteNonQuery();
+    }
+
+    public void UpdateProfilePlacements(IReadOnlyCollection<Profile> profiles)
+    {
+        using var connection = new SqliteConnection(_connectionString);
+        connection.Open();
+        using var transaction = connection.BeginTransaction();
+
+        foreach (var profile in profiles)
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "UPDATE profiles SET folder_id = @folder_id, sort_order = @sort_order WHERE id = @id";
+            command.Parameters.AddWithValue("@id", profile.Id);
+            command.Parameters.AddWithValue("@folder_id", (object?)profile.FolderId ?? DBNull.Value);
+            command.Parameters.AddWithValue("@sort_order", profile.SortOrder);
+            command.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
+    }
+
+    public void UpdateProfileFolderPlacement(string folderId, string? parentId, int sortOrder)
+    {
+        using var connection = new SqliteConnection(_connectionString);
+        connection.Open();
+
+        var command = connection.CreateCommand();
+        command.CommandText = "UPDATE profile_folders SET parent_id = @parent_id, sort_order = @sort_order WHERE id = @id";
+        command.Parameters.AddWithValue("@id", folderId);
+        command.Parameters.AddWithValue("@parent_id", (object?)parentId ?? DBNull.Value);
+        command.Parameters.AddWithValue("@sort_order", sortOrder);
+        command.ExecuteNonQuery();
+    }
+
+    public void UpdateProfileFolderPlacements(IReadOnlyCollection<ProfileFolder> folders)
+    {
+        using var connection = new SqliteConnection(_connectionString);
+        connection.Open();
+        using var transaction = connection.BeginTransaction();
+
+        foreach (var folder in folders)
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "UPDATE profile_folders SET parent_id = @parent_id, sort_order = @sort_order WHERE id = @id";
+            command.Parameters.AddWithValue("@id", folder.Id);
+            command.Parameters.AddWithValue("@parent_id", (object?)folder.ParentId ?? DBNull.Value);
+            command.Parameters.AddWithValue("@sort_order", folder.SortOrder);
+            command.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
+    }
+
+    private static int NextProfileFolderSortOrder(SqliteConnection connection, string? parentId)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = parentId == null
+            ? "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM profile_folders WHERE parent_id IS NULL"
+            : "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM profile_folders WHERE parent_id = @parent_id";
+        if (parentId != null)
+            command.Parameters.AddWithValue("@parent_id", parentId);
+        return Convert.ToInt32(command.ExecuteScalar());
+    }
+
+    private static void CollectProfileFolderIds(SqliteConnection connection, SqliteTransaction transaction, string id, List<string> ids)
+    {
+        ids.Add(id);
+
+        var childIds = new List<string>();
+        using (var children = connection.CreateCommand())
+        {
+            children.Transaction = transaction;
+            children.CommandText = "SELECT id FROM profile_folders WHERE parent_id = @id";
+            children.Parameters.AddWithValue("@id", id);
+            using var reader = children.ExecuteReader();
+            while (reader.Read())
+                childIds.Add(reader.GetString(0));
+        }
+
+        foreach (var childId in childIds)
+            CollectProfileFolderIds(connection, transaction, childId, ids);
+    }
     
     public Profile CloneProfile(string sourceId, string newName)
     {
@@ -477,6 +716,8 @@ public class DatabaseService
             Notes = source.Notes,
             ProxyId = source.ProxyId,
             DolphinProfileId = null,
+            FolderId = source.FolderId,
+            SortOrder = source.SortOrder,
             FingerprintConfig = new FingerprintConfig
             {
                 Os = source.FingerprintConfig.Os,

@@ -1,5 +1,4 @@
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using Avalonia;
@@ -13,26 +12,60 @@ namespace YellowFox.Desktop.Views;
 
 public partial class ProfilesView : UserControl
 {
+    private static readonly DataFormat<string> ProfileNodeDragDataFormat =
+        DataFormat.CreateStringApplicationFormat("yellowfox.profile-node");
+
+    private const double DragStartThreshold = 6;
+
     private ProfileItemViewModel? _selectionAnchor;
+    private ProfileNodeViewModel? _pendingDragNode;
+    private Point _dragStartPoint;
+    private bool _isDragging;
 
     public ProfilesView()
     {
         InitializeComponent();
-        ProfilesDataGrid.AddHandler(
-            InputElement.PointerPressedEvent,
-            ProfilesDataGrid_PointerPressed,
-            RoutingStrategies.Tunnel);
+
+        ProfilesTree.AddHandler(InputElement.PointerPressedEvent, ProfilesTree_PointerPressed, handledEventsToo: true);
+        ProfilesTree.AddHandler(InputElement.PointerMovedEvent, ProfilesTree_PointerMoved, handledEventsToo: true);
+        ProfilesTree.AddHandler(InputElement.PointerReleasedEvent, ProfilesTree_PointerReleased, handledEventsToo: true);
+        ProfilesTree.AddHandler(InputElement.DoubleTappedEvent, ProfilesTree_DoubleTapped, handledEventsToo: true);
+        ProfilesTree.AddHandler(DragDrop.DragOverEvent, ProfilesTree_DragOver);
+        ProfilesTree.AddHandler(DragDrop.DropEvent, ProfilesTree_Drop);
     }
 
-    private void ProfilesDataGrid_PointerPressed(object? sender, PointerPressedEventArgs e)
+    private void ProfilesTree_PointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (TryOpenProfileContextMenu(e))
+        var pointer = e.GetCurrentPoint(ProfilesTree);
+        if (pointer.Properties.IsRightButtonPressed)
+        {
+            TryOpenContextMenu(e);
             return;
+        }
+
+        if (!pointer.Properties.IsLeftButtonPressed)
+            return;
+
+        var pressedNode = FindNode(e.Source);
 
         var checkBox = FindSourceCheckBox(e.Source);
-        if (checkBox?.DataContext is not ProfileItemViewModel current)
-            return;
+        if (checkBox?.DataContext is ProfileItemViewModel current)
+        {
+            HandleCheckBoxSelection(e, checkBox, current);
+        }
 
+        if (IsInteractiveSource(e.Source))
+        {
+            _pendingDragNode = null;
+            return;
+        }
+
+        _pendingDragNode = pressedNode;
+        _dragStartPoint = e.GetPosition(ProfilesTree);
+    }
+
+    private void HandleCheckBoxSelection(PointerPressedEventArgs e, CheckBox checkBox, ProfileItemViewModel current)
+    {
         var isShiftClick = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
         if (!isShiftClick || _selectionAnchor == null)
         {
@@ -45,21 +78,157 @@ public partial class ProfilesView : UserControl
         e.Handled = true;
     }
 
-    private bool TryOpenProfileContextMenu(PointerPressedEventArgs e)
+    private async void ProfilesTree_PointerMoved(object? sender, PointerEventArgs e)
     {
-        var pointer = e.GetCurrentPoint(ProfilesDataGrid);
-        if (!pointer.Properties.IsRightButtonPressed)
+        if (_pendingDragNode == null || _isDragging)
+            return;
+
+        if (!e.GetCurrentPoint(ProfilesTree).Properties.IsLeftButtonPressed)
+        {
+            ClearDragState();
+            return;
+        }
+
+        var currentPoint = e.GetPosition(ProfilesTree);
+        if (Math.Abs(currentPoint.X - _dragStartPoint.X) < DragStartThreshold
+            && Math.Abs(currentPoint.Y - _dragStartPoint.Y) < DragStartThreshold)
+        {
+            return;
+        }
+
+        _isDragging = true;
+        var dragged = _pendingDragNode;
+        var data = new DataTransfer();
+        data.Add(DataTransferItem.Create(ProfileNodeDragDataFormat, dragged is ProfileFolderNodeViewModel folder
+            ? $"F:{folder.Folder.Id}"
+            : $"P:{((ProfileItemViewModel)dragged).Profile.Id}"));
+
+        try
+        {
+            await DragDrop.DoDragDropAsync(e, data, DragDropEffects.Move);
+        }
+        finally
+        {
+            ClearDragState();
+        }
+    }
+
+    private void ProfilesTree_PointerReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        ClearDragState();
+    }
+
+    private void ProfilesTree_DoubleTapped(object? sender, TappedEventArgs e)
+    {
+        if (IsInteractiveSource(e.Source))
+            return;
+
+        if (FindNode(e.Source) is ProfileFolderNodeViewModel folder)
+        {
+            folder.IsExpanded = !folder.IsExpanded;
+            e.Handled = true;
+        }
+    }
+
+    private void ProfilesTree_DragOver(object? sender, DragEventArgs e)
+    {
+        e.DragEffects = DragDropEffects.None;
+
+        if (!TryGetDraggedNode(e, out var dragged))
+        {
+            e.Handled = true;
+            return;
+        }
+
+        var target = FindNode(e.Source);
+        var dropPosition = ResolveDropPosition(e, target);
+
+        if (DataContext is ProfilesViewModel viewModel
+            && viewModel.CanMoveNode(dragged!, target, dropPosition))
+        {
+            e.DragEffects = DragDropEffects.Move;
+        }
+
+        e.Handled = true;
+    }
+
+    private void ProfilesTree_Drop(object? sender, DragEventArgs e)
+    {
+        if (!TryGetDraggedNode(e, out var dragged))
+        {
+            e.Handled = true;
+            return;
+        }
+
+        var target = FindNode(e.Source);
+        var dropPosition = ResolveDropPosition(e, target);
+
+        if (DataContext is ProfilesViewModel viewModel)
+            viewModel.MoveNode(dragged!, target, dropPosition);
+
+        e.Handled = true;
+    }
+
+    private bool TryGetDraggedNode(DragEventArgs e, out ProfileNodeViewModel? dragged)
+    {
+        dragged = null;
+
+        if (DataContext is not ProfilesViewModel viewModel)
             return false;
 
+        if (!e.DataTransfer.Contains(ProfileNodeDragDataFormat))
+            return false;
+
+        var token = e.DataTransfer.TryGetValue(ProfileNodeDragDataFormat);
+        if (string.IsNullOrWhiteSpace(token))
+            return false;
+
+        dragged = viewModel.FindNode(token);
+        return dragged != null;
+    }
+
+    private ProfileDropPosition ResolveDropPosition(DragEventArgs e, ProfileNodeViewModel? target)
+    {
+        if (target == null)
+            return ProfileDropPosition.RootEnd;
+
+        var targetItem = FindTreeViewItem(e.Source);
+        if (targetItem == null)
+            return target.IsFolder ? ProfileDropPosition.Inside : ProfileDropPosition.After;
+
+        var y = e.GetPosition(targetItem).Y;
+        var height = Math.Max(targetItem.Bounds.Height, 1);
+
+        if (target.IsFolder && y >= height * 0.25 && y <= height * 0.75)
+            return ProfileDropPosition.Inside;
+
+        return y < height / 2
+            ? ProfileDropPosition.Before
+            : ProfileDropPosition.After;
+    }
+
+    private bool TryOpenContextMenu(PointerPressedEventArgs e)
+    {
         if (e.Source is not Visual visual)
             return false;
 
-        var row = visual.FindAncestorOfType<DataGridRow>(includeSelf: true);
-        if (row?.DataContext is not ProfileItemViewModel profile)
+        var row = visual.FindAncestorOfType<TreeViewItem>(includeSelf: true);
+        if (row?.DataContext is not ProfileNodeViewModel node)
             return false;
 
-        ProfilesDataGrid.SelectedItem = profile;
-        CreateProfileActionsFlyout(profile).ShowAt(row, showAtPointer: true);
+        ProfilesTree.SelectedItem = node;
+
+        var flyout = node switch
+        {
+            ProfileFolderNodeViewModel folder => CreateFolderActionsFlyout(folder),
+            ProfileItemViewModel profile => CreateProfileActionsFlyout(profile),
+            _ => null
+        };
+
+        if (flyout == null)
+            return false;
+
+        flyout.ShowAt(row, showAtPointer: true);
         e.Handled = true;
         return true;
     }
@@ -81,19 +250,23 @@ public partial class ProfilesView : UserControl
         };
     }
 
-    private static CheckBox? FindSourceCheckBox(object? source)
+    private static MenuFlyout CreateFolderActionsFlyout(ProfileFolderNodeViewModel folder)
     {
-        return source switch
+        return new MenuFlyout
         {
-            CheckBox checkBox => checkBox,
-            Visual visual => visual.FindAncestorOfType<CheckBox>(includeSelf: true),
-            _ => null
+            Placement = PlacementMode.Pointer,
+            Items =
+            {
+                new MenuItem { Header = "Rename", Command = folder.RenameCommand },
+                new MenuItem { Header = "New subfolder", Command = folder.NewSubfolderCommand },
+                new MenuItem { Header = "Delete", Command = folder.DeleteCommand, Foreground = Avalonia.Media.Brushes.Red }
+            }
         };
     }
 
     private void SelectProfileRange(ProfileItemViewModel anchor, ProfileItemViewModel current, bool isSelected)
     {
-        var visibleProfiles = GetVisibleProfiles().ToList();
+        var visibleProfiles = GetVisibleProfiles();
         var anchorIndex = visibleProfiles.IndexOf(anchor);
         var currentIndex = visibleProfiles.IndexOf(current);
 
@@ -109,13 +282,68 @@ public partial class ProfilesView : UserControl
             visibleProfiles[index].IsSelected = isSelected;
     }
 
-    private IEnumerable<ProfileItemViewModel> GetVisibleProfiles()
+    private List<ProfileItemViewModel> GetVisibleProfiles()
     {
-        if (ProfilesDataGrid.CollectionView is IEnumerable collectionView)
-            return collectionView.Cast<object>().OfType<ProfileItemViewModel>();
+        var result = new List<ProfileItemViewModel>();
+        if (DataContext is not ProfilesViewModel viewModel)
+            return result;
 
-        return ProfilesDataGrid.ItemsSource is IEnumerable itemsSource
-            ? itemsSource.Cast<object>().OfType<ProfileItemViewModel>()
-            : Enumerable.Empty<ProfileItemViewModel>();
+        void Walk(IEnumerable<ProfileNodeViewModel> nodes)
+        {
+            foreach (var node in nodes)
+            {
+                switch (node)
+                {
+                    case ProfileItemViewModel profile:
+                        result.Add(profile);
+                        break;
+                    case { IsExpanded: true }:
+                        Walk(node.Children);
+                        break;
+                }
+            }
+        }
+
+        Walk(viewModel.RootNodes);
+        return result;
+    }
+
+    private static CheckBox? FindSourceCheckBox(object? source)
+    {
+        return source switch
+        {
+            CheckBox checkBox => checkBox,
+            Visual visual => visual.FindAncestorOfType<CheckBox>(includeSelf: true),
+            _ => null
+        };
+    }
+
+    private static bool IsInteractiveSource(object? source)
+    {
+        if (source is not Visual visual)
+            return false;
+
+        return visual.FindAncestorOfType<Button>(includeSelf: true) != null
+               || visual.FindAncestorOfType<CheckBox>(includeSelf: true) != null
+               || visual.FindAncestorOfType<TextBox>(includeSelf: true) != null;
+    }
+
+    private static ProfileNodeViewModel? FindNode(object? source)
+    {
+        return FindTreeViewItem(source)?.DataContext as ProfileNodeViewModel;
+    }
+
+    private static TreeViewItem? FindTreeViewItem(object? source)
+    {
+        if (source is TreeViewItem treeViewItem)
+            return treeViewItem;
+
+        return (source as Visual)?.FindAncestorOfType<TreeViewItem>();
+    }
+
+    private void ClearDragState()
+    {
+        _pendingDragNode = null;
+        _isDragging = false;
     }
 }

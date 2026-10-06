@@ -2,7 +2,6 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:YellowFox.Desktop.ViewModels"
              xmlns:converters="using:YellowFox.Desktop.Converters"
-             xmlns:behaviors="using:YellowFox.Desktop.Behaviors"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d" d:DesignWidth="1000" d:DesignHeight="600"
@@ -44,6 +43,23 @@
             <Setter Property="Background" Value="#3A3E40" />
             <Setter Property="BorderBrush" Value="#5A5F63" />
         </Style>
+        <Style Selector="Button.FolderAction">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Foreground" Value="#9AA2AA" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Width" Value="30" />
+            <Setter Property="Height" Value="30" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="FontSize" Value="15" />
+            <Setter Property="FontFamily" Value="Segoe MDL2 Assets" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+        <Style Selector="Button.FolderAction:pointerover">
+            <Setter Property="Background" Value="#3A3E40" />
+            <Setter Property="Foreground" Value="#E0E0E0" />
+        </Style>
         <Style Selector="TextBox.ProfileNotesTextBox">
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="Foreground" Value="#B6BDC4" />
@@ -84,7 +100,7 @@
                 BorderBrush="#3E3E42" 
                 BorderThickness="0,0,0,1"
                 Padding="20,12">
-            <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+            <Grid ColumnDefinitions="Auto,Auto,*,Auto">
                 <!-- Left: New Profile Button -->
                 <Button Grid.Column="0"
                         AutomationProperties.AutomationId="NewProfileButton"
@@ -96,12 +112,26 @@
                         Foreground="White"
                         CornerRadius="6"
                         BorderThickness="0" />
+
+                <!-- Left: New Folder Button -->
+                <Button Grid.Column="1"
+                        AutomationProperties.AutomationId="NewFolderButton"
+                        Content="📁 New Folder" 
+                        Command="{Binding NewFolderCommand}"
+                        Padding="16,8"
+                        Margin="10,0,0,0"
+                        FontWeight="SemiBold"
+                        Background="#357ABD"
+                        Foreground="White"
+                        CornerRadius="6"
+                        BorderThickness="0" />
                 
                 <!-- Center: Search Box -->
-                <TextBox Grid.Column="1"
+                <TextBox Grid.Column="2"
                          AutomationProperties.AutomationId="ProfilesSearchInput"
                          Width="400"
                          Margin="20,0"
+                         HorizontalAlignment="Center"
                          Watermark="🔍 Search profiles..." 
                          Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
                          VerticalContentAlignment="Center"
@@ -112,7 +142,7 @@
                          CornerRadius="6" />
                 
                 <!-- Right: Refresh Button -->
-                <Button Grid.Column="2"
+                <Button Grid.Column="3"
                         AutomationProperties.AutomationId="ProfilesRefreshButton"
                         Content="🔄 Refresh" 
                         Command="{Binding RefreshCommand}"
@@ -120,12 +150,11 @@
                         Background="#3E3E42"
                         Foreground="#CCCCCC"
                         BorderThickness="0"
-                        CornerRadius="6"
-                        Margin="0,0,10,0" />
+                        CornerRadius="6" />
             </Grid>
         </Border>
         
-        <!-- Bottom Action Bar (Bulk Actions) - MUST BE BEFORE ScrollViewer -->
+        <!-- Bottom Action Bar (Bulk Actions) -->
         <Border DockPanel.Dock="Bottom"
                 Background="#2A2D2E"
                 BorderBrush="#3E3E42"
@@ -173,192 +202,222 @@
             </StackPanel>
         </Border>
         
-        <!-- Profiles Table -->
-        <DataGrid x:Name="ProfilesDataGrid"
-                  ItemsSource="{Binding Profiles}"
+        <!-- Profiles Tree -->
+        <TreeView x:Name="ProfilesTree"
                   AutomationProperties.AutomationId="ProfilesList"
-                  AutoGenerateColumns="False"
-                  IsReadOnly="True"
-                  GridLinesVisibility="Horizontal"
+                  ItemsSource="{Binding RootNodes}"
+                  SelectedItem="{Binding SelectedNode, Mode=TwoWay}"
+                  DragDrop.AllowDrop="True"
                   Background="#1E1E1E"
                   Foreground="#CCCCCC"
-                  BorderBrush="#3E3E42"
-                  RowBackground="#252526"
-                  HeadersVisibility="Column"
-                  ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                  ScrollViewer.VerticalScrollBarVisibility="Auto"
-                  CanUserResizeColumns="True"
-                  behaviors:DataGridColumnWidthPersistence.Key="Profiles">
-            <DataGrid.Columns>
-                <DataGridTemplateColumn Header="" Width="36" CanUserSort="False">
-                    <DataGridTemplateColumn.CellTemplate>
-                        <DataTemplate x:DataType="vm:ProfileItemViewModel">
-                            <CheckBox VerticalAlignment="Center"
-                                      HorizontalAlignment="Center"
-                                      IsChecked="{Binding IsSelected}" />
-                        </DataTemplate>
-                    </DataGridTemplateColumn.CellTemplate>
-                </DataGridTemplateColumn>
-
-                <DataGridTemplateColumn Header="" Width="28" CanUserSort="False">
-                    <DataGridTemplateColumn.CellTemplate>
-                        <DataTemplate x:DataType="vm:ProfileItemViewModel">
-                            <Ellipse Width="10"
-                                     Height="10"
-                                     VerticalAlignment="Center"
-                                     HorizontalAlignment="Center"
-                                     Fill="{Binding IsRunning, Converter={StaticResource StatusColorConverter}}" />
-                        </DataTemplate>
-                    </DataGridTemplateColumn.CellTemplate>
-                </DataGridTemplateColumn>
-
-                <DataGridTemplateColumn Header="Name" Width="240" SortMemberPath="Profile.Name">
-                    <DataGridTemplateColumn.CellTemplate>
-                        <DataTemplate x:DataType="vm:ProfileItemViewModel">
-                            <StackPanel Orientation="Horizontal"
+                  Padding="8,6">
+            <TreeView.DataTemplates>
+                <!-- Folder row -->
+                <TreeDataTemplate DataType="vm:ProfileFolderNodeViewModel"
+                                  x:DataType="vm:ProfileFolderNodeViewModel"
+                                  ItemsSource="{Binding Children}">
+                    <Border Background="Transparent" MinHeight="40" Padding="2,1">
+                        <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
+                            <TextBlock Grid.Column="0"
+                                       Text="&#xE8B7;"
+                                       FontFamily="Segoe MDL2 Assets"
+                                       FontSize="17"
+                                       Foreground="#E0B34A"
+                                       VerticalAlignment="Center" />
+                            <StackPanel Grid.Column="1"
+                                        Orientation="Horizontal"
                                         Spacing="10"
                                         VerticalAlignment="Center">
-                                <Grid Width="28"
-                                      Height="24"
-                                      VerticalAlignment="Center"
-                                      ToolTip.Tip="{Binding OsIconTip}">
-                                    <Viewbox Width="{Binding OsIconBoxSize}"
-                                             Height="{Binding OsIconBoxSize}"
-                                             HorizontalAlignment="Center"
-                                             VerticalAlignment="Center"
-                                             Stretch="Uniform">
-                                        <Path Width="24"
-                                              Height="24"
-                                              Stretch="Uniform"
-                                              Data="{Binding OsIconData}"
-                                              Fill="{Binding OsIconFill}" />
-                                    </Viewbox>
-                                </Grid>
-                                <TextBlock Text="{Binding Profile.Name}"
+                                <TextBlock Text="{Binding Name}"
                                            FontSize="14"
                                            FontWeight="SemiBold"
-                                           Foreground="#CCCCCC"
+                                           Foreground="#DDDDDD"
                                            VerticalAlignment="Center"
                                            TextTrimming="CharacterEllipsis" />
-                            </StackPanel>
-                        </DataTemplate>
-                    </DataGridTemplateColumn.CellTemplate>
-                </DataGridTemplateColumn>
-
-                <DataGridTextColumn Header="Proxy"
-                                    Binding="{Binding ProxyDisplay}"
-                                    Width="150" />
-
-                <DataGridTemplateColumn Header="Notes" Width="*" SortMemberPath="NotesDisplay">
-                    <DataGridTemplateColumn.CellTemplate>
-                        <DataTemplate x:DataType="vm:ProfileItemViewModel">
-                            <Border Classes="NotesHost"
-                                    Background="#202326"
-                                    BorderBrush="#30363D"
-                                    BorderThickness="1"
-                                    CornerRadius="5"
-                                    Padding="0"
-                                    Margin="0,4,12,4"
-                                    VerticalAlignment="Center">
-                                <Grid ColumnDefinitions="*,Auto">
-                                    <TextBox Grid.Column="0"
-                                             Classes="ProfileNotesTextBox"
-                                             Text="{Binding NotesDisplay}"
-                                             IsReadOnly="True"
-                                             IsVisible="{Binding IsNotesCollapsed}"
-                                             Height="34"
-                                             TextWrapping="NoWrap"
-                                             AcceptsReturn="False"
-                                             VerticalContentAlignment="Center"
-                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                             ScrollViewer.VerticalScrollBarVisibility="Disabled" />
-
-                                    <TextBox Grid.Column="0"
-                                             Classes="ProfileNotesTextBox"
-                                             Text="{Binding NotesDisplay}"
-                                             IsReadOnly="True"
-                                             IsVisible="{Binding IsNotesExpanded}"
-                                             MinHeight="70"
-                                             MaxHeight="190"
-                                             TextWrapping="Wrap"
-                                             AcceptsReturn="True"
-                                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                             ScrollViewer.VerticalScrollBarVisibility="Auto" />
-
-                                    <Button Grid.Column="1"
-                                            Classes="NotesToggle"
-                                            Content="{Binding NotesToggleIcon}"
-                                            Command="{Binding ToggleNotesCommand}"
-                                            IsVisible="{Binding HasNotes}"
-                                            ToolTip.Tip="{Binding NotesToggleTip}"
-                                            Margin="6,3,6,3"
-                                            VerticalAlignment="Top" />
-                                </Grid>
-                            </Border>
-                        </DataTemplate>
-                    </DataGridTemplateColumn.CellTemplate>
-                </DataGridTemplateColumn>
-
-                <DataGridTemplateColumn Header="Actions" Width="180" CanUserSort="False">
-                    <DataGridTemplateColumn.CellTemplate>
-                        <DataTemplate x:DataType="vm:ProfileItemViewModel">
-                            <StackPanel Orientation="Horizontal"
-                                        Spacing="6"
+                                <Border Background="#34383C"
+                                        CornerRadius="9"
+                                        Padding="7,1"
                                         VerticalAlignment="Center"
-                                        HorizontalAlignment="Left">
-                                <Button Classes="PrimaryAction"
-                                        Command="{Binding StartCommand}"
-                                        IsVisible="{Binding IsStartActionVisible}"
-                                        Background="#2E7D32">
-                                    <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <TextBlock Text="&#xE768;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center" />
-                                        <TextBlock Text="Start" VerticalAlignment="Center" />
-                                    </StackPanel>
-                                </Button>
-
-                                <Button Classes="PrimaryAction"
-                                        Command="{Binding StopCommand}"
-                                        IsVisible="{Binding IsRunningActionVisible}"
-                                        Background="#B71C1C">
-                                    <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <TextBlock Text="&#xE71A;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center" />
-                                        <TextBlock Text="Stop" VerticalAlignment="Center" />
-                                    </StackPanel>
-                                </Button>
-
-                                <Button Classes="PrimaryAction"
-                                        IsVisible="{Binding IsImportingCookies}"
-                                        IsEnabled="False"
-                                        Background="#235A8F">
-                                    <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <TextBlock Text="&#xE895;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center" />
-                                        <TextBlock Text="Importing" VerticalAlignment="Center" />
-                                    </StackPanel>
-                                </Button>
-
-                                <Button Classes="SecondaryAction"
-                                        Content="&#xE712;"
-                                        ToolTip.Tip="More actions">
-                                    <Button.Flyout>
-                                        <MenuFlyout Placement="BottomEdgeAlignedRight">
-                                            <MenuItem Header="Edit" Command="{Binding EditCommand}" />
-                                            <MenuItem Header="Clone" Command="{Binding CloneCommand}" />
-                                            <MenuItem Header="Export cookies" Command="{Binding ExportCookiesCommand}" />
-                                            <MenuItem Header="Import cookies" Command="{Binding ImportCookiesCommand}" />
-                                            <MenuItem Header="Open log" Command="{Binding ViewLogCommand}" />
-                                            <MenuItem Header="Delete" Command="{Binding DeleteCommand}" Foreground="#F44336" />
-                                        </MenuFlyout>
-                                    </Button.Flyout>
-                                </Button>
+                                        IsVisible="{Binding HasProfiles}">
+                                    <TextBlock Text="{Binding ProfileCountDisplay}"
+                                               FontSize="11"
+                                               Foreground="#9AA2AA" />
+                                </Border>
                             </StackPanel>
-                        </DataTemplate>
-                    </DataGridTemplateColumn.CellTemplate>
-                </DataGridTemplateColumn>
-            </DataGrid.Columns>
-        </DataGrid>
+                            <Button Grid.Column="2"
+                                    Classes="FolderAction"
+                                    Content="&#xE712;"
+                                    VerticalAlignment="Center"
+                                    ToolTip.Tip="Folder actions">
+                                <Button.Flyout>
+                                    <MenuFlyout Placement="BottomEdgeAlignedRight">
+                                        <MenuItem Header="Rename" Command="{Binding RenameCommand}" />
+                                        <MenuItem Header="New subfolder" Command="{Binding NewSubfolderCommand}" />
+                                        <MenuItem Header="Delete" Command="{Binding DeleteCommand}" Foreground="#F44336" />
+                                    </MenuFlyout>
+                                </Button.Flyout>
+                            </Button>
+                        </Grid>
+                    </Border>
+                </TreeDataTemplate>
+
+                <!-- Profile row -->
+                <TreeDataTemplate DataType="vm:ProfileItemViewModel"
+                                  x:DataType="vm:ProfileItemViewModel"
+                                  ItemsSource="{Binding Children}">
+                    <Grid ColumnDefinitions="34,26,230,150,*,176"
+                          ColumnSpacing="6"
+                          MinHeight="48"
+                          Margin="0,1">
+                        <CheckBox Grid.Column="0"
+                                  VerticalAlignment="Center"
+                                  HorizontalAlignment="Center"
+                                  IsChecked="{Binding IsSelected}" />
+
+                        <Ellipse Grid.Column="1"
+                                 Width="10"
+                                 Height="10"
+                                 VerticalAlignment="Center"
+                                 HorizontalAlignment="Center"
+                                 Fill="{Binding IsRunning, Converter={StaticResource StatusColorConverter}}" />
+
+                        <StackPanel Grid.Column="2"
+                                    Orientation="Horizontal"
+                                    Spacing="10"
+                                    VerticalAlignment="Center">
+                            <Grid Width="28"
+                                  Height="24"
+                                  VerticalAlignment="Center"
+                                  ToolTip.Tip="{Binding OsIconTip}">
+                                <Viewbox Width="{Binding OsIconBoxSize}"
+                                         Height="{Binding OsIconBoxSize}"
+                                         HorizontalAlignment="Center"
+                                         VerticalAlignment="Center"
+                                         Stretch="Uniform">
+                                    <Path Width="24"
+                                          Height="24"
+                                          Stretch="Uniform"
+                                          Data="{Binding OsIconData}"
+                                          Fill="{Binding OsIconFill}" />
+                                </Viewbox>
+                            </Grid>
+                            <TextBlock Text="{Binding Name}"
+                                       FontSize="14"
+                                       FontWeight="SemiBold"
+                                       Foreground="#CCCCCC"
+                                       VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis" />
+                        </StackPanel>
+
+                        <TextBlock Grid.Column="3"
+                                   Text="{Binding ProxyDisplay}"
+                                   Foreground="#B0B6BC"
+                                   FontSize="13"
+                                   VerticalAlignment="Center"
+                                   TextTrimming="CharacterEllipsis" />
+
+                        <Border Grid.Column="4"
+                                Classes="NotesHost"
+                                Background="#202326"
+                                BorderBrush="#30363D"
+                                BorderThickness="1"
+                                CornerRadius="5"
+                                Padding="0"
+                                Margin="0,4,8,4"
+                                VerticalAlignment="Center">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBox Grid.Column="0"
+                                         Classes="ProfileNotesTextBox"
+                                         Text="{Binding NotesDisplay}"
+                                         IsReadOnly="True"
+                                         IsVisible="{Binding IsNotesCollapsed}"
+                                         Height="34"
+                                         TextWrapping="NoWrap"
+                                         AcceptsReturn="False"
+                                         VerticalContentAlignment="Center"
+                                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                         ScrollViewer.VerticalScrollBarVisibility="Disabled" />
+
+                                <TextBox Grid.Column="0"
+                                         Classes="ProfileNotesTextBox"
+                                         Text="{Binding NotesDisplay}"
+                                         IsReadOnly="True"
+                                         IsVisible="{Binding IsNotesExpanded}"
+                                         MinHeight="70"
+                                         MaxHeight="190"
+                                         TextWrapping="Wrap"
+                                         AcceptsReturn="True"
+                                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                         ScrollViewer.VerticalScrollBarVisibility="Auto" />
+
+                                <Button Grid.Column="1"
+                                        Classes="NotesToggle"
+                                        Content="{Binding NotesToggleIcon}"
+                                        Command="{Binding ToggleNotesCommand}"
+                                        IsVisible="{Binding HasNotes}"
+                                        ToolTip.Tip="{Binding NotesToggleTip}"
+                                        Margin="6,3,6,3"
+                                        VerticalAlignment="Top" />
+                            </Grid>
+                        </Border>
+
+                        <StackPanel Grid.Column="5"
+                                    Orientation="Horizontal"
+                                    Spacing="6"
+                                    VerticalAlignment="Center"
+                                    HorizontalAlignment="Left">
+                            <Button Classes="PrimaryAction"
+                                    Command="{Binding StartCommand}"
+                                    IsVisible="{Binding IsStartActionVisible}"
+                                    Background="#2E7D32">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <TextBlock Text="&#xE768;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center" />
+                                    <TextBlock Text="Start" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+
+                            <Button Classes="PrimaryAction"
+                                    Command="{Binding StopCommand}"
+                                    IsVisible="{Binding IsRunningActionVisible}"
+                                    Background="#B71C1C">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <TextBlock Text="&#xE71A;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center" />
+                                    <TextBlock Text="Stop" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+
+                            <Button Classes="PrimaryAction"
+                                    IsVisible="{Binding IsImportingCookies}"
+                                    IsEnabled="False"
+                                    Background="#235A8F">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <TextBlock Text="&#xE895;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center" />
+                                    <TextBlock Text="Importing" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+
+                            <Button Classes="SecondaryAction"
+                                    Content="&#xE712;"
+                                    ToolTip.Tip="More actions">
+                                <Button.Flyout>
+                                    <MenuFlyout Placement="BottomEdgeAlignedRight">
+                                        <MenuItem Header="Edit" Command="{Binding EditCommand}" />
+                                        <MenuItem Header="Clone" Command="{Binding CloneCommand}" />
+                                        <MenuItem Header="Export cookies" Command="{Binding ExportCookiesCommand}" />
+                                        <MenuItem Header="Import cookies" Command="{Binding ImportCookiesCommand}" />
+                                        <MenuItem Header="Open log" Command="{Binding ViewLogCommand}" />
+                                        <MenuItem Header="Delete" Command="{Binding DeleteCommand}" Foreground="#F44336" />
+                                    </MenuFlyout>
+                                </Button.Flyout>
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+                </TreeDataTemplate>
+            </TreeView.DataTemplates>
+        </TreeView>
         
         <!-- Empty State -->
-        <Panel IsVisible="{Binding !Profiles.Count}">
+        <Panel IsVisible="{Binding !RootNodes.Count}">
             <StackPanel VerticalAlignment="Center" 
                         HorizontalAlignment="Center"
                         Spacing="15">
