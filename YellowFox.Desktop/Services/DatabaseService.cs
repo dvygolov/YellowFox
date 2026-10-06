@@ -526,6 +526,12 @@ public class DatabaseService
         return Path.Combine(profileDir, "imported-cookies.json");
     }
 
+    public string GetProfileImportedCookiesPendingFilePath(string profileId)
+    {
+        var profileDir = GetProfileDataDirectory(profileId);
+        return Path.Combine(profileDir, ".yellowfox-cookies-import-pending");
+    }
+
     public string GetProfileImportedLocalStorageFilePath(string profileId)
     {
         var profileDir = GetProfileDataDirectory(profileId);

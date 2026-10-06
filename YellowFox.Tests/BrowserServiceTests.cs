@@ -68,6 +68,36 @@ public class BrowserServiceTests : IDisposable
     }
 
     [Fact]
+    public void ResolveImportedCookiePlan_ShouldOnlyReplaceTheJarForAPendingImport()
+    {
+        var cookiesPath = Path.Combine(_testDataDir, "imported-cookies.json");
+        var pendingMarkerPath = Path.Combine(_testDataDir, ".yellowfox-cookies-import-pending");
+        File.WriteAllText(cookiesPath, """
+        [{"name":"xs","value":"stale","domain":".facebook.com","path":"/","secure":true}]
+        """);
+
+        // A leftover import file from an earlier session must never overwrite the profile's own cookies.
+        var leftover = BrowserService.ResolveImportedCookiePlan(cookiesPath, pendingMarkerPath);
+        Assert.Single(leftover.Cookies);
+        Assert.Equal("xs", leftover.Cookies[0].Name);
+        Assert.False(leftover.Replace);
+
+        // A fresh import is applied once with replace semantics and is consumed afterwards.
+        BrowserService.MarkImportedCookiesPending(pendingMarkerPath);
+        Assert.True(BrowserService.ResolveImportedCookiePlan(cookiesPath, pendingMarkerPath).Replace);
+        BrowserService.ConsumeImportedCookiesPending(pendingMarkerPath);
+        Assert.False(BrowserService.ResolveImportedCookiePlan(cookiesPath, pendingMarkerPath).Replace);
+
+        BrowserService.ConsumeImportedCookiesPending(pendingMarkerPath);
+        Assert.False(File.Exists(pendingMarkerPath));
+        Assert.True(File.Exists(cookiesPath));
+
+        var missing = BrowserService.ResolveImportedCookiePlan(Path.Combine(_testDataDir, "absent.json"), pendingMarkerPath);
+        Assert.Empty(missing.Cookies);
+        Assert.False(missing.Replace);
+    }
+
+    [Fact]
     public void PrepareSharedExtensions_ShouldCopyManagedExtensionsAndPreserveManualOnRemoval()
     {
         var sourceDir = CreateExtensionSource("source-extension", "managed@yellowfox.test", "Managed Extension");

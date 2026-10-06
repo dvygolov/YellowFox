@@ -152,6 +152,12 @@ When a profile is not running, imported cookies are saved and applied on the
 next profile start. When a profile is already running, YellowFox applies cookies
 to the live browser context through the broker.
 
+A stored import is applied only once: the start after an import replaces cookies
+the profile already holds, and every later start only fills in cookies the
+profile is missing. That way a leftover `imported-cookies.json` from an earlier
+session can never overwrite the profile's own (newer) cookies and log the
+session out.
+
 ### Extensions
 
 Extensions can be imported from:

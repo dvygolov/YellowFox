@@ -95,6 +95,21 @@ def unique_download_path(directory, file_name):
     return directory / f"{stem} ({int(time.time())}){suffix}"
 
 
+def cookie_identity(name, domain, path):
+    return (
+        str(name or "").strip(),
+        str(domain or "").strip().lstrip(".").lower(),
+        str(path or "").strip() or "/",
+    )
+
+
+def payload_cookie_identity(item):
+    domain = item.get("domain")
+    if not domain and item.get("url"):
+        domain = urlparse(str(item["url"])).hostname
+    return cookie_identity(item.get("name"), domain, item.get("path"))
+
+
 def recent_native_download(directory, file_name, since):
     safe_name = sanitize_download_filename(file_name)
     candidate = directory / safe_name
@@ -224,7 +239,13 @@ class BrokerState:
                 errors.append(f"{urlparse(url).netloc or url}: {exc}")
         return {"restored": restored, "errors": errors}
 
-    def import_cookies(self, cookies):
+    def import_cookies(self, cookies, only_missing=True):
+        """Add cookies to the live context.
+
+        ``only_missing`` (the default) leaves cookies the profile already has untouched, so a
+        stale imported snapshot can never overwrite a working session. Callers that really mean
+        to replace the jar (an explicit cookie import) pass ``only_missing=False``.
+        """
         payload = []
         for cookie in cookies or []:
             if not isinstance(cookie, dict):
@@ -268,10 +289,42 @@ class BrokerState:
 
             payload.append(item)
 
-        if payload:
-            with self.lock:
-                self.context.add_cookies(payload)
+        if not payload:
+            return 0
+
+        with self.lock:
+            if only_missing:
+                live = self._live_cookie_identities()
+                if live is None:
+                    print(
+                        "YELLOWFOX_IMPORTED_COOKIES_SKIPPED unreadable cookie jar",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    return 0
+                kept = [item for item in payload if payload_cookie_identity(item) not in live]
+                if len(kept) != len(payload):
+                    print(
+                        f"YELLOWFOX_IMPORTED_COOKIES_SKIPPED {len(payload) - len(kept)}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                payload = kept
+
+            if not payload:
+                return 0
+
+            self.context.add_cookies(payload)
         return len(payload)
+
+    def _live_cookie_identities(self):
+        try:
+            return {
+                cookie_identity(cookie.get("name"), cookie.get("domain"), cookie.get("path"))
+                for cookie in self.context.cookies()
+            }
+        except Exception:
+            return None
 
     def click_text(self, text):
         with self.lock:
@@ -388,7 +441,7 @@ def make_handler(state):
                     self._send(200, {"ok": True, **payload})
                     return
                 if parsed.path == "/cookies":
-                    count = state.import_cookies(data.get("cookies") or [])
+                    count = state.import_cookies(data.get("cookies") or [], only_missing=False)
                     self._send(200, {"ok": True, "count": count})
                     return
                 if parsed.path == "/stop":
@@ -522,8 +575,9 @@ def main():
     apply_profile_identity(config, server_process, executable_path, launch_kwargs["user_data_dir"])
     startup_cookies = config.get("cookies") or []
     if startup_cookies:
+        replace_jar = bool(config.get("cookies_replace"))
         try:
-            count = state.import_cookies(startup_cookies)
+            count = state.import_cookies(startup_cookies, only_missing=not replace_jar)
             print(f"YELLOWFOX_IMPORTED_COOKIES {count}", file=sys.stderr, flush=True)
         except Exception as exc:
             print(f"YELLOWFOX_IMPORT_COOKIES_ERROR {exc}", file=sys.stderr, flush=True)

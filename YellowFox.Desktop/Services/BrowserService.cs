@@ -167,6 +167,7 @@ public class BrowserService
         Process? process = null;
         string? tempConfigPath = null;
         var existingCamoufoxPids = new HashSet<int>();
+        var importedCookiePlan = new ImportedCookiePlan();
 
         try
         {
@@ -207,6 +208,14 @@ public class BrowserService
             var enabledExtensions = Array.Empty<string>();
             var contextFingerprint = await GenerateCamoufoxContextFingerprintAsync(profile, browserProxy, logPath);
             var initialUrls = ReadTabsSnapshotUrls(profileId);
+            importedCookiePlan = ResolveImportedCookiePlan(
+                _databaseService.GetProfileImportedCookiesFilePath(profileId),
+                _databaseService.GetProfileImportedCookiesPendingFilePath(profileId));
+            if (importedCookiePlan.Cookies.Count > 0)
+            {
+                await WriteLogAsync(logPath, "INFO",
+                    $"Stored cookie import: count={importedCookiePlan.Cookies.Count}, mode={(importedCookiePlan.Replace ? "replace" : "fill-missing")}.");
+            }
 
             var config = new
             {
@@ -225,7 +234,8 @@ public class BrowserService
                 profile_app_user_model_id = BuildProfileAppUserModelId(profile.Id),
                 profile_icon_path = Path.Combine(userDataDir, "yellowfox-profile.ico"),
                 initial_urls = Array.Empty<string>(),
-                cookies = ToBrokerCookiePayload(ReadImportedCookies(profileId)),
+                cookies = ToBrokerCookiePayload(importedCookiePlan.Cookies),
+                cookies_replace = importedCookiePlan.Replace,
                 addons = enabledExtensions,
                 bookmarks = sharedBookmarks.Select(b => new
                 {
@@ -310,6 +320,19 @@ public class BrowserService
             _ = RunBrowserProcessMonitorAsync(profileId, instance, logPath);
 
             await WriteLogAsync(logPath, "INFO", $"Profile '{profile.Name}' started successfully.");
+            if (importedCookiePlan.Replace)
+            {
+                try
+                {
+                    ConsumeImportedCookiesPending(_databaseService.GetProfileImportedCookiesPendingFilePath(profileId));
+                    await WriteLogAsync(logPath, "INFO", "Stored cookie import marked as applied; later starts keep the profile's own cookies.");
+                }
+                catch (Exception markerEx)
+                {
+                    await WriteLogAsync(logPath, "WARN", $"Could not clear the pending cookie import marker: {markerEx.Message}");
+                }
+            }
+
             NotifyProfileRunningStateChanged(profileId, true);
             return true;
         }
@@ -500,6 +523,7 @@ public class BrowserService
                 });
                 var importedCount = imported.Count ?? cookies.Count;
                 await WriteLogAsync(logPath, "INFO", $"Cookie import completed through broker. Count={importedCount}");
+                ConsumeImportedCookiesPending(_databaseService.GetProfileImportedCookiesPendingFilePath(profileId));
                 return (true, $"Imported {importedCount} cookies.");
             }
 
@@ -511,6 +535,7 @@ public class BrowserService
                 return (false, "No browser context found.");
 
             await context.AddCookiesAsync(cookies);
+            ConsumeImportedCookiesPending(_databaseService.GetProfileImportedCookiesPendingFilePath(profileId));
             await WriteLogAsync(logPath, "INFO", $"Cookie import completed. Count={cookies.Count}");
             return (true, $"Imported {cookies.Count} cookies.");
         }
@@ -896,22 +921,55 @@ public class BrowserService
         var path = _databaseService.GetProfileImportedCookiesFilePath(profileId);
         var json = JsonSerializer.Serialize(cookies, new JsonSerializerOptions { WriteIndented = true });
         File.WriteAllText(path, json);
+        MarkImportedCookiesPending(_databaseService.GetProfileImportedCookiesPendingFilePath(profileId));
     }
 
-    private List<Cookie> ReadImportedCookies(string profileId)
+    internal sealed class ImportedCookiePlan
     {
-        var path = _databaseService.GetProfileImportedCookiesFilePath(profileId);
-        if (!File.Exists(path))
-            return new List<Cookie>();
+        public List<Cookie> Cookies { get; } = new List<Cookie>();
+
+        /// <summary>True when the import must win over cookies the profile already holds.</summary>
+        public bool Replace { get; set; }
+    }
+
+    /// <summary>
+    /// Decides which stored cookies may be pushed into a starting profile. Cookies that were
+    /// imported explicitly (Dolphin migration or a manual import) are applied once with replace
+    /// semantics; every other start only fills cookies the profile is missing, so a stale
+    /// imported snapshot can never overwrite a working session.
+    /// </summary>
+    internal static ImportedCookiePlan ResolveImportedCookiePlan(string cookiesPath, string pendingMarkerPath)
+    {
+        var plan = new ImportedCookiePlan();
+        if (!File.Exists(cookiesPath))
+            return plan;
 
         try
         {
-            return ParseCookiesForImport(File.ReadAllText(path));
+            plan.Cookies.AddRange(ParseCookiesForImport(File.ReadAllText(cookiesPath)));
         }
         catch
         {
-            return new List<Cookie>();
+            return new ImportedCookiePlan();
         }
+
+        plan.Replace = plan.Cookies.Count > 0 && File.Exists(pendingMarkerPath);
+        return plan;
+    }
+
+    internal static void MarkImportedCookiesPending(string pendingMarkerPath)
+    {
+        var directory = Path.GetDirectoryName(pendingMarkerPath);
+        if (!string.IsNullOrWhiteSpace(directory))
+            Directory.CreateDirectory(directory);
+
+        File.WriteAllText(pendingMarkerPath, DateTime.UtcNow.ToString("O"));
+    }
+
+    internal static void ConsumeImportedCookiesPending(string pendingMarkerPath)
+    {
+        if (File.Exists(pendingMarkerPath))
+            File.Delete(pendingMarkerPath);
     }
 
     private static List<object> ToBrokerCookiePayload(IReadOnlyCollection<Cookie> cookies)
