@@ -11,6 +11,11 @@ namespace YellowFox.Desktop.Services;
 
 public sealed class CamoufoxUpdateService
 {
+    // The launcher runs with PYTHONUTF8=1, so its output is always UTF-8.
+    // Without an explicit encoding the child streams are decoded with the console code page,
+    // which turns Russian installer messages into mojibake.
+    private static readonly Encoding PythonOutputEncoding = new UTF8Encoding(false);
+
     private readonly SettingsService _settingsService;
     public string? LastCheckError { get; private set; }
 
@@ -127,7 +132,9 @@ public sealed class CamoufoxUpdateService
                     UseShellExecute = false,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
-                    CreateNoWindow = true
+                    CreateNoWindow = true,
+                    StandardOutputEncoding = PythonOutputEncoding,
+                    StandardErrorEncoding = PythonOutputEncoding
                 }
             };
             ApplyLocalPythonEnvironment(process.StartInfo, pythonDir);
@@ -192,7 +199,9 @@ public sealed class CamoufoxUpdateService
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
-                CreateNoWindow = true
+                CreateNoWindow = true,
+                StandardOutputEncoding = PythonOutputEncoding,
+                StandardErrorEncoding = PythonOutputEncoding
             }
         };
         ApplyLocalPythonEnvironment(process.StartInfo, pythonDir);
