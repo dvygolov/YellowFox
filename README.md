@@ -196,6 +196,9 @@ dotnet run --project YellowFox.Cli -- desktop status --json
 dotnet run --project YellowFox.Cli -- profile list --json
 dotnet run --project YellowFox.Cli -- profile start --id "NRD Lazy 4" --json
 dotnet run --project YellowFox.Cli -- profile stop --id "NRD Lazy 4" --json
+dotnet run --project YellowFox.Cli -- folder list --json
+dotnet run --project YellowFox.Cli -- folder create --name "Work" --json
+dotnet run --project YellowFox.Cli -- profile create --name "NRD Lazy 5" --folder-id "Work" --json
 dotnet run --project YellowFox.Cli -- proxy list --json
 dotnet run --project YellowFox.Cli -- extension import-url --url "https://addons.mozilla.org/en-US/firefox/addon/darkreader/" --json
 ```
@@ -205,6 +208,7 @@ Common command groups:
 - `desktop status`, `desktop start`.
 - `profile list/start/stop/open/pages/click/create/update/delete/clone`.
 - `profile import-cookies`, `profile export-cookies`.
+- `folder list/create/update/delete` for nested profile folders; `profile create`/`profile update` accept `--folder-id`.
 - `proxy list/add/update/delete/test/change-ip`.
 - `extension list/add/import-url/import-archive/toggle/delete`.
 - `bookmark list/add/add-folder/update/delete`.

@@ -139,6 +139,10 @@ public sealed class AgentPipeServer : IAsyncDisposable
                 "profile.importcookies" => await ImportProfileCookiesAsync(request),
                 "profile.exportcookies" => await ExportProfileCookiesAsync(request),
                 "profile.log" => GetProfileLog(GetRequired(request, "id")),
+                "folder.list" => AgentResponse.Success(ListProfileFolders()),
+                "folder.create" => CreateProfileFolder(request),
+                "folder.update" => UpdateProfileFolder(request),
+                "folder.delete" => DeleteProfileFolder(GetRequired(request, "id")),
                 "proxy.list" => AgentResponse.Success(ListProxies()),
                 "proxy.add" => AddProxy(request),
                 "proxy.update" => UpdateProxy(request),
@@ -180,6 +184,7 @@ public sealed class AgentPipeServer : IAsyncDisposable
         return _databaseService.GetAllProfiles().Select(profile =>
         {
             var proxy = string.IsNullOrWhiteSpace(profile.ProxyId) ? null : _databaseService.GetProxy(profile.ProxyId);
+            var folder = ProfileFolderInfo(profile.FolderId);
             return new
             {
                 id = profile.Id,
@@ -187,6 +192,9 @@ public sealed class AgentPipeServer : IAsyncDisposable
                 notes = profile.Notes,
                 proxyId = profile.ProxyId,
                 proxyName = proxy?.Name,
+                folderId = folder.Id,
+                folderName = folder.Name,
+                folderPath = folder.Path,
                 os = profile.FingerprintConfig.Os,
                 screen = new
                 {
@@ -211,6 +219,9 @@ public sealed class AgentPipeServer : IAsyncDisposable
                 : null,
             FingerprintConfig = BuildFingerprintConfig(request)
         };
+
+        if (TryGet(request, "folder-id", out var folderId) || TryGet(request, "folderId", out folderId))
+            profile.FolderId = ResolveProfileFolderIdOrRoot(folderId);
 
         _databaseService.CreateProfile(profile);
         return AgentResponse.Success(ProfileData(profile));
@@ -337,6 +348,7 @@ public sealed class AgentPipeServer : IAsyncDisposable
     private object ProfileData(Profile profile)
     {
         var proxy = string.IsNullOrWhiteSpace(profile.ProxyId) ? null : _databaseService.GetProxy(profile.ProxyId);
+        var folder = ProfileFolderInfo(profile.FolderId);
         return new
         {
             id = profile.Id,
@@ -344,6 +356,9 @@ public sealed class AgentPipeServer : IAsyncDisposable
             notes = profile.Notes,
             proxyId = profile.ProxyId,
             proxyName = proxy?.Name,
+            folderId = folder.Id,
+            folderName = folder.Name,
+            folderPath = folder.Path,
             os = profile.FingerprintConfig.Os,
             screen = new
             {
@@ -367,6 +382,8 @@ public sealed class AgentPipeServer : IAsyncDisposable
         {
             profile.ProxyId = ResolveProxyIdOrNone(proxyId);
         }
+        if (TryGet(request, "folder-id", out var folderId) || TryGet(request, "folderId", out folderId))
+            profile.FolderId = ResolveProfileFolderIdOrRoot(folderId);
         if (TryGet(request, "os", out var os))
             profile.FingerprintConfig.Os = NormalizeOs(os);
         if (TryGet(request, "width", out var width))
@@ -669,6 +686,156 @@ public sealed class AgentPipeServer : IAsyncDisposable
         return string.Equals(value, "false", StringComparison.OrdinalIgnoreCase) ||
                string.Equals(value, "0", StringComparison.OrdinalIgnoreCase) ||
                string.Equals(value, "no", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private object ListProfileFolders()
+    {
+        var folders = _databaseService.GetAllProfileFolders();
+        var profiles = _databaseService.GetAllProfiles();
+        return folders.Select(folder => ProfileFolderData(folder, folders, profiles)).ToList();
+    }
+
+    private AgentResponse CreateProfileFolder(AgentRequest request)
+    {
+        var folder = new ProfileFolder
+        {
+            Name = GetRequired(request, "name").Trim(),
+            ParentId = ResolveProfileFolderIdOrRoot(GetOptional(request, "parent-id") ?? GetOptional(request, "parentId"))
+        };
+
+        if (TryGet(request, "sort-order", out var sortOrder) || TryGet(request, "sortOrder", out sortOrder))
+            folder.SortOrder = ParsePositiveOrZeroInt(sortOrder, "sort-order");
+
+        _databaseService.CreateProfileFolder(folder);
+        return AgentResponse.Success(DescribeProfileFolder(folder.Id));
+    }
+
+    private AgentResponse UpdateProfileFolder(AgentRequest request)
+    {
+        var folder = ResolveProfileFolder(GetRequired(request, "id"));
+        if (TryGet(request, "name", out var name))
+            folder.Name = name.Trim();
+        if (TryGet(request, "parent-id", out var parentId) || TryGet(request, "parentId", out parentId))
+            folder.ParentId = ResolveProfileFolderParentId(parentId, folder.Id);
+        if (TryGet(request, "sort-order", out var sortOrder) || TryGet(request, "sortOrder", out sortOrder))
+            folder.SortOrder = ParsePositiveOrZeroInt(sortOrder, "sort-order");
+
+        _databaseService.UpdateProfileFolder(folder);
+        return AgentResponse.Success(DescribeProfileFolder(folder.Id));
+    }
+
+    private AgentResponse DeleteProfileFolder(string idOrName)
+    {
+        var folder = ResolveProfileFolder(idOrName);
+        _databaseService.DeleteProfileFolder(folder.Id);
+        return AgentResponse.Success(new { id = folder.Id, name = folder.Name, deleted = true });
+    }
+
+    private string? ResolveProfileFolderIdOrRoot(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value) ||
+            string.Equals(value, "root", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "none", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        return ResolveProfileFolder(value).Id;
+    }
+
+    private string? ResolveProfileFolderParentId(string? value, string folderId)
+    {
+        var parentId = ResolveProfileFolderIdOrRoot(value);
+        if (parentId == null)
+            return null;
+
+        var folders = _databaseService.GetAllProfileFolders();
+        ProfileFolder? current = folders.FirstOrDefault(folder => folder.Id == parentId);
+        var guard = 0;
+        while (current != null && guard++ < 100)
+        {
+            if (string.Equals(current.Id, folderId, StringComparison.Ordinal))
+                throw new ArgumentException("A folder cannot be moved inside itself or one of its subfolders.");
+
+            current = string.IsNullOrEmpty(current.ParentId)
+                ? null
+                : folders.FirstOrDefault(folder => folder.Id == current.ParentId);
+        }
+
+        return parentId;
+    }
+
+    private ProfileFolder ResolveProfileFolder(string idOrName)
+    {
+        var folders = _databaseService.GetAllProfileFolders();
+        var direct = folders.FirstOrDefault(folder => string.Equals(folder.Id, idOrName, StringComparison.Ordinal));
+        if (direct != null)
+            return direct;
+
+        var matches = folders
+            .Where(folder => string.Equals(folder.Name, idOrName, StringComparison.OrdinalIgnoreCase) ||
+                             string.Equals(BuildProfileFolderPath(folder, folders), idOrName, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        return matches.Count switch
+        {
+            1 => matches[0],
+            0 => throw new InvalidOperationException($"Profile folder not found: {idOrName}"),
+            _ => throw new ArgumentException($"Profile folder name is ambiguous: {idOrName}")
+        };
+    }
+
+    private (string? Id, string? Name, string? Path) ProfileFolderInfo(string? folderId)
+    {
+        if (string.IsNullOrWhiteSpace(folderId))
+            return (null, null, null);
+
+        var folders = _databaseService.GetAllProfileFolders();
+        var folder = folders.FirstOrDefault(item => item.Id == folderId);
+        return folder == null
+            ? (folderId, null, null)
+            : (folder.Id, folder.Name, BuildProfileFolderPath(folder, folders));
+    }
+
+    private object DescribeProfileFolder(string? folderId)
+    {
+        if (string.IsNullOrWhiteSpace(folderId))
+            return new { id = (string?)null, name = (string?)null, path = (string?)null, parentId = (string?)null, sortOrder = (int?)null };
+
+        var folders = _databaseService.GetAllProfileFolders();
+        var folder = folders.FirstOrDefault(item => item.Id == folderId);
+        return folder == null
+            ? new { id = folderId, name = (string?)null, path = (string?)null, parentId = (string?)null, sortOrder = (int?)null }
+            : ProfileFolderData(folder, folders, _databaseService.GetAllProfiles());
+    }
+
+    private static object ProfileFolderData(ProfileFolder folder, IReadOnlyList<ProfileFolder> folders, IReadOnlyList<Profile> profiles)
+    {
+        return new
+        {
+            id = folder.Id,
+            name = folder.Name,
+            parentId = folder.ParentId,
+            sortOrder = folder.SortOrder,
+            path = BuildProfileFolderPath(folder, folders),
+            profileCount = profiles.Count(profile => string.Equals(profile.FolderId, folder.Id, StringComparison.Ordinal))
+        };
+    }
+
+    private static string BuildProfileFolderPath(ProfileFolder folder, IReadOnlyList<ProfileFolder> folders)
+    {
+        var parts = new List<string> { folder.Name };
+        var parentId = folder.ParentId;
+        var guard = 0;
+        while (!string.IsNullOrEmpty(parentId) && guard++ < 100)
+        {
+            var parent = folders.FirstOrDefault(item => item.Id == parentId);
+            if (parent == null)
+                break;
+
+            parts.Insert(0, parent.Name);
+            parentId = parent.ParentId;
+        }
+
+        return string.Join(" / ", parts);
     }
 
     private object ProxyData(Proxy proxy)

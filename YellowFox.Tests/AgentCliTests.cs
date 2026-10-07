@@ -133,6 +133,70 @@ public class AgentCliTests
     }
 
     [Fact]
+    public void BuildRequest_ShouldMapFolderCreateCommand()
+    {
+        var request = AgentCli.BuildRequest(new[]
+        {
+            "folder", "create",
+            "--name", "Work",
+            "--parent-id", "Farm",
+            "--json"
+        });
+
+        Assert.Equal("folder.create", request.Command);
+        Assert.Equal("Work", request.Args["name"]);
+        Assert.Equal("Farm", request.Args["parent-id"]);
+    }
+
+    [Fact]
+    public void BuildRequest_ShouldMapFolderListCommand()
+    {
+        var request = AgentCli.BuildRequest(new[] { "folder", "list", "--json" });
+
+        Assert.Equal("folder.list", request.Command);
+    }
+
+    [Fact]
+    public void BuildRequest_ShouldMapFolderMoveAliasToUpdate()
+    {
+        var request = AgentCli.BuildRequest(new[]
+        {
+            "folder", "move",
+            "--id", "Work",
+            "--parent-id", "root",
+            "--json"
+        });
+
+        Assert.Equal("folder.update", request.Command);
+        Assert.Equal("Work", request.Args["id"]);
+        Assert.Equal("root", request.Args["parent-id"]);
+    }
+
+    [Fact]
+    public void BuildRequest_ShouldMapFolderDeleteCommand()
+    {
+        var request = AgentCli.BuildRequest(new[] { "folder", "delete", "--id", "Work", "--json" });
+
+        Assert.Equal("folder.delete", request.Command);
+        Assert.Equal("Work", request.Args["id"]);
+    }
+
+    [Fact]
+    public void BuildRequest_ShouldMapProfileFolderIdOption()
+    {
+        var request = AgentCli.BuildRequest(new[]
+        {
+            "profile", "create",
+            "--name", "Test",
+            "--folder-id", "Farm",
+            "--json"
+        });
+
+        Assert.Equal("profile.create", request.Command);
+        Assert.Equal("Farm", request.Args["folder-id"]);
+    }
+
+    [Fact]
     public void CreateFailureJson_ShouldUseCliResponseShape()
     {
         var json = AgentCli.CreateFailureJson("desktop_unavailable", "Desktop is not running.");

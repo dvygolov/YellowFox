@@ -64,7 +64,7 @@ public static class AgentCli
             .ToArray();
 
         if (args.Length < 2)
-            throw new AgentCliException("bad_request", "Usage: yellowfox <desktop|profile|proxy|extension|bookmark|dolphin> <command> [--key value]", 1);
+            throw new AgentCliException("bad_request", "Usage: yellowfox <desktop|profile|folder|proxy|extension|bookmark|dolphin> <command> [--key value]", 1);
 
         var scope = args[0].ToLowerInvariant();
         var action = args[1].ToLowerInvariant();
@@ -87,6 +87,14 @@ public static class AgentCli
             ("profile", "import-cookies") => "profile.importCookies",
             ("profile", "export-cookies") => "profile.exportCookies",
             ("profile", "log") => "profile.log",
+            ("folder", "list") => "folder.list",
+            ("folder", "create") => "folder.create",
+            ("folder", "add") => "folder.create",
+            ("folder", "update") => "folder.update",
+            ("folder", "rename") => "folder.update",
+            ("folder", "move") => "folder.update",
+            ("folder", "delete") => "folder.delete",
+            ("folder", "remove") => "folder.delete",
             ("proxy", "list") => "proxy.list",
             ("proxy", "add") => "proxy.add",
             ("proxy", "update") => "proxy.update",

@@ -1,6 +1,6 @@
 ---
 name: yellowfox-browser
-description: "Use when an agent needs to work through YellowFox browser profiles: list imported Dolphin/YellowFox profiles, start or stop a profile, get the Playwright/CDP endpoint, attach automation, open sites, or diagnose profile/proxy/cookie startup issues through the YellowFox CLI."
+description: "Use when an agent needs to work through YellowFox browser profiles: list imported Dolphin/YellowFox profiles, organize them into nested folders, start or stop a profile, get the Playwright/CDP endpoint, attach automation, open sites, or diagnose profile/proxy/cookie startup issues through the YellowFox CLI."
 ---
 
 # YellowFox Browser
@@ -126,6 +126,32 @@ dotnet run --no-build --project YellowFox.Cli -- extension add --name "Custom" -
 dotnet run --no-build --project YellowFox.Cli -- extension toggle --id "Dark Reader" --enabled false --json
 dotnet run --no-build --project YellowFox.Cli -- extension delete --id "Dark Reader" --json
 ```
+
+## Profile Folder Commands
+
+Folders are the same nested tree shown in the Desktop profiles view. `--parent-id` accepts a folder id, a folder path (`Work / Farm`), or `root`/`none` for the top level.
+
+```powershell
+# List all folders with id, name, parentId, path and profileCount
+dotnet run --no-build --project YellowFox.Cli -- folder list --json
+# Create a folder (top level), or a subfolder under a parent
+dotnet run --no-build --project YellowFox.Cli -- folder create --name "Work" --json
+dotnet run --no-build --project YellowFox.Cli -- folder create --name "Farm" --parent-id "Work" --json
+# Rename / move / reorder a folder (aliases: rename, move)
+dotnet run --no-build --project YellowFox.Cli -- folder update --id "Farm" --name "Farms" --json
+dotnet run --no-build --project YellowFox.Cli -- folder move --id "Farm" --parent-id root --json
+# Delete a folder; nested folders and profiles move to the parent folder
+dotnet run --no-build --project YellowFox.Cli -- folder delete --id "Work" --json
+```
+
+Assign a profile to a folder on create or update:
+
+```powershell
+dotnet run --no-build --project YellowFox.Cli -- profile create --name "NRD GGL4" --folder-id "Farm" --json
+dotnet run --no-build --project YellowFox.Cli -- profile update --id "NRD GGL4" --folder-id root --json
+```
+
+`profile list` and `profile create/update` return `folderId`, `folderName`, and `folderPath` for each profile.
 
 ## Bookmark Commands
 
