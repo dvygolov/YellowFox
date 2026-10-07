@@ -5,6 +5,7 @@ using System.ComponentModel;
 using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Controls;
+using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -23,9 +24,11 @@ public partial class ProfilesViewModel : ViewModelBase
 {
     private readonly DatabaseService _databaseService;
     private readonly BrowserService _browserService;
+    private readonly SettingsService _settingsService;
     private readonly Dictionary<string, bool> _folderExpansion = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ProfileFolder> _foldersById = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Profile> _profilesById = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Tag> _tagsById = new(StringComparer.Ordinal);
 
     [ObservableProperty]
     private string _searchText = string.Empty;
@@ -36,17 +39,66 @@ public partial class ProfilesViewModel : ViewModelBase
     [ObservableProperty]
     private int _selectedCount;
 
+    [ObservableProperty]
+    private bool _showProxy = true;
+
+    [ObservableProperty]
+    private bool _showNotes = true;
+
+    [ObservableProperty]
+    private bool _showTags = true;
+
     public ObservableCollection<ProfileNodeViewModel> RootNodes { get; } = new();
 
     public bool HasSelection => SelectedCount > 0;
     public bool IsSearching => !string.IsNullOrWhiteSpace(SearchText);
 
-    public ProfilesViewModel(DatabaseService databaseService, BrowserService browserService)
+    public ProfilesViewModel(DatabaseService databaseService, BrowserService browserService, SettingsService settingsService)
     {
         _databaseService = databaseService;
         _browserService = browserService;
+        _settingsService = settingsService;
+
+        var settings = _settingsService.GetSettings();
+        _showProxy = settings.ProfileTreeShowProxy;
+        _showNotes = settings.ProfileTreeShowNotes;
+        _showTags = settings.ProfileTreeShowTags;
+
         _browserService.ProfileRunningStateChanged += OnProfileRunningStateChanged;
         LoadProfiles();
+    }
+
+    partial void OnShowProxyChanged(bool value)
+    {
+        SaveViewOptions();
+        UpdateItemViewOptions();
+    }
+
+    partial void OnShowNotesChanged(bool value)
+    {
+        SaveViewOptions();
+        UpdateItemViewOptions();
+    }
+
+    partial void OnShowTagsChanged(bool value)
+    {
+        SaveViewOptions();
+        UpdateItemViewOptions();
+    }
+
+    private void SaveViewOptions()
+    {
+        var settings = _settingsService.GetSettings();
+        settings.ProfileTreeShowProxy = ShowProxy;
+        settings.ProfileTreeShowNotes = ShowNotes;
+        settings.ProfileTreeShowTags = ShowTags;
+        _settingsService.SaveSettings(settings);
+    }
+
+    private void UpdateItemViewOptions()
+    {
+        foreach (var item in EnumerateProfileNodes())
+            item.SetViewOptions(ShowProxy, ShowNotes, ShowTags);
     }
 
     partial void OnSearchTextChanged(string value)
@@ -63,6 +115,10 @@ public partial class ProfilesViewModel : ViewModelBase
 
         var folders = _databaseService.GetAllProfileFolders();
         var profiles = _databaseService.GetAllProfiles();
+
+        _tagsById.Clear();
+        foreach (var tag in _databaseService.GetAllTags())
+            _tagsById[tag.Id] = tag;
 
         foreach (var folder in folders)
             _foldersById[folder.Id] = folder;
@@ -130,10 +186,32 @@ public partial class ProfilesViewModel : ViewModelBase
 
     private ProfileItemViewModel BuildProfileNode(Profile profile)
     {
-        var vm = new ProfileItemViewModel(profile, this, _databaseService);
+        var vm = new ProfileItemViewModel(profile, this, _databaseService, ResolveTags(profile.TagIds), ShowProxy, ShowNotes, ShowTags);
         vm.UpdateRunningStatus(_browserService.IsRunning(profile.Id));
         vm.PropertyChanged += OnProfileItemPropertyChanged;
         return vm;
+    }
+
+    private List<Tag> ResolveTags(IEnumerable<string> tagIds)
+    {
+        var tags = new List<Tag>();
+        foreach (var tagId in tagIds)
+        {
+            if (_tagsById.TryGetValue(tagId, out var tag))
+                tags.Add(tag);
+        }
+
+        return tags;
+    }
+
+    public void ReloadTagChips()
+    {
+        _tagsById.Clear();
+        foreach (var tag in _databaseService.GetAllTags())
+            _tagsById[tag.Id] = tag;
+
+        foreach (var item in EnumerateProfileNodes())
+            item.SetTags(ResolveTags(item.Profile.TagIds));
     }
 
     private static bool MatchesFilter(Profile profile, string? filter)
@@ -833,6 +911,18 @@ public partial class ProfileItemViewModel : ProfileNodeViewModel
     [ObservableProperty]
     private bool _isImportingCookies;
 
+    [ObservableProperty]
+    private bool _showProxy = true;
+
+    [ObservableProperty]
+    private bool _showNotes = true;
+
+    [ObservableProperty]
+    private bool _showTags = true;
+
+    public ObservableCollection<TagChipViewModel> TagChips { get; } = new();
+    public bool HasTags => TagChips.Count > 0;
+
     public Profile Profile { get; }
 
     public override string Name => Profile.Name;
@@ -865,11 +955,36 @@ public partial class ProfileItemViewModel : ProfileNodeViewModel
     public bool IsRunningActionVisible => IsRunning && !IsImportingCookies;
     public bool IsStartActionVisible => !IsRunning && !IsImportingCookies;
 
-    public ProfileItemViewModel(Profile profile, ProfilesViewModel parent, DatabaseService databaseService)
+    public ProfileItemViewModel(Profile profile, ProfilesViewModel parent, DatabaseService databaseService, IEnumerable<Tag>? tags = null, bool showProxy = true, bool showNotes = true, bool showTags = true)
     {
         Profile = profile;
         _parent = parent;
         _databaseService = databaseService;
+        _showProxy = showProxy;
+        _showNotes = showNotes;
+        _showTags = showTags;
+
+        if (tags != null)
+        {
+            foreach (var tag in tags)
+                TagChips.Add(new TagChipViewModel(tag));
+        }
+    }
+
+    public void SetViewOptions(bool showProxy, bool showNotes, bool showTags)
+    {
+        ShowProxy = showProxy;
+        ShowNotes = showNotes;
+        ShowTags = showTags;
+    }
+
+    public void SetTags(IEnumerable<Tag> tags)
+    {
+        TagChips.Clear();
+        foreach (var tag in tags)
+            TagChips.Add(new TagChipViewModel(tag));
+
+        OnPropertyChanged(nameof(HasTags));
     }
 
     [RelayCommand]
@@ -960,4 +1075,20 @@ public enum ProfileDropPosition
     After,
     Inside,
     RootEnd
+}
+
+public sealed class TagChipViewModel
+{
+    public TagChipViewModel(Tag tag)
+    {
+        Name = tag.Name;
+        Glyph = TagIconCatalog.GlyphFor(tag.Icon);
+        Color = tag.Color;
+        Brush = new SolidColorBrush(Avalonia.Media.Color.Parse(tag.Color));
+    }
+
+    public string Name { get; }
+    public string Glyph { get; }
+    public string Color { get; }
+    public IBrush Brush { get; }
 }

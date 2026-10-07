@@ -116,6 +116,18 @@ public class DatabaseService
             )";
         bookmarksCommand.ExecuteNonQuery();
 
+        var tagsCommand = connection.CreateCommand();
+        tagsCommand.Transaction = transaction;
+        tagsCommand.CommandText = @"
+            CREATE TABLE IF NOT EXISTS tags (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                icon TEXT NOT NULL,
+                color TEXT NOT NULL,
+                sort_order INTEGER NOT NULL DEFAULT 0
+            )";
+        tagsCommand.ExecuteNonQuery();
+
         if (!ColumnExists(connection, transaction, "profiles", "proxy_id"))
         {
             var alterTableCommand = connection.CreateCommand();
@@ -188,6 +200,30 @@ public class DatabaseService
             alterTableCommand.ExecuteNonQuery();
         }
 
+        if (!ColumnExists(connection, transaction, "profiles", "tag_ids"))
+        {
+            var alterTableCommand = connection.CreateCommand();
+            alterTableCommand.Transaction = transaction;
+            alterTableCommand.CommandText = "ALTER TABLE profiles ADD COLUMN tag_ids TEXT";
+            alterTableCommand.ExecuteNonQuery();
+        }
+
+        if (!ColumnExists(connection, transaction, "extensions", "tag_id"))
+        {
+            var alterTableCommand = connection.CreateCommand();
+            alterTableCommand.Transaction = transaction;
+            alterTableCommand.CommandText = "ALTER TABLE extensions ADD COLUMN tag_id TEXT";
+            alterTableCommand.ExecuteNonQuery();
+        }
+
+        if (!ColumnExists(connection, transaction, "bookmarks", "tag_id"))
+        {
+            var alterTableCommand = connection.CreateCommand();
+            alterTableCommand.Transaction = transaction;
+            alterTableCommand.CommandText = "ALTER TABLE bookmarks ADD COLUMN tag_id TEXT";
+            alterTableCommand.ExecuteNonQuery();
+        }
+
         MigrateBookmarkFolders(connection, transaction);
 
         var indexCommand = connection.CreateCommand();
@@ -219,6 +255,16 @@ public class DatabaseService
         bookmarksParentIndexCommand.Transaction = transaction;
         bookmarksParentIndexCommand.CommandText = "CREATE INDEX IF NOT EXISTS idx_bookmarks_parent_id ON bookmarks(parent_id)";
         bookmarksParentIndexCommand.ExecuteNonQuery();
+
+        var extensionsTagIndexCommand = connection.CreateCommand();
+        extensionsTagIndexCommand.Transaction = transaction;
+        extensionsTagIndexCommand.CommandText = "CREATE INDEX IF NOT EXISTS idx_extensions_tag_id ON extensions(tag_id)";
+        extensionsTagIndexCommand.ExecuteNonQuery();
+
+        var bookmarksTagIndexCommand = connection.CreateCommand();
+        bookmarksTagIndexCommand.Transaction = transaction;
+        bookmarksTagIndexCommand.CommandText = "CREATE INDEX IF NOT EXISTS idx_bookmarks_tag_id ON bookmarks(tag_id)";
+        bookmarksTagIndexCommand.ExecuteNonQuery();
 
         if (_seedBuiltInExtensions)
             SeedBuiltInExtensions(connection, transaction);
@@ -388,7 +434,7 @@ public class DatabaseService
         connection.Open();
         
         var command = connection.CreateCommand();
-        command.CommandText = "SELECT id, name, notes, proxy_id, dolphin_profile_id, folder_id, sort_order, fingerprint_config FROM profiles ORDER BY name";
+        command.CommandText = "SELECT id, name, notes, proxy_id, dolphin_profile_id, folder_id, sort_order, fingerprint_config, tag_ids FROM profiles ORDER BY name";
         
         using var reader = command.ExecuteReader();
         while (reader.Read())
@@ -402,6 +448,7 @@ public class DatabaseService
                 DolphinProfileId = reader.IsDBNull(4) ? null : reader.GetString(4),
                 FolderId = reader.IsDBNull(5) ? null : reader.GetString(5),
                 SortOrder = reader.IsDBNull(6) ? 0 : reader.GetInt32(6),
+                TagIds = ParseTagIds(reader.IsDBNull(8) ? null : reader.GetString(8)),
                 FingerprintConfig = JsonSerializer.Deserialize<FingerprintConfig>(reader.GetString(7))
                     ?? new FingerprintConfig()
             };
@@ -417,7 +464,7 @@ public class DatabaseService
         connection.Open();
         
         var command = connection.CreateCommand();
-        command.CommandText = "SELECT id, name, notes, proxy_id, dolphin_profile_id, folder_id, sort_order, fingerprint_config FROM profiles WHERE id = @id";
+        command.CommandText = "SELECT id, name, notes, proxy_id, dolphin_profile_id, folder_id, sort_order, fingerprint_config, tag_ids FROM profiles WHERE id = @id";
         command.Parameters.AddWithValue("@id", id);
         
         using var reader = command.ExecuteReader();
@@ -432,6 +479,7 @@ public class DatabaseService
                 DolphinProfileId = reader.IsDBNull(4) ? null : reader.GetString(4),
                 FolderId = reader.IsDBNull(5) ? null : reader.GetString(5),
                 SortOrder = reader.IsDBNull(6) ? 0 : reader.GetInt32(6),
+                TagIds = ParseTagIds(reader.IsDBNull(8) ? null : reader.GetString(8)),
                 FingerprintConfig = JsonSerializer.Deserialize<FingerprintConfig>(reader.GetString(7))
                     ?? new FingerprintConfig()
             };
@@ -447,8 +495,8 @@ public class DatabaseService
         
         var command = connection.CreateCommand();
         command.CommandText = @"
-            INSERT INTO profiles (id, name, notes, proxy_id, dolphin_profile_id, folder_id, sort_order, fingerprint_config)
-            VALUES (@id, @name, @notes, @proxy_id, @dolphin_profile_id, @folder_id, @sort_order, @config)";
+            INSERT INTO profiles (id, name, notes, proxy_id, dolphin_profile_id, folder_id, sort_order, fingerprint_config, tag_ids)
+            VALUES (@id, @name, @notes, @proxy_id, @dolphin_profile_id, @folder_id, @sort_order, @config, @tag_ids)";
         
         command.Parameters.AddWithValue("@id", profile.Id);
         command.Parameters.AddWithValue("@name", profile.Name);
@@ -458,6 +506,7 @@ public class DatabaseService
         command.Parameters.AddWithValue("@folder_id", (object?)profile.FolderId ?? DBNull.Value);
         command.Parameters.AddWithValue("@sort_order", profile.SortOrder);
         command.Parameters.AddWithValue("@config", JsonSerializer.Serialize(profile.FingerprintConfig));
+        command.Parameters.AddWithValue("@tag_ids", (object?)SerializeTagIds(profile.TagIds) ?? DBNull.Value);
         
         try
         {
@@ -477,7 +526,7 @@ public class DatabaseService
         var command = connection.CreateCommand();
         command.CommandText = @"
             UPDATE profiles
-            SET name = @name, notes = @notes, proxy_id = @proxy_id, dolphin_profile_id = @dolphin_profile_id, folder_id = @folder_id, sort_order = @sort_order, fingerprint_config = @config
+            SET name = @name, notes = @notes, proxy_id = @proxy_id, dolphin_profile_id = @dolphin_profile_id, folder_id = @folder_id, sort_order = @sort_order, fingerprint_config = @config, tag_ids = @tag_ids
             WHERE id = @id";
         
         command.Parameters.AddWithValue("@id", profile.Id);
@@ -488,6 +537,7 @@ public class DatabaseService
         command.Parameters.AddWithValue("@folder_id", (object?)profile.FolderId ?? DBNull.Value);
         command.Parameters.AddWithValue("@sort_order", profile.SortOrder);
         command.Parameters.AddWithValue("@config", JsonSerializer.Serialize(profile.FingerprintConfig));
+        command.Parameters.AddWithValue("@tag_ids", (object?)SerializeTagIds(profile.TagIds) ?? DBNull.Value);
         
         try
         {
@@ -718,6 +768,7 @@ public class DatabaseService
             DolphinProfileId = null,
             FolderId = source.FolderId,
             SortOrder = source.SortOrder,
+            TagIds = new List<string>(source.TagIds),
             FingerprintConfig = new FingerprintConfig
             {
                 Os = source.FingerprintConfig.Os,
@@ -962,7 +1013,7 @@ public class DatabaseService
 
         var command = connection.CreateCommand();
         command.CommandText = @"
-            SELECT id, name, path, is_enabled
+            SELECT id, name, path, is_enabled, tag_id
             FROM extensions
             ORDER BY name";
 
@@ -974,7 +1025,8 @@ public class DatabaseService
                 Id = reader.GetString(0),
                 Name = reader.GetString(1),
                 Path = reader.GetString(2),
-                IsEnabled = reader.GetInt32(3) == 1
+                IsEnabled = reader.GetInt32(3) == 1,
+                TagId = reader.IsDBNull(4) ? null : reader.GetString(4)
             });
         }
 
@@ -990,7 +1042,7 @@ public class DatabaseService
 
         var command = connection.CreateCommand();
         command.CommandText = @"
-            SELECT id, name, path, is_enabled
+            SELECT id, name, path, is_enabled, tag_id
             FROM extensions
             WHERE is_enabled = 1
             ORDER BY name";
@@ -1003,7 +1055,8 @@ public class DatabaseService
                 Id = reader.GetString(0),
                 Name = reader.GetString(1),
                 Path = reader.GetString(2),
-                IsEnabled = reader.GetInt32(3) == 1
+                IsEnabled = reader.GetInt32(3) == 1,
+                TagId = reader.IsDBNull(4) ? null : reader.GetString(4)
             });
         }
 
@@ -1017,13 +1070,14 @@ public class DatabaseService
 
         var command = connection.CreateCommand();
         command.CommandText = @"
-            INSERT INTO extensions (id, name, path, is_enabled)
-            VALUES (@id, @name, @path, @is_enabled)";
+            INSERT INTO extensions (id, name, path, is_enabled, tag_id)
+            VALUES (@id, @name, @path, @is_enabled, @tag_id)";
 
         command.Parameters.AddWithValue("@id", extension.Id);
         command.Parameters.AddWithValue("@name", extension.Name.Trim());
         command.Parameters.AddWithValue("@path", extension.Path.Trim());
         command.Parameters.AddWithValue("@is_enabled", extension.IsEnabled ? 1 : 0);
+        command.Parameters.AddWithValue("@tag_id", (object?)extension.TagId ?? DBNull.Value);
 
         try
         {
@@ -1043,13 +1097,14 @@ public class DatabaseService
         var command = connection.CreateCommand();
         command.CommandText = @"
             UPDATE extensions
-            SET name = @name, path = @path, is_enabled = @is_enabled
+            SET name = @name, path = @path, is_enabled = @is_enabled, tag_id = @tag_id
             WHERE id = @id";
 
         command.Parameters.AddWithValue("@id", extension.Id);
         command.Parameters.AddWithValue("@name", extension.Name.Trim());
         command.Parameters.AddWithValue("@path", extension.Path.Trim());
         command.Parameters.AddWithValue("@is_enabled", extension.IsEnabled ? 1 : 0);
+        command.Parameters.AddWithValue("@tag_id", (object?)extension.TagId ?? DBNull.Value);
 
         try
         {
@@ -1081,7 +1136,7 @@ public class DatabaseService
 
         var command = connection.CreateCommand();
         command.CommandText = @"
-            SELECT id, title, url, folder, parent_id, is_folder, sort_order
+            SELECT id, title, url, folder, parent_id, is_folder, sort_order, tag_id
             FROM bookmarks
             ORDER BY COALESCE(parent_id, ''), is_folder DESC, sort_order, title";
 
@@ -1096,7 +1151,8 @@ public class DatabaseService
                 Folder = reader.IsDBNull(3) ? null : reader.GetString(3),
                 ParentId = reader.IsDBNull(4) ? null : reader.GetString(4),
                 IsFolder = reader.GetInt32(5) == 1,
-                SortOrder = reader.GetInt32(6)
+                SortOrder = reader.GetInt32(6),
+                TagId = reader.IsDBNull(7) ? null : reader.GetString(7)
             });
         }
 
@@ -1110,8 +1166,8 @@ public class DatabaseService
 
         var command = connection.CreateCommand();
         command.CommandText = @"
-            INSERT INTO bookmarks (id, title, url, folder, parent_id, is_folder, sort_order)
-            VALUES (@id, @title, @url, @folder, @parent_id, @is_folder, @sort_order)";
+            INSERT INTO bookmarks (id, title, url, folder, parent_id, is_folder, sort_order, tag_id)
+            VALUES (@id, @title, @url, @folder, @parent_id, @is_folder, @sort_order, @tag_id)";
 
         command.Parameters.AddWithValue("@id", bookmark.Id);
         command.Parameters.AddWithValue("@title", bookmark.Title.Trim());
@@ -1120,6 +1176,7 @@ public class DatabaseService
         command.Parameters.AddWithValue("@parent_id", (object?)bookmark.ParentId ?? DBNull.Value);
         command.Parameters.AddWithValue("@is_folder", bookmark.IsFolder ? 1 : 0);
         command.Parameters.AddWithValue("@sort_order", bookmark.SortOrder > 0 ? bookmark.SortOrder : NextBookmarkSortOrder(connection, null, bookmark.ParentId));
+        command.Parameters.AddWithValue("@tag_id", (object?)bookmark.TagId ?? DBNull.Value);
         command.ExecuteNonQuery();
     }
 
@@ -1136,7 +1193,8 @@ public class DatabaseService
                 folder = @folder,
                 parent_id = @parent_id,
                 is_folder = @is_folder,
-                sort_order = @sort_order
+                sort_order = @sort_order,
+                tag_id = @tag_id
             WHERE id = @id";
 
         command.Parameters.AddWithValue("@id", bookmark.Id);
@@ -1146,6 +1204,7 @@ public class DatabaseService
         command.Parameters.AddWithValue("@parent_id", (object?)bookmark.ParentId ?? DBNull.Value);
         command.Parameters.AddWithValue("@is_folder", bookmark.IsFolder ? 1 : 0);
         command.Parameters.AddWithValue("@sort_order", bookmark.SortOrder);
+        command.Parameters.AddWithValue("@tag_id", (object?)bookmark.TagId ?? DBNull.Value);
         command.ExecuteNonQuery();
     }
 
@@ -1166,7 +1225,8 @@ public class DatabaseService
                     folder = @folder,
                     parent_id = @parent_id,
                     is_folder = @is_folder,
-                    sort_order = @sort_order
+                    sort_order = @sort_order,
+                    tag_id = @tag_id
                 WHERE id = @id";
 
             command.Parameters.AddWithValue("@id", bookmark.Id);
@@ -1176,6 +1236,7 @@ public class DatabaseService
             command.Parameters.AddWithValue("@parent_id", (object?)bookmark.ParentId ?? DBNull.Value);
             command.Parameters.AddWithValue("@is_folder", bookmark.IsFolder ? 1 : 0);
             command.Parameters.AddWithValue("@sort_order", bookmark.SortOrder);
+            command.Parameters.AddWithValue("@tag_id", (object?)bookmark.TagId ?? DBNull.Value);
             command.ExecuteNonQuery();
         }
 
@@ -1234,6 +1295,227 @@ public class DatabaseService
         }
 
         return parts.Count == 0 ? null : string.Join("/", parts);
+    }
+
+    public List<Tag> GetAllTags()
+    {
+        var tags = new List<Tag>();
+
+        using var connection = new SqliteConnection(_connectionString);
+        connection.Open();
+
+        var command = connection.CreateCommand();
+        command.CommandText = "SELECT id, name, icon, color, sort_order FROM tags ORDER BY sort_order, name";
+
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            tags.Add(new Tag
+            {
+                Id = reader.GetString(0),
+                Name = reader.GetString(1),
+                Icon = TagIconCatalog.FromKey(reader.GetString(2)).Key,
+                Color = reader.GetString(3),
+                SortOrder = reader.GetInt32(4)
+            });
+        }
+
+        return tags;
+    }
+
+    public Tag? GetTag(string id)
+    {
+        return GetAllTags().Find(tag => string.Equals(tag.Id, id, StringComparison.Ordinal));
+    }
+
+    public void CreateTag(Tag tag)
+    {
+        using var connection = new SqliteConnection(_connectionString);
+        connection.Open();
+
+        var command = connection.CreateCommand();
+        command.CommandText = @"
+            INSERT INTO tags (id, name, icon, color, sort_order)
+            VALUES (@id, @name, @icon, @color, @sort_order)";
+
+        command.Parameters.AddWithValue("@id", tag.Id);
+        command.Parameters.AddWithValue("@name", tag.Name.Trim());
+        command.Parameters.AddWithValue("@icon", TagIconCatalog.FromKey(tag.Icon).Key);
+        command.Parameters.AddWithValue("@color", tag.Color);
+        command.Parameters.AddWithValue("@sort_order", tag.SortOrder > 0 ? tag.SortOrder : NextTagSortOrder(connection));
+
+        try
+        {
+            command.ExecuteNonQuery();
+        }
+        catch (SqliteException ex) when (ex.SqliteErrorCode == 19)
+        {
+            throw new InvalidOperationException($"A tag with the name '{tag.Name}' already exists.", ex);
+        }
+    }
+
+    public void UpdateTag(Tag tag)
+    {
+        using var connection = new SqliteConnection(_connectionString);
+        connection.Open();
+
+        var command = connection.CreateCommand();
+        command.CommandText = @"
+            UPDATE tags
+            SET name = @name, icon = @icon, color = @color, sort_order = @sort_order
+            WHERE id = @id";
+
+        command.Parameters.AddWithValue("@id", tag.Id);
+        command.Parameters.AddWithValue("@name", tag.Name.Trim());
+        command.Parameters.AddWithValue("@icon", TagIconCatalog.FromKey(tag.Icon).Key);
+        command.Parameters.AddWithValue("@color", tag.Color);
+        command.Parameters.AddWithValue("@sort_order", tag.SortOrder);
+
+        try
+        {
+            command.ExecuteNonQuery();
+        }
+        catch (SqliteException ex) when (ex.SqliteErrorCode == 19)
+        {
+            throw new InvalidOperationException($"A tag with the name '{tag.Name}' already exists.", ex);
+        }
+    }
+
+    public void DeleteTag(string id)
+    {
+        using var connection = new SqliteConnection(_connectionString);
+        connection.Open();
+        using var transaction = connection.BeginTransaction();
+
+        foreach (var table in new[] { "extensions", "bookmarks" })
+        {
+            using var clearReference = connection.CreateCommand();
+            clearReference.Transaction = transaction;
+            clearReference.CommandText = $"UPDATE {table} SET tag_id = NULL WHERE tag_id = @id";
+            clearReference.Parameters.AddWithValue("@id", id);
+            clearReference.ExecuteNonQuery();
+        }
+
+        var profileUpdates = new List<(string ProfileId, string? TagIds)>();
+        using (var selectProfiles = connection.CreateCommand())
+        {
+            selectProfiles.Transaction = transaction;
+            selectProfiles.CommandText = "SELECT id, tag_ids FROM profiles WHERE tag_ids IS NOT NULL";
+            using var reader = selectProfiles.ExecuteReader();
+            while (reader.Read())
+            {
+                var profileId = reader.GetString(0);
+                var json = reader.IsDBNull(1) ? null : reader.GetString(1);
+                var tagIds = ParseTagIds(json);
+                if (tagIds.RemoveAll(candidate => string.Equals(candidate, id, StringComparison.Ordinal)) > 0)
+                    profileUpdates.Add((profileId, SerializeTagIds(tagIds)));
+            }
+        }
+
+        foreach (var (profileId, tagIds) in profileUpdates)
+        {
+            using var updateProfile = connection.CreateCommand();
+            updateProfile.Transaction = transaction;
+            updateProfile.CommandText = "UPDATE profiles SET tag_ids = @tag_ids WHERE id = @id";
+            updateProfile.Parameters.AddWithValue("@tag_ids", (object?)tagIds ?? DBNull.Value);
+            updateProfile.Parameters.AddWithValue("@id", profileId);
+            updateProfile.ExecuteNonQuery();
+        }
+
+        using var delete = connection.CreateCommand();
+        delete.Transaction = transaction;
+        delete.CommandText = "DELETE FROM tags WHERE id = @id";
+        delete.Parameters.AddWithValue("@id", id);
+        delete.ExecuteNonQuery();
+
+        transaction.Commit();
+    }
+
+    public List<ExtensionItem> GetExtensionsForProfile(Profile profile)
+    {
+        return GetEnabledExtensions()
+            .Where(extension => TagMatches(extension.TagId, profile.TagIds))
+            .ToList();
+    }
+
+    public List<BookmarkItem> GetBookmarksForProfile(Profile profile)
+    {
+        var all = GetAllBookmarks();
+        if (all.Count == 0)
+            return all;
+
+        var byId = all
+            .GroupBy(item => item.Id, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+
+        var included = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var bookmark in all)
+        {
+            if (!TagMatches(bookmark.TagId, profile.TagIds))
+                continue;
+
+            var coveredByAncestors = true;
+            var parentId = bookmark.ParentId;
+            var guard = 0;
+            while (!string.IsNullOrWhiteSpace(parentId) && guard++ < 10000)
+            {
+                if (!byId.TryGetValue(parentId, out var parent))
+                    break;
+
+                if (!TagMatches(parent.TagId, profile.TagIds))
+                {
+                    coveredByAncestors = false;
+                    break;
+                }
+
+                parentId = parent.ParentId;
+            }
+
+            if (coveredByAncestors)
+                included.Add(bookmark.Id);
+        }
+
+        return all.Where(bookmark => included.Contains(bookmark.Id)).ToList();
+    }
+
+    public static bool TagMatches(string? itemTagId, IReadOnlyCollection<string>? profileTagIds)
+    {
+        if (string.IsNullOrWhiteSpace(itemTagId))
+            return true;
+
+        return profileTagIds != null && profileTagIds.Contains(itemTagId, StringComparer.Ordinal);
+    }
+
+    private static int NextTagSortOrder(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM tags";
+        return Convert.ToInt32(command.ExecuteScalar());
+    }
+
+    private static string? SerializeTagIds(IReadOnlyCollection<string>? tagIds)
+    {
+        var ids = tagIds?
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        return ids == null || ids.Count == 0 ? null : JsonSerializer.Serialize(ids);
+    }
+
+    private static List<string> ParseTagIds(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return new List<string>();
+
+        try
+        {
+            return JsonSerializer.Deserialize<List<string>>(json) ?? new List<string>();
+        }
+        catch
+        {
+            return new List<string>();
+        }
     }
 
     private static bool ColumnExists(SqliteConnection connection, SqliteTransaction transaction, string tableName, string columnName)

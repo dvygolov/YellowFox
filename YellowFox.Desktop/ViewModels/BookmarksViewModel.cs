@@ -71,6 +71,7 @@ public partial class BookmarksViewModel : ViewModelBase
 
         var bookmark = SelectedBookmark.Bookmark;
         var editor = new BookmarkEditorViewModel(
+            _databaseService,
             bookmark,
             bookmark.IsFolder,
             bookmark.ParentId,
@@ -187,7 +188,7 @@ public partial class BookmarksViewModel : ViewModelBase
     private async Task CreateItemAsync(bool isFolder)
     {
         var parentId = CurrentParentId;
-        var editor = new BookmarkEditorViewModel(null, isFolder, parentId, ParentDisplay(parentId));
+        var editor = new BookmarkEditorViewModel(_databaseService, null, isFolder, parentId, ParentDisplay(parentId));
         if (!await ShowBookmarkEditorAsync(editor))
             return;
 
@@ -202,8 +203,9 @@ public partial class BookmarksViewModel : ViewModelBase
     private void Load(string? selectId = null)
     {
         var items = _databaseService.GetAllBookmarks();
+        var tagsById = _databaseService.GetAllTags().ToDictionary(tag => tag.Id, StringComparer.Ordinal);
         _nodesById = items
-            .Select(item => new BookmarkNodeViewModel(item))
+            .Select(item => new BookmarkNodeViewModel(item, ResolveTag(item, tagsById)))
             .ToDictionary(node => node.Bookmark.Id, StringComparer.Ordinal);
 
         foreach (var node in _nodesById.Values)
@@ -243,6 +245,14 @@ public partial class BookmarksViewModel : ViewModelBase
         return _nodesById.TryGetValue(parentId, out var node)
             ? node.Path
             : "Bookmarks Toolbar";
+    }
+
+    private static Tag? ResolveTag(BookmarkItem bookmark, IReadOnlyDictionary<string, Tag> tagsById)
+    {
+        if (string.IsNullOrWhiteSpace(bookmark.TagId))
+            return null;
+
+        return tagsById.TryGetValue(bookmark.TagId!, out var tag) ? tag : null;
     }
 
     private bool IsDescendantOf(string nodeId, string possibleAncestorId)
@@ -336,11 +346,14 @@ public class BookmarkNodeViewModel : ViewModelBase
     public string Icon => Bookmark.IsFolder ? "📁" : "🔖";
     public string Kind => Bookmark.IsFolder ? "Folder" : "Bookmark";
     public string Path { get; private set; }
+    public TagChipViewModel? TagChip { get; }
+    public bool HasTag => TagChip != null;
 
-    public BookmarkNodeViewModel(BookmarkItem bookmark)
+    public BookmarkNodeViewModel(BookmarkItem bookmark, Tag? tag = null)
     {
         Bookmark = bookmark;
         Path = bookmark.Title;
+        TagChip = tag == null ? null : new TagChipViewModel(tag);
     }
 
     public void SortChildren()

@@ -15,6 +15,7 @@ public partial class MainWindowViewModel : ViewModelBase
     public ProxiesViewModel ProxiesViewModel { get; }
     public ExtensionsViewModel ExtensionsViewModel { get; }
     public BookmarksViewModel BookmarksViewModel { get; }
+    public TagsViewModel TagsViewModel { get; }
 
     [ObservableProperty]
     private string _currentSection = "profiles";
@@ -43,10 +44,12 @@ public partial class MainWindowViewModel : ViewModelBase
     public bool IsProxiesSection => CurrentSection == "proxies";
     public bool IsExtensionsSection => CurrentSection == "extensions";
     public bool IsBookmarksSection => CurrentSection == "bookmarks";
+    public bool IsTagsSection => CurrentSection == "tags";
     public bool IsNotProfilesSection => !IsProfilesSection;
     public bool IsNotProxiesSection => !IsProxiesSection;
     public bool IsNotExtensionsSection => !IsExtensionsSection;
     public bool IsNotBookmarksSection => !IsBookmarksSection;
+    public bool IsNotTagsSection => !IsTagsSection;
     public double SidebarWidth => IsSidebarExpanded ? 200 : 74;
     public string SidebarToggleIcon => IsSidebarExpanded ? "\uE72B" : "\uE72A";
     public string SidebarToggleTip => IsSidebarExpanded ? "Collapse navigation" : "Expand navigation";
@@ -56,13 +59,15 @@ public partial class MainWindowViewModel : ViewModelBase
         BrowserService browserService,
         ProxyValidatorService proxyValidatorService,
         ExtensionStorageService extensionStorageService,
-        ProxyIpRotationService proxyIpRotationService)
+        ProxyIpRotationService proxyIpRotationService,
+        SettingsService settingsService)
     {
         _browserService = browserService;
-        ProfilesViewModel = new ProfilesViewModel(databaseService, browserService);
+        ProfilesViewModel = new ProfilesViewModel(databaseService, browserService, settingsService);
         ProxiesViewModel = new ProxiesViewModel(databaseService, proxyValidatorService, proxyIpRotationService);
         ExtensionsViewModel = new ExtensionsViewModel(databaseService, extensionStorageService);
         BookmarksViewModel = new BookmarksViewModel(databaseService);
+        TagsViewModel = new TagsViewModel(databaseService);
         _ = LoadCamoufoxVersionAsync();
     }
 
@@ -72,10 +77,12 @@ public partial class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsProxiesSection));
         OnPropertyChanged(nameof(IsExtensionsSection));
         OnPropertyChanged(nameof(IsBookmarksSection));
+        OnPropertyChanged(nameof(IsTagsSection));
         OnPropertyChanged(nameof(IsNotProfilesSection));
         OnPropertyChanged(nameof(IsNotProxiesSection));
         OnPropertyChanged(nameof(IsNotExtensionsSection));
         OnPropertyChanged(nameof(IsNotBookmarksSection));
+        OnPropertyChanged(nameof(IsNotTagsSection));
     }
 
     partial void OnIsSidebarExpandedChanged(bool value)
@@ -95,6 +102,7 @@ public partial class MainWindowViewModel : ViewModelBase
     private void ShowProfiles()
     {
         CurrentSection = "profiles";
+        ProfilesViewModel.ReloadTagChips();
     }
 
     [RelayCommand]
@@ -114,6 +122,12 @@ public partial class MainWindowViewModel : ViewModelBase
     private void ShowBookmarks()
     {
         CurrentSection = "bookmarks";
+    }
+
+    [RelayCommand]
+    private void ShowTags()
+    {
+        CurrentSection = "tags";
     }
 
     private async Task LoadCamoufoxVersionAsync()

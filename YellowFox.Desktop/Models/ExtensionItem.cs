@@ -8,4 +8,5 @@ public class ExtensionItem
     public string Name { get; set; } = string.Empty;
     public string Path { get; set; } = string.Empty;
     public bool IsEnabled { get; set; } = true;
+    public string? TagId { get; set; }
 }

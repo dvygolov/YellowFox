@@ -192,6 +192,50 @@
                     </ComboBox.ItemTemplate>
                 </ComboBox>
             </StackPanel>
+
+            <!-- Tags -->
+            <StackPanel Spacing="8" IsVisible="{Binding HasTags}">
+                <TextBlock Text="Tags"
+                           FontWeight="SemiBold"
+                           Foreground="#CCCCCC"
+                           FontSize="13" />
+                <TextBlock Text="До 4 тегов. К профилю применяются расширения и закладки с таким же тегом (элементы без тега — ко всем)."
+                           Foreground="#858585"
+                           FontSize="11"
+                           TextWrapping="Wrap" />
+                <ItemsControl ItemsSource="{Binding TagOptions}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:TagSelectionItem">
+                            <CheckBox IsChecked="{Binding IsSelected}"
+                                      Margin="0,0,14,8">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Border Width="20"
+                                            Height="20"
+                                            CornerRadius="5"
+                                            Background="{Binding ColorBrush}">
+                                        <TextBlock Text="{Binding Glyph}"
+                                                   FontFamily="Segoe MDL2 Assets"
+                                                   FontSize="11"
+                                                   Foreground="White"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center" />
+                                    </Border>
+                                    <TextBlock Text="{Binding Name}" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </CheckBox>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <TextBlock Text="{Binding TagLimitMessage}"
+                           Foreground="#FF8A80"
+                           FontSize="11"
+                           IsVisible="{Binding HasTagLimitMessage}" />
+            </StackPanel>
             
                 <TextBlock Text="* Required fields" 
                            FontSize="11" 

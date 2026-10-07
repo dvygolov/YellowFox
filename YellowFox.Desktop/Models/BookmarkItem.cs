@@ -11,4 +11,5 @@ public class BookmarkItem
     public string? ParentId { get; set; }
     public bool IsFolder { get; set; }
     public int SortOrder { get; set; }
+    public string? TagId { get; set; }
 }

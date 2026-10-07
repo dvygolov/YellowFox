@@ -1,6 +1,8 @@
-using System;
+using System.Collections.ObjectModel;
+using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 using YellowFox.Desktop.Models;
+using YellowFox.Desktop.Services;
 
 namespace YellowFox.Desktop.ViewModels;
 
@@ -15,13 +17,17 @@ public partial class BookmarkEditorViewModel : ViewModelBase
     [ObservableProperty]
     private string _folder = string.Empty;
 
+    [ObservableProperty]
+    private TagOption? _selectedTagOption;
+
+    public ObservableCollection<TagOption> TagOptions { get; } = new();
     public string Title { get; }
     public bool IsFolder { get; }
     public bool IsBookmark => !IsFolder;
     public string ParentId { get; }
     public string ParentDisplay { get; }
 
-    public BookmarkEditorViewModel(BookmarkItem? bookmark = null, bool isFolder = false, string? parentId = null, string? parentDisplay = null)
+    public BookmarkEditorViewModel(DatabaseService databaseService, BookmarkItem? bookmark = null, bool isFolder = false, string? parentId = null, string? parentDisplay = null)
     {
         IsFolder = bookmark?.IsFolder ?? isFolder;
         ParentId = bookmark?.ParentId ?? parentId ?? string.Empty;
@@ -30,12 +36,24 @@ public partial class BookmarkEditorViewModel : ViewModelBase
             ? (IsFolder ? "New Folder" : "New Bookmark")
             : (IsFolder ? "Edit Folder" : "Edit Bookmark");
 
+        LoadTags(databaseService, bookmark?.TagId);
+
         if (bookmark == null)
             return;
 
         TitleText = bookmark.Title;
         Url = bookmark.Url;
         Folder = bookmark.Folder ?? string.Empty;
+    }
+
+    private void LoadTags(DatabaseService databaseService, string? selectedTagId)
+    {
+        TagOptions.Clear();
+        TagOptions.Add(new TagOption(null));
+        foreach (var tag in databaseService.GetAllTags())
+            TagOptions.Add(new TagOption(tag));
+
+        SelectedTagOption = TagOptions.FirstOrDefault(option => option.Id == selectedTagId) ?? TagOptions[0];
     }
 
     public bool TryValidate(out string validationError)
@@ -59,13 +77,13 @@ public partial class BookmarkEditorViewModel : ViewModelBase
         }
 
         var trimmedUrl = Url.Trim();
-        if (trimmedUrl.StartsWith("javascript:", StringComparison.OrdinalIgnoreCase))
+        if (trimmedUrl.StartsWith("javascript:", System.StringComparison.OrdinalIgnoreCase))
         {
             validationError = string.Empty;
             return true;
         }
 
-        if (!Uri.TryCreate(trimmedUrl, UriKind.Absolute, out _))
+        if (!System.Uri.TryCreate(trimmedUrl, System.UriKind.Absolute, out _))
         {
             validationError = "URL is invalid.";
             return false;
@@ -82,6 +100,7 @@ public partial class BookmarkEditorViewModel : ViewModelBase
         bookmark.Folder = string.IsNullOrWhiteSpace(Folder) ? null : Folder.Trim();
         bookmark.ParentId = string.IsNullOrWhiteSpace(ParentId) ? null : ParentId;
         bookmark.IsFolder = IsFolder;
+        bookmark.TagId = SelectedTagOption?.Id;
         return bookmark;
     }
 }

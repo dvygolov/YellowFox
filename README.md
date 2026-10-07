@@ -34,10 +34,14 @@ local storage, and Python broker scripts to launch and control Camoufox.
 
 - Profile management: create, edit, clone, delete, search, and bulk-select
   browser profiles.
+- Tags: name/icon/color per tag, up to four tags per profile and one tag per
+  extension or bookmark. A profile only receives the extensions and bookmarks
+  that match its tags (untagged items apply to every profile).
 - Camoufox launch control: start and stop isolated browser profiles.
 - Fingerprint basics: OS and screen profile settings are passed to Camoufox.
 - Proxy management: HTTP and SOCKS5 proxies, validation, status, country flag,
-  and mobile-proxy IP rotation URL.
+  and mobile-proxy IP rotation URL. The check status is shown as an icon:
+  checkmark on success, cross on error or timeout, spinner while checking.
 - Cookie workflows: import cookies from JSON or `name=value` strings, export
   cookies, and persist imported cookies into the profile.
 - Extensions: import unpacked folders, XPI/ZIP archives, or AMO/direct URLs.

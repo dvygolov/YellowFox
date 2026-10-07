@@ -100,7 +100,7 @@
                 BorderBrush="#3E3E42" 
                 BorderThickness="0,0,0,1"
                 Padding="20,12">
-            <Grid ColumnDefinitions="Auto,Auto,*,Auto">
+            <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto">
                 <!-- Left: New Profile Button -->
                 <Button Grid.Column="0"
                         AutomationProperties.AutomationId="NewProfileButton"
@@ -141,8 +141,33 @@
                          BorderBrush="#3E3E42"
                          CornerRadius="6" />
                 
-                <!-- Right: Refresh Button -->
+                <!-- Right: View options + Refresh -->
                 <Button Grid.Column="3"
+                        AutomationProperties.AutomationId="ProfilesViewOptionsButton"
+                        Content="👁 View"
+                        Padding="12,8"
+                        Margin="0,0,8,0"
+                        Background="#3E3E42"
+                        Foreground="#CCCCCC"
+                        BorderThickness="0"
+                        CornerRadius="6"
+                        ToolTip.Tip="Tree columns">
+                    <Button.Flyout>
+                        <MenuFlyout Placement="BottomEdgeAlignedRight">
+                            <MenuItem Header="Proxy"
+                                      ToggleType="CheckBox"
+                                      IsChecked="{Binding ShowProxy, Mode=TwoWay}" />
+                            <MenuItem Header="Notes"
+                                      ToggleType="CheckBox"
+                                      IsChecked="{Binding ShowNotes, Mode=TwoWay}" />
+                            <MenuItem Header="Tags"
+                                      ToggleType="CheckBox"
+                                      IsChecked="{Binding ShowTags, Mode=TwoWay}" />
+                        </MenuFlyout>
+                    </Button.Flyout>
+                </Button>
+
+                <Button Grid.Column="4"
                         AutomationProperties.AutomationId="ProfilesRefreshButton"
                         Content="🔄 Refresh" 
                         Command="{Binding RefreshCommand}"
@@ -277,7 +302,7 @@
                 <TreeDataTemplate DataType="vm:ProfileItemViewModel"
                                   x:DataType="vm:ProfileItemViewModel"
                                   ItemsSource="{Binding Children}">
-                    <Grid ColumnDefinitions="34,26,Auto,150,*,Auto"
+                    <Grid ColumnDefinitions="34,26,Auto,Auto,*,Auto"
                           ColumnSpacing="8"
                           MinHeight="48"
                           Margin="0,1"
@@ -321,10 +346,38 @@
                                        VerticalAlignment="Center"
                                        MaxWidth="220"
                                        TextTrimming="CharacterEllipsis" />
+                            <ItemsControl ItemsSource="{Binding TagChips}"
+                                          IsVisible="{Binding ShowTags}"
+                                          VerticalAlignment="Center"
+                                          Margin="2,0,0,0">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <StackPanel Orientation="Horizontal" Spacing="4" />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:TagChipViewModel">
+                                        <Border Width="20"
+                                                Height="20"
+                                                CornerRadius="5"
+                                                Background="{Binding Brush}"
+                                                ToolTip.Tip="{Binding Name}">
+                                            <TextBlock Text="{Binding Glyph}"
+                                                       FontFamily="Segoe MDL2 Assets"
+                                                       FontSize="11"
+                                                       Foreground="White"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center" />
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
                         </StackPanel>
 
                         <TextBlock Grid.Column="3"
                                    Text="{Binding ProxyDisplay}"
+                                   Width="150"
+                                   IsVisible="{Binding ShowProxy}"
                                    Foreground="#B0B6BC"
                                    FontSize="13"
                                    VerticalAlignment="Center"
@@ -332,6 +385,7 @@
 
                         <Border Grid.Column="4"
                                 Classes="NotesHost"
+                                IsVisible="{Binding ShowNotes}"
                                 Background="#202326"
                                 BorderBrush="#30363D"
                                 BorderThickness="1"

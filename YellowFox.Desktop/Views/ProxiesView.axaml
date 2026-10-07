@@ -92,18 +92,54 @@
                   behaviors:DataGridColumnWidthPersistence.Key="Proxies"
                   Margin="0">
             <DataGrid.Columns>
-                <DataGridTemplateColumn Header="" Width="42" CanUserSort="False">
+                <DataGridTemplateColumn Header="" Width="48" CanUserSort="False">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate x:DataType="vm:ProxyItemViewModel">
-                            <Border Width="10"
-                                    Height="10"
-                                    CornerRadius="5"
-                                    Background="{Binding StatusColor}"
+                            <Border Width="26"
+                                    Height="26"
+                                    CornerRadius="6"
+                                    Background="{Binding StatusChipBackground}"
                                     BorderBrush="{Binding StatusBorderColor}"
                                     BorderThickness="1"
                                     HorizontalAlignment="Center"
                                     VerticalAlignment="Center"
-                                    ToolTip.Tip="{Binding ValidationMessage}" />
+                                    ToolTip.Tip="{Binding ValidationMessage}">
+                                <Panel>
+                                    <TextBlock Text="{Binding StatusGlyph}"
+                                               FontFamily="Segoe MDL2 Assets"
+                                               FontSize="15"
+                                               Foreground="{Binding StatusForeground}"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center"
+                                               IsVisible="{Binding IsNotChecking}" />
+                                    <TextBlock Text="&#xE895;"
+                                               FontFamily="Segoe MDL2 Assets"
+                                               FontSize="15"
+                                               Foreground="{Binding StatusForeground}"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center"
+                                               IsVisible="{Binding IsChecking}"
+                                               RenderTransformOrigin="50%,50%">
+                                        <TextBlock.RenderTransform>
+                                            <RotateTransform />
+                                        </TextBlock.RenderTransform>
+                                        <TextBlock.Styles>
+                                            <Style Selector="TextBlock">
+                                                <Style.Animations>
+                                                    <Animation Duration="0:0:1" IterationCount="INFINITE">
+                                                        <KeyFrame Cue="0%">
+                                                            <Setter Property="RotateTransform.Angle" Value="0" />
+                                                        </KeyFrame>
+                                                        <KeyFrame Cue="100%">
+                                                            <Setter Property="RotateTransform.Angle" Value="360" />
+                                                        </KeyFrame>
+                                                    </Animation>
+                                                </Style.Animations>
+                                            </Style>
+                                        </TextBlock.Styles>
+                                    </TextBlock>
+                                </Panel>
+                            </Border>
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>

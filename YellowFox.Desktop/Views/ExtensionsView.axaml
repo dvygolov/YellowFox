@@ -137,6 +137,27 @@
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
                 <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="120" />
+                <DataGridTemplateColumn Header="Tag" Width="60" CanUserSort="False">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate x:DataType="vm:ExtensionItemViewModel">
+                            <Border Width="22"
+                                    Height="22"
+                                    CornerRadius="6"
+                                    Background="{Binding TagChip.Brush}"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center"
+                                    IsVisible="{Binding HasTag}"
+                                    ToolTip.Tip="{Binding TagChip.Name}">
+                                <TextBlock Text="{Binding TagChip.Glyph}"
+                                           FontFamily="Segoe MDL2 Assets"
+                                           FontSize="12"
+                                           Foreground="White"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center" />
+                            </Border>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
                 <DataGridTextColumn Header="Path" Binding="{Binding Path}" Width="*" />
             </DataGrid.Columns>
         </DataGrid>

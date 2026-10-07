@@ -50,7 +50,7 @@ public partial class App : Application
             _agentPipeServer = new AgentPipeServer(databaseService, _browserService, proxyValidatorService, dolphinImportService, extensionStorageService, proxyIpRotationService);
             _agentPipeServer.Start();
 
-            var mainWindowViewModel = new MainWindowViewModel(databaseService, _browserService, proxyValidatorService, extensionStorageService, proxyIpRotationService);
+            var mainWindowViewModel = new MainWindowViewModel(databaseService, _browserService, proxyValidatorService, extensionStorageService, proxyIpRotationService, settingsService);
             var mainWindow = new MainWindow
             {
                 DataContext = mainWindowViewModel,

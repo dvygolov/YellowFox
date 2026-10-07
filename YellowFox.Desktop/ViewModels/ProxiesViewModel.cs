@@ -525,6 +525,33 @@ public partial class ProxyItemViewModel : ViewModelBase
         _ => "#55595E"
     };
 
+    public string StatusGlyph => ValidationState switch
+    {
+        ProxyValidationState.Success => "\uE73E",
+        ProxyValidationState.Failed => "\uE711",
+        ProxyValidationState.Checking => "\uE895",
+        _ => "\uE738"
+    };
+
+    public string StatusForeground => ValidationState switch
+    {
+        ProxyValidationState.Success => "#6EDB76",
+        ProxyValidationState.Failed => "#FF5F5F",
+        ProxyValidationState.Checking => "#4FA8FF",
+        _ => "#777D84"
+    };
+
+    public string StatusChipBackground => ValidationState switch
+    {
+        ProxyValidationState.Success => "#1B3A22",
+        ProxyValidationState.Failed => "#3A1B1B",
+        ProxyValidationState.Checking => "#152C42",
+        _ => "#2A2E33"
+    };
+
+    public bool IsChecking => ValidationState == ProxyValidationState.Checking;
+    public bool IsNotChecking => !IsChecking;
+
     public ProxyItemViewModel(Proxy proxy)
     {
         Proxy = proxy;
@@ -534,6 +561,11 @@ public partial class ProxyItemViewModel : ViewModelBase
     {
         OnPropertyChanged(nameof(StatusColor));
         OnPropertyChanged(nameof(StatusBorderColor));
+        OnPropertyChanged(nameof(StatusGlyph));
+        OnPropertyChanged(nameof(StatusForeground));
+        OnPropertyChanged(nameof(StatusChipBackground));
+        OnPropertyChanged(nameof(IsChecking));
+        OnPropertyChanged(nameof(IsNotChecking));
     }
 
     public void SetChecking()

@@ -19,8 +19,9 @@ public class ProfileFolderTreeTests : IDisposable
     private (DatabaseService Database, ProfilesViewModel ViewModel) CreateViewModel()
     {
         var database = new DatabaseService(_testDataDir, disablePooling: true);
-        var browser = new BrowserService(database, new SettingsService(), new ProxyValidatorService());
-        return (database, new ProfilesViewModel(database, browser));
+        var settings = new SettingsService(Path.Combine(_testDataDir, "settings.json"));
+        var browser = new BrowserService(database, settings, new ProxyValidatorService());
+        return (database, new ProfilesViewModel(database, browser, settings));
     }
 
     [Fact]

@@ -194,6 +194,27 @@
                             <TextBlock Text="Bookmarks" VerticalAlignment="Center" IsVisible="{Binding IsSidebarExpanded}" />
                         </StackPanel>
                     </Button>
+
+                    <Button Classes="NavButton NavButtonActive"
+                            AutomationProperties.AutomationId="NavTagsButton"
+                            Command="{Binding ShowTagsCommand}"
+                            IsVisible="{Binding IsTagsSection}"
+                            ToolTip.Tip="Tags">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <TextBlock Text="🏷️" FontSize="16" VerticalAlignment="Center" />
+                            <TextBlock Text="Tags" VerticalAlignment="Center" IsVisible="{Binding IsSidebarExpanded}" />
+                        </StackPanel>
+                    </Button>
+                    <Button Classes="NavButton"
+                            AutomationProperties.AutomationId="NavTagsButton"
+                            Command="{Binding ShowTagsCommand}"
+                            IsVisible="{Binding IsNotTagsSection}"
+                            ToolTip.Tip="Tags">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <TextBlock Text="🏷️" FontSize="16" VerticalAlignment="Center" />
+                            <TextBlock Text="Tags" VerticalAlignment="Center" IsVisible="{Binding IsSidebarExpanded}" />
+                        </StackPanel>
+                    </Button>
                 </StackPanel>
             </DockPanel>
         </Border>
@@ -207,6 +228,8 @@
                                   IsVisible="{Binding DataContext.IsExtensionsSection, ElementName=RootWindow}" />
             <views:BookmarksView DataContext="{Binding BookmarksViewModel}"
                                  IsVisible="{Binding DataContext.IsBookmarksSection, ElementName=RootWindow}" />
+            <views:TagsView DataContext="{Binding TagsViewModel}"
+                            IsVisible="{Binding DataContext.IsTagsSection, ElementName=RootWindow}" />
         </Grid>
     </DockPanel>
 

@@ -80,7 +80,7 @@ public partial class ExtensionsViewModel : ViewModelBase
     [RelayCommand]
     private async Task NewExtension()
     {
-        var editor = new ExtensionEditorViewModel(_extensionStorageService);
+        var editor = new ExtensionEditorViewModel(_extensionStorageService, _databaseService);
         if (!await ShowExtensionEditorAsync(editor))
             return;
 
@@ -108,7 +108,7 @@ public partial class ExtensionsViewModel : ViewModelBase
         if (SelectedExtension == null)
             return;
 
-        var editor = new ExtensionEditorViewModel(_extensionStorageService, SelectedExtension.Extension);
+        var editor = new ExtensionEditorViewModel(_extensionStorageService, _databaseService, SelectedExtension.Extension);
         if (!await ShowExtensionEditorAsync(editor))
             return;
 
@@ -355,9 +355,14 @@ public partial class ExtensionsViewModel : ViewModelBase
     private void Load()
     {
         Extensions.Clear();
+        var tagsById = _databaseService.GetAllTags().ToDictionary(tag => tag.Id, StringComparer.Ordinal);
         foreach (var extension in _databaseService.GetAllExtensions())
         {
-            Extensions.Add(new ExtensionItemViewModel(extension));
+            Tag? tag = null;
+            if (!string.IsNullOrWhiteSpace(extension.TagId))
+                tagsById.TryGetValue(extension.TagId!, out tag);
+
+            Extensions.Add(new ExtensionItemViewModel(extension, tag));
         }
     }
 
@@ -533,10 +538,14 @@ public class ExtensionItemViewModel : ViewModelBase
     public bool HasNoIcon => Icon == null;
     public string Initial => string.IsNullOrWhiteSpace(Name) ? "?" : Name.Trim()[0].ToString().ToUpperInvariant();
 
-    public ExtensionItemViewModel(ExtensionItem extension)
+    public TagChipViewModel? TagChip { get; }
+    public bool HasTag => TagChip != null;
+
+    public ExtensionItemViewModel(ExtensionItem extension, Tag? tag = null)
     {
         Extension = extension;
         Icon = LoadIcon(extension.Path);
+        TagChip = tag == null ? null : new TagChipViewModel(tag);
     }
 
     private static Bitmap? LoadIcon(string extensionPath)

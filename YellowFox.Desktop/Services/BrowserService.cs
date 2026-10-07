@@ -199,7 +199,7 @@ public class BrowserService
             }
 
             var userDataDir = _databaseService.GetProfileDataDirectory(profileId);
-            var sharedBookmarks = _databaseService.GetAllBookmarks();
+            var sharedBookmarks = _databaseService.GetBookmarksForProfile(profile);
             _ = PrepareSharedBookmarks(userDataDir, sharedBookmarks);
             WriteProfileIdentityPrefs(userDataDir, profile.Name);
             await WriteLogAsync(logPath, "INFO", $"Prepared profile directory and shared bookmarks: {userDataDir}");
@@ -207,7 +207,7 @@ public class BrowserService
             // A runtime that died without a clean shutdown keeps the profile directory locked.
             await ClearStaleProfileRuntimeAsync(profileId, logPath);
 
-            var extensionSync = PrepareSharedExtensions(userDataDir, _databaseService.GetEnabledExtensions());
+            var extensionSync = PrepareSharedExtensions(userDataDir, _databaseService.GetExtensionsForProfile(profile));
             await WriteLogAsync(logPath, "INFO", $"Synced shared extensions. Installed={extensionSync.InstalledCount}, removed={extensionSync.RemovedCount}, skipped={extensionSync.SkippedCount}.");
             var enabledExtensions = Array.Empty<string>();
             var contextFingerprint = await GenerateCamoufoxContextFingerprintAsync(profile, browserProxy, logPath);

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -34,6 +35,16 @@ public partial class ProfileEditorViewModel : ViewModelBase
     
     public ObservableCollection<ScreenPreset> ScreenPresets { get; } = new(ScreenPreset.Presets);
     public ObservableCollection<ProxyOption> ProxyOptions { get; } = new();
+    public ObservableCollection<TagSelectionItem> TagOptions { get; } = new();
+
+    public const int MaxProfileTags = 4;
+
+    [ObservableProperty]
+    private string _tagLimitMessage = string.Empty;
+
+    public int SelectedTagCount => TagOptions.Count(option => option.IsSelected);
+    public bool HasTags => TagOptions.Count > 0;
+    public bool HasTagLimitMessage => !string.IsNullOrEmpty(TagLimitMessage);
     
     public bool IsEditMode => _existingProfile != null && !_isCloneMode;
     public string Title => _isCloneMode ? "Clone Profile" : (IsEditMode ? "Edit Profile" : "New Profile");
@@ -46,6 +57,7 @@ public partial class ProfileEditorViewModel : ViewModelBase
         _initialFolderId = initialFolderId;
 
         LoadProxies(existingProfile?.ProxyId);
+        LoadTags(existingProfile?.TagIds);
         
         if (existingProfile != null)
         {
@@ -100,6 +112,11 @@ public partial class ProfileEditorViewModel : ViewModelBase
         var plainNotes = TextSanitizer.HtmlToPlainText(Notes);
         profile.Notes = string.IsNullOrWhiteSpace(plainNotes) ? null : plainNotes.Trim();
         profile.ProxyId = SelectedProxyOption?.Id;
+        profile.TagIds = TagOptions
+            .Where(option => option.IsSelected)
+            .Select(option => option.Tag.Id)
+            .Take(MaxProfileTags)
+            .ToList();
         profile.FingerprintConfig = new FingerprintConfig
         {
             Os = SelectedOsOption.Id,
@@ -154,6 +171,65 @@ public partial class ProfileEditorViewModel : ViewModelBase
         }
 
         SelectedProxyOption = ProxyOptions.FirstOrDefault(p => p.Id == selectedProxyId) ?? ProxyOptions.First();
+    }
+
+    partial void OnTagLimitMessageChanged(string value)
+    {
+        OnPropertyChanged(nameof(HasTagLimitMessage));
+    }
+
+    private void LoadTags(IReadOnlyCollection<string>? selectedTagIds)
+    {
+        TagOptions.Clear();
+        var selected = selectedTagIds ?? System.Array.Empty<string>();
+        foreach (var tag in _databaseService.GetAllTags())
+        {
+            var isSelected = selected.Contains(tag.Id, System.StringComparer.Ordinal);
+            TagOptions.Add(new TagSelectionItem(tag, isSelected, OnTagSelectionChanged));
+        }
+    }
+
+    private void OnTagSelectionChanged(TagSelectionItem item)
+    {
+        if (item.IsSelected && SelectedTagCount > MaxProfileTags)
+        {
+            item.IsSelected = false;
+            TagLimitMessage = $"Можно выбрать не больше {MaxProfileTags} тегов.";
+            OnPropertyChanged(nameof(SelectedTagCount));
+            return;
+        }
+
+        if (SelectedTagCount > MaxProfileTags)
+            return;
+
+        TagLimitMessage = string.Empty;
+        OnPropertyChanged(nameof(SelectedTagCount));
+    }
+}
+
+public partial class TagSelectionItem : ViewModelBase
+{
+    private readonly System.Action<TagSelectionItem>? _onSelectionChanged;
+
+    [ObservableProperty]
+    private bool _isSelected;
+
+    public Tag Tag { get; }
+    public string Name => Tag.Name;
+    public string Glyph => TagIconCatalog.GlyphFor(Tag.Icon);
+    public Avalonia.Media.IBrush ColorBrush { get; }
+
+    public TagSelectionItem(Tag tag, bool isSelected, System.Action<TagSelectionItem>? onSelectionChanged = null)
+    {
+        Tag = tag;
+        _isSelected = isSelected;
+        _onSelectionChanged = onSelectionChanged;
+        ColorBrush = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse(tag.Color));
+    }
+
+    partial void OnIsSelectedChanged(bool value)
+    {
+        _onSelectionChanged?.Invoke(this);
     }
 }
 

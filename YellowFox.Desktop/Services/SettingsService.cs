@@ -10,10 +10,11 @@ public class SettingsService
     private readonly string _settingsPath;
     private AppSettings? _settings;
     
-    public SettingsService()
+    public SettingsService(string? settingsPath = null)
     {
-        var appDir = AppDomain.CurrentDomain.BaseDirectory;
-        _settingsPath = Path.Combine(appDir, "settings.json");
+        _settingsPath = !string.IsNullOrWhiteSpace(settingsPath)
+            ? settingsPath!
+            : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "settings.json");
     }
     
     public AppSettings GetSettings()

@@ -1,3 +1,5 @@
+using System.Collections.ObjectModel;
+using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 using YellowFox.Desktop.Models;
 using YellowFox.Desktop.Services;
@@ -17,12 +19,18 @@ public partial class ExtensionEditorViewModel : ViewModelBase
     [ObservableProperty]
     private bool _isExtensionEnabled = true;
 
+    [ObservableProperty]
+    private TagOption? _selectedTagOption;
+
+    public ObservableCollection<TagOption> TagOptions { get; } = new();
     public string Title { get; }
 
-    public ExtensionEditorViewModel(ExtensionStorageService extensionStorageService, ExtensionItem? extension = null)
+    public ExtensionEditorViewModel(ExtensionStorageService extensionStorageService, DatabaseService databaseService, ExtensionItem? extension = null)
     {
         _extensionStorageService = extensionStorageService;
         Title = extension == null ? "New Extension" : "Edit Extension";
+
+        LoadTags(databaseService, extension?.TagId);
 
         if (extension == null)
             return;
@@ -30,6 +38,16 @@ public partial class ExtensionEditorViewModel : ViewModelBase
         Name = extension.Name;
         ExtensionPath = extension.Path;
         IsExtensionEnabled = extension.IsEnabled;
+    }
+
+    private void LoadTags(DatabaseService databaseService, string? selectedTagId)
+    {
+        TagOptions.Clear();
+        TagOptions.Add(new TagOption(null));
+        foreach (var tag in databaseService.GetAllTags())
+            TagOptions.Add(new TagOption(tag));
+
+        SelectedTagOption = TagOptions.FirstOrDefault(option => option.Id == selectedTagId) ?? TagOptions[0];
     }
 
     public bool TryValidate(out string validationError)
@@ -58,6 +76,7 @@ public partial class ExtensionEditorViewModel : ViewModelBase
             ? _extensionStorageService.StoreArchive(ExtensionPath.Trim(), extension.Id)
             : ExtensionPath.Trim();
         extension.IsEnabled = IsExtensionEnabled;
+        extension.TagId = SelectedTagOption?.Id;
         return extension;
     }
 }

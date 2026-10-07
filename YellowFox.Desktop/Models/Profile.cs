@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text.Json;
 
 namespace YellowFox.Desktop.Models;
@@ -12,6 +13,7 @@ public class Profile
     public string? DolphinProfileId { get; set; }
     public string? FolderId { get; set; }
     public int SortOrder { get; set; }
+    public List<string> TagIds { get; set; } = new();
     public FingerprintConfig FingerprintConfig { get; set; } = new();
 }
 

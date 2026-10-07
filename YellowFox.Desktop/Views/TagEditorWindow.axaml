@@ -1,0 +1,182 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:YellowFox.Desktop.ViewModels"
+        xmlns:models="using:YellowFox.Desktop.Models"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d" d:DesignWidth="460" d:DesignHeight="540"
+        x:Class="YellowFox.Desktop.Views.TagEditorWindow"
+        x:DataType="vm:TagEditorViewModel"
+        Icon="/Assets/yellowfox.ico"
+        Width="460" Height="545"
+        MinWidth="430" MinHeight="500"
+        Title="{Binding Title}"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False"
+        Background="#252526">
+
+    <Window.Styles>
+        <Style Selector="ListBox.TagIconList ListBoxItem">
+            <Setter Property="Padding" Value="3" />
+            <Setter Property="Margin" Value="2" />
+            <Setter Property="CornerRadius" Value="7" />
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="ListBox.TagIconList ListBoxItem:selected /template/ ContentPresenter">
+            <Setter Property="Background" Value="#2F6FB8" />
+        </Style>
+        <Style Selector="ListBox.TagColorList ListBoxItem">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="3" />
+            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="ListBox.TagColorList ListBoxItem:selected /template/ ContentPresenter">
+            <Setter Property="Background" Value="#2F6FB8" />
+        </Style>
+    </Window.Styles>
+
+    <DockPanel Margin="24">
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Center" Spacing="15" Margin="0,24,0,0">
+            <Button AutomationProperties.AutomationId="TagEditorSaveButton"
+                    Width="140" Height="42"
+                    Click="SaveButton_Click"
+                    Background="#4CAF50"
+                    Foreground="White"
+                    BorderThickness="0"
+                    CornerRadius="8"
+                    FontWeight="SemiBold"
+                    HorizontalContentAlignment="Center"
+                    VerticalContentAlignment="Center">
+                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                    <TextBlock Text="&#xE74E;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center" />
+                    <TextBlock Text="Save" VerticalAlignment="Center" />
+                </StackPanel>
+            </Button>
+            <Button AutomationProperties.AutomationId="TagEditorCancelButton"
+                    Width="140" Height="42"
+                    Click="CancelButton_Click"
+                    Background="#3E3E42"
+                    Foreground="#CCCCCC"
+                    BorderThickness="0"
+                    CornerRadius="8"
+                    FontWeight="SemiBold"
+                    HorizontalContentAlignment="Center"
+                    VerticalContentAlignment="Center">
+                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                    <TextBlock Text="&#xE711;" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center" />
+                    <TextBlock Text="Cancel" VerticalAlignment="Center" />
+                </StackPanel>
+            </Button>
+        </StackPanel>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Spacing="18" Margin="0,0,0,8">
+                <TextBlock Text="{Binding Title}"
+                           FontSize="20"
+                           FontWeight="Bold"
+                           Foreground="#CCCCCC"
+                           Margin="0,0,0,4" />
+
+                <StackPanel Spacing="8">
+                    <TextBlock Text="Name *"
+                               FontWeight="SemiBold"
+                               Foreground="#CCCCCC"
+                               FontSize="13" />
+                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                        <Border Grid.Column="0"
+                                Width="42"
+                                Height="42"
+                                CornerRadius="9"
+                                Background="{Binding PreviewBrush}">
+                            <TextBlock Text="{Binding PreviewGlyph}"
+                                       FontFamily="Segoe MDL2 Assets"
+                                       FontSize="19"
+                                       Foreground="White"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center" />
+                        </Border>
+                        <TextBox Grid.Column="1"
+                                 AutomationProperties.AutomationId="TagNameInput"
+                                 Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
+                                 Watermark="Tag name"
+                                 Background="#1E1E1E"
+                                 Foreground="#CCCCCC"
+                                 BorderBrush="#3E3E42"
+                                 Padding="12,10"
+                                 CornerRadius="6"
+                                 VerticalContentAlignment="Center" />
+                    </Grid>
+                </StackPanel>
+
+                <StackPanel Spacing="8">
+                    <TextBlock Text="Icon"
+                               FontWeight="SemiBold"
+                               Foreground="#CCCCCC"
+                               FontSize="13" />
+                    <ListBox Classes="TagIconList"
+                             AutomationProperties.AutomationId="TagIconList"
+                             ItemsSource="{Binding Icons}"
+                             SelectedItem="{Binding SelectedIconOption}"
+                             Background="Transparent"
+                             BorderThickness="0"
+                             MaxHeight="168"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListBox.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel />
+                            </ItemsPanelTemplate>
+                        </ListBox.ItemsPanel>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="models:TagIconOption">
+                                <Border Width="34"
+                                        Height="34"
+                                        CornerRadius="6"
+                                        Background="#2A2E33"
+                                        ToolTip.Tip="{Binding DisplayName}">
+                                    <TextBlock Text="{Binding Glyph}"
+                                               FontFamily="Segoe MDL2 Assets"
+                                               FontSize="16"
+                                               Foreground="#DDDDDD"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center" />
+                                </Border>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </StackPanel>
+
+                <StackPanel Spacing="8">
+                    <TextBlock Text="Color"
+                               FontWeight="SemiBold"
+                               Foreground="#CCCCCC"
+                               FontSize="13" />
+                    <ListBox Classes="TagColorList"
+                             AutomationProperties.AutomationId="TagColorList"
+                             ItemsSource="{Binding Colors}"
+                             SelectedItem="{Binding SelectedColorOption}"
+                             Background="Transparent"
+                             BorderThickness="0"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListBox.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel />
+                            </ItemsPanelTemplate>
+                        </ListBox.ItemsPanel>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="vm:TagColorOption">
+                                <Border Width="34"
+                                        Height="34"
+                                        CornerRadius="8"
+                                        Background="{Binding Brush}"
+                                        BorderBrush="#4A4A4E"
+                                        BorderThickness="1" />
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</Window>
