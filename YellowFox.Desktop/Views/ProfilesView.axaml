@@ -315,6 +315,7 @@
                                 <MenuItem Header="Export cookies" Command="{Binding ExportCookiesCommand}" />
                                 <MenuItem Header="Import cookies" Command="{Binding ImportCookiesCommand}" />
                                 <MenuItem Header="Open log" Command="{Binding ViewLogCommand}" />
+                                <MenuItem Header="Passkeys" Command="{Binding PasskeysCommand}" />
                                 <Separator />
                                 <MenuItem Header="Delete" Command="{Binding DeleteCommand}" Foreground="#F44336" />
                             </ContextMenu>
@@ -482,6 +483,11 @@
                                     <TextBlock Text="Importing" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Button>
+
+                            <Button Classes="SecondaryAction"
+                                    Command="{Binding PasskeysCommand}"
+                                    Content="&#xE192;"
+                                    ToolTip.Tip="Passkeys" />
 
                             <Button Classes="SecondaryAction"
                                     Command="{Binding EditCommand}"

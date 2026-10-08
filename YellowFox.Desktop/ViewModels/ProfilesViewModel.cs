@@ -25,6 +25,7 @@ public partial class ProfilesViewModel : ViewModelBase
     private readonly DatabaseService _databaseService;
     private readonly BrowserService _browserService;
     private readonly SettingsService _settingsService;
+    private readonly PasskeyStoreService _passkeyStore = new();
     private readonly Dictionary<string, bool> _folderExpansion = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ProfileFolder> _foldersById = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Profile> _profilesById = new(StringComparer.Ordinal);
@@ -543,6 +544,23 @@ public partial class ProfilesViewModel : ViewModelBase
         }
     }
 
+    public Task OpenPasskeys(ProfileItemViewModel profileVm)
+    {
+        var profileDirectory = _databaseService.GetProfileDataDirectory(profileVm.Profile.Id);
+        var window = new PasskeysWindow();
+        var passkeysVm = new PasskeysViewModel(
+            _passkeyStore,
+            profileVm.Profile.Id,
+            profileVm.Profile.Name,
+            profileDirectory,
+            profileVm.IsRunning,
+            () => window);
+        passkeysVm.CloseRequested += window.Close;
+        window.DataContext = passkeysVm;
+        window.Show(GetMainWindow());
+        return Task.CompletedTask;
+    }
+
     public async Task OpenLog(ProfileItemViewModel profileVm)
     {
         try
@@ -1053,6 +1071,12 @@ public partial class ProfileItemViewModel : ProfileNodeViewModel
     private async Task ViewLog()
     {
         await _parent.OpenLog(this);
+    }
+
+    [RelayCommand]
+    private Task Passkeys()
+    {
+        return _parent.OpenPasskeys(this);
     }
 
     [RelayCommand]
