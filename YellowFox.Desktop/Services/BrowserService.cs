@@ -394,6 +394,7 @@ public class BrowserService
             }
             await KillTrackedBrowserProcessesAsync(instance.BrowserProcessIds, logPath);
             await StopProxyBridgeAsync(instance.ProxyBridgeProcess, instance.ProxyBridgeConfigPath, logPath);
+            await CleanProfileRegenerableDataAsync(profileId, logPath);
 
             if (File.Exists(instance.TempConfigPath))
                 File.Delete(instance.TempConfigPath);
@@ -412,6 +413,30 @@ public class BrowserService
             await WriteLogAsync(logPath, "ERROR", $"Stop failed: {ex.Message}");
             Debug.WriteLine($"Error stopping profile: {ex.Message}");
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Drops regenerable browser data (caches, favicons, crash dumps, ...) once
+    /// the browser is down, so a profile keeps just its identity/state on disk.
+    /// </summary>
+    private async Task CleanProfileRegenerableDataAsync(string profileId, string logPath)
+    {
+        try
+        {
+            var profileDirectory = _databaseService.GetProfileDataDirectory(profileId);
+            var result = ProfileCleanupService.Clean(profileDirectory);
+            if (result.FreedAnything)
+            {
+                await WriteLogAsync(
+                    logPath,
+                    "INFO",
+                    $"Cleaned regenerable profile data: freed {ProfileCleanupService.FormatBytes(result.BytesFreed)} ({result.ItemsRemoved} item(s)).");
+            }
+        }
+        catch (Exception ex)
+        {
+            await WriteLogAsync(logPath, "WARN", $"Profile cleanup skipped: {ex.Message}");
         }
     }
 
@@ -3176,6 +3201,7 @@ public class BrowserService
             if (File.Exists(instance.TempConfigPath))
                 File.Delete(instance.TempConfigPath);
 
+            await CleanProfileRegenerableDataAsync(profileId, logPath);
             await WriteLogAsync(logPath, "INFO", $"Profile '{profileName}' process exited. Marked as stopped.");
         }
         catch (Exception ex)
@@ -3223,6 +3249,7 @@ public class BrowserService
             if (File.Exists(instance.TempConfigPath))
                 File.Delete(instance.TempConfigPath);
 
+            await CleanProfileRegenerableDataAsync(profileId, logPath);
             await WriteLogAsync(logPath, "INFO", $"Browser disconnected for profile '{profileName}'. Marked as stopped.");
         }
         catch (Exception ex)
@@ -3272,6 +3299,7 @@ public class BrowserService
             if (File.Exists(instance.TempConfigPath))
                 File.Delete(instance.TempConfigPath);
 
+            await CleanProfileRegenerableDataAsync(profileId, logPath);
             await WriteLogAsync(logPath, "INFO", $"Browser window closed for profile '{profileName}'. Marked as stopped.");
         }
         catch (Exception ex)
@@ -3320,6 +3348,7 @@ public class BrowserService
             if (File.Exists(instance.TempConfigPath))
                 File.Delete(instance.TempConfigPath);
 
+            await CleanProfileRegenerableDataAsync(profileId, logPath);
             await WriteLogAsync(logPath, "INFO", $"Browser runtime disappeared for profile '{profileName}'. Marked as stopped.");
         }
         catch (Exception ex)
