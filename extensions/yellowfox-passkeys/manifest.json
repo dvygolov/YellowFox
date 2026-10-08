@@ -1,0 +1,32 @@
+{
+  "manifest_version": 2,
+  "name": "YellowFox Passkeys",
+  "version": "1.0.0",
+  "description": "Routes WebAuthn platform passkey requests to the per-profile YellowFox software authenticator.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "yellowfox-passkeys@yellowfox.local"
+    }
+  },
+  "permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true,
+      "match_about_blank": false
+    }
+  ],
+  "web_accessible_resources": [
+    "page-hook.js"
+  ]
+}

@@ -15,6 +15,10 @@ public class DatabaseService
     private const string MetaAdLibraryDownloaderExtensionName = "Meta Ad Library Video Downloader";
     private const string MetaAdLibraryDownloaderExtensionPath = "extensions/meta-ad-library-video-downloader";
 
+    private const string PasskeysExtensionId = "builtin-yellowfox-passkeys";
+    private const string PasskeysExtensionName = "YellowFox Passkeys";
+    private const string PasskeysExtensionPath = "extensions/yellowfox-passkeys";
+
     private readonly string _connectionString;
     private readonly string _dataDirectory;
     private readonly bool _seedBuiltInExtensions;
@@ -274,17 +278,26 @@ public class DatabaseService
 
     private static void SeedBuiltInExtensions(SqliteConnection connection, SqliteTransaction transaction)
     {
+        SeedBuiltInExtension(connection, transaction, MetaAdLibraryDownloaderExtensionId,
+            MetaAdLibraryDownloaderExtensionName, MetaAdLibraryDownloaderExtensionPath);
+        SeedBuiltInExtension(connection, transaction, PasskeysExtensionId,
+            PasskeysExtensionName, PasskeysExtensionPath);
+    }
+
+    private static void SeedBuiltInExtension(SqliteConnection connection, SqliteTransaction transaction,
+        string id, string name, string relativePath)
+    {
         var extensionPath = Path.Combine(
             AppDomain.CurrentDomain.BaseDirectory,
-            MetaAdLibraryDownloaderExtensionPath.Replace('/', Path.DirectorySeparatorChar));
+            relativePath.Replace('/', Path.DirectorySeparatorChar));
 
         if (!Directory.Exists(extensionPath) || !File.Exists(Path.Combine(extensionPath, "manifest.json")))
             return;
 
-        if (UpdateBuiltInExtensionById(connection, transaction, extensionPath))
+        if (UpdateBuiltInExtensionById(connection, transaction, id, name, extensionPath))
             return;
 
-        if (UpdateBuiltInExtensionByName(connection, transaction, extensionPath))
+        if (UpdateBuiltInExtensionByName(connection, transaction, name, extensionPath))
             return;
 
         using var insert = connection.CreateCommand();
@@ -292,13 +305,14 @@ public class DatabaseService
         insert.CommandText = @"
             INSERT INTO extensions (id, name, path, is_enabled)
             VALUES (@id, @name, @path, 1)";
-        insert.Parameters.AddWithValue("@id", MetaAdLibraryDownloaderExtensionId);
-        insert.Parameters.AddWithValue("@name", MetaAdLibraryDownloaderExtensionName);
+        insert.Parameters.AddWithValue("@id", id);
+        insert.Parameters.AddWithValue("@name", name);
         insert.Parameters.AddWithValue("@path", extensionPath);
         insert.ExecuteNonQuery();
     }
 
-    private static bool UpdateBuiltInExtensionById(SqliteConnection connection, SqliteTransaction transaction, string extensionPath)
+    private static bool UpdateBuiltInExtensionById(SqliteConnection connection, SqliteTransaction transaction,
+        string id, string name, string extensionPath)
     {
         using var update = connection.CreateCommand();
         update.Transaction = transaction;
@@ -306,13 +320,14 @@ public class DatabaseService
             UPDATE extensions
             SET name = @name, path = @path
             WHERE id = @id";
-        update.Parameters.AddWithValue("@id", MetaAdLibraryDownloaderExtensionId);
-        update.Parameters.AddWithValue("@name", MetaAdLibraryDownloaderExtensionName);
+        update.Parameters.AddWithValue("@id", id);
+        update.Parameters.AddWithValue("@name", name);
         update.Parameters.AddWithValue("@path", extensionPath);
         return update.ExecuteNonQuery() > 0;
     }
 
-    private static bool UpdateBuiltInExtensionByName(SqliteConnection connection, SqliteTransaction transaction, string extensionPath)
+    private static bool UpdateBuiltInExtensionByName(SqliteConnection connection, SqliteTransaction transaction,
+        string name, string extensionPath)
     {
         using var update = connection.CreateCommand();
         update.Transaction = transaction;
@@ -320,7 +335,7 @@ public class DatabaseService
             UPDATE extensions
             SET path = @path
             WHERE name = @name";
-        update.Parameters.AddWithValue("@name", MetaAdLibraryDownloaderExtensionName);
+        update.Parameters.AddWithValue("@name", name);
         update.Parameters.AddWithValue("@path", extensionPath);
         return update.ExecuteNonQuery() > 0;
     }

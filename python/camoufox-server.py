@@ -156,6 +156,15 @@ def build_launch_kwargs(config):
             "datareporting.policy.dataSubmissionEnabled": False,
             "datareporting.policy.dataSubmissionPolicyAcceptedVersion": 999,
             "datareporting.policy.dataSubmissionPolicyNotifiedTime": "0",
+            # Per-profile software passkey (WebAuthn) authenticator.
+            # Without this Firefox falls back to Windows Hello for platform
+            # passkeys, which cannot be promoted from an automation-launched
+            # profile and does not live in the profile directory. The
+            # authenticator-rs "soft token" backs a virtual platform
+            # authenticator that is registered and persisted per profile by
+            # yellowfox.cfg (see ensure_minimal_browser_autoconfig).
+            "security.webauth.webauthn_enable_softtoken": True,
+            "security.webauth.webauthn_enable_usbtoken": False,
             "datareporting.healthreport.uploadEnabled": False,
             "toolkit.telemetry.enabled": False,
             "toolkit.telemetry.unified": False,
@@ -337,6 +346,129 @@ try {
   Services.obs.addObserver((subject) => showBookmarksToolbar(subject), "browser-delayed-startup-finished");
   for (const win of Services.wm.getEnumerator("navigator:browser")) {
     showBookmarksToolbar(win);
+  }
+} catch (e) {}
+
+try {
+  // Per-profile software passkey store. A virtual platform authenticator is
+  // registered for every launch and backed by yellowfox-passkeys.json in the
+  // profile directory, so passkeys survive profile reloads and stay isolated
+  // between profiles. Everything here uses raw Components APIs because the
+  // autoconfig sandbox does not expose module helpers such as
+  // ChromeUtils/Services/IOUtils at this point of startup.
+  const prefBranch = Components.classes["@mozilla.org/preferences-service;1"]
+    .getService(Components.interfaces.nsIPrefService).getBranch("");
+  // Force the authenticator-rs software token backend before touching the
+  // service: Playwright applies firefox_user_prefs after autoconfig has run,
+  // so the prefs cannot be relied on here yet. See DefaultService() in
+  // WebAuthnService.h.
+  try {
+    prefBranch.setBoolPref("security.webauth.webauthn_enable_softtoken", true);
+    prefBranch.setBoolPref("security.webauth.webauthn_enable_usbtoken", false);
+  } catch (e) {}
+
+  const profileDir = Components.classes["@mozilla.org/file/directory_service;1"]
+    .getService(Components.interfaces.nsIProperties)
+    .get("ProfD", Components.interfaces.nsIFile);
+  const storeFile = profileDir.clone();
+  storeFile.append("yellowfox-passkeys.json");
+
+  function readPasskeys() {
+    try {
+      if (!storeFile.exists()) {
+        return [];
+      }
+      const stream = Components.classes["@mozilla.org/network/file-input-stream;1"]
+        .createInstance(Components.interfaces.nsIFileInputStream);
+      stream.init(storeFile, -1, 0, 0);
+      const converter = Components.classes["@mozilla.org/intl/converter-input-stream;1"]
+        .createInstance(Components.interfaces.nsIConverterInputStream);
+      converter.init(stream, "UTF-8", 0, 0);
+      let text = "";
+      const chunk = {};
+      while (converter.readString(4096, chunk) !== 0) {
+        text += chunk.value;
+      }
+      converter.close();
+      const data = JSON.parse(text);
+      return data && Array.isArray(data.credentials) ? data.credentials : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function writePasskeys(records) {
+    try {
+      const stream = Components.classes["@mozilla.org/network/file-output-stream;1"]
+        .createInstance(Components.interfaces.nsIFileOutputStream);
+      // PR_WRONLY | PR_CREATE_FILE | PR_TRUNCATE
+      stream.init(storeFile, 0x02 | 0x08 | 0x20, 0o666, 0);
+      const converter = Components.classes["@mozilla.org/intl/converter-output-stream;1"]
+        .createInstance(Components.interfaces.nsIConverterOutputStream);
+      converter.init(stream, "UTF-8", 0, 0);
+      converter.writeString(JSON.stringify({ version: 1, credentials: records }));
+      converter.close();
+    } catch (e) {}
+  }
+
+  const webauthn = Components.classes["@mozilla.org/webauthn/service;1"]
+    .getService(Components.interfaces.nsIWebAuthnService);
+  let authenticatorId = "";
+  try {
+    authenticatorId = webauthn.addVirtualAuthenticator(
+      "ctap2", "internal", true, true, true, true);
+  } catch (e) {}
+
+  if (authenticatorId) {
+    const stored = readPasskeys();
+    for (const record of stored) {
+      try {
+        webauthn.addCredential(
+          authenticatorId,
+          record.credentialId,
+          !!record.isResidentCredential,
+          record.rpId,
+          record.privateKey,
+          record.userHandle || "",
+          record.signCount | 0);
+      } catch (e) {}
+    }
+
+    let known = JSON.stringify(stored);
+    // The autoconfig execution context holds no long-lived reference to the
+    // timer, so it (and its callback) would be collected after a few seconds.
+    // Registering a dummy observer keeps this object -- and therefore the
+    // timer -- alive for the lifetime of the browser process.
+    const keepAlive = {
+      observe() {},
+      timer: null,
+    };
+    try {
+      Components.classes["@mozilla.org/observer-service;1"]
+        .getService(Components.interfaces.nsIObserverService)
+        .addObserver(keepAlive, "quit-application-requested");
+    } catch (e) {}
+
+    const timer = Components.classes["@mozilla.org/timer;1"].createInstance(
+      Components.interfaces.nsITimer);
+    keepAlive.timer = timer;
+    timer.initWithCallback(() => {
+      try {
+        const records = Array.from(webauthn.getCredentials(authenticatorId) || []).map((credential) => ({
+          credentialId: credential.credentialId,
+          isResidentCredential: !!credential.isResidentCredential,
+          rpId: credential.rpId,
+          privateKey: credential.privateKey,
+          userHandle: credential.userHandle || "",
+          signCount: credential.signCount | 0,
+        }));
+        const next = JSON.stringify(records);
+        if (next !== known) {
+          known = next;
+          writePasskeys(records);
+        }
+      } catch (e) {}
+    }, 2000, Components.interfaces.nsITimer.TYPE_REPEATING_SLACK);
   }
 } catch (e) {}
 '''
