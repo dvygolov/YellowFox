@@ -939,6 +939,21 @@ public partial class ProfileItemViewModel : ProfileNodeViewModel
         }
     }
 
+    public string ProxyToolTip
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(Profile.ProxyId))
+                return "No proxy";
+
+            var proxy = _databaseService.GetProxy(Profile.ProxyId);
+            if (proxy == null)
+                return "Unknown proxy";
+
+            return $"{proxy.Name}\n{proxy.Type.ToUpperInvariant()} {proxy.Host}:{proxy.Port}";
+        }
+    }
+
     public string NotesDisplay => TextSanitizer.HtmlToPlainText(Profile.Notes);
     public bool HasNotes => !string.IsNullOrWhiteSpace(NotesDisplay);
     public bool IsNotesCollapsed => !IsNotesExpanded;
