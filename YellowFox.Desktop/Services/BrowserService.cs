@@ -440,6 +440,87 @@ public class BrowserService
         }
     }
 
+    /// <summary>
+    /// One-time maintenance: optionally back each stopped profile up to a zip
+    /// and then strip its regenerable data. Running profiles are skipped.
+    /// </summary>
+    public async Task<ProfileCleanupBatchResult> CleanProfileCachesAsync(string? profileIdOrName, bool createBackup)
+    {
+        var errors = new List<string>();
+        List<Profile> targets;
+
+        if (string.IsNullOrWhiteSpace(profileIdOrName))
+        {
+            targets = _databaseService.GetAllProfiles();
+        }
+        else
+        {
+            var match = _databaseService.GetAllProfiles().FirstOrDefault(profile =>
+                string.Equals(profile.Id, profileIdOrName, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(profile.Name, profileIdOrName, StringComparison.OrdinalIgnoreCase));
+            if (match == null)
+                return new ProfileCleanupBatchResult(0, 0, 0, 0, null, new[] { $"Profile not found: {profileIdOrName}" });
+
+            targets = new List<Profile> { match };
+        }
+
+        string? backupDirectory = null;
+        if (createBackup)
+        {
+            backupDirectory = Path.Combine(
+                _databaseService.GetDataDirectory(),
+                "profile-backups",
+                $"cleanup-{DateTime.Now:yyyyMMdd-HHmmss}");
+            Directory.CreateDirectory(backupDirectory);
+        }
+
+        var cleaned = 0;
+        var skipped = 0;
+        long freed = 0;
+        long backupBytes = 0;
+
+        foreach (var profile in targets)
+        {
+            if (IsRunning(profile.Id))
+            {
+                skipped++;
+                continue;
+            }
+
+            var profileDirectory = _databaseService.GetProfileDataDirectory(profile.Id);
+            try
+            {
+                if (createBackup && backupDirectory != null)
+                {
+                    var zipPath = Path.Combine(backupDirectory, $"{SanitizeFileName(profile.Name)}_{SafeShortId(profile.Id)}.zip");
+                    var backup = ProfileBackupService.CreateBackup(profileDirectory, zipPath);
+                    backupBytes += backup.SourceBytes;
+                }
+
+                var result = ProfileCleanupService.Clean(profileDirectory);
+                freed += result.BytesFreed;
+                cleaned++;
+            }
+            catch (Exception ex)
+            {
+                errors.Add($"{profile.Name}: {ex.Message}");
+            }
+        }
+
+        await Task.CompletedTask;
+        return new ProfileCleanupBatchResult(cleaned, skipped, freed, backupBytes, backupDirectory, errors);
+    }
+
+    private static string SanitizeFileName(string name)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var sanitized = new string(name.Select(character => invalid.Contains(character) ? '_' : character).ToArray()).Trim();
+        return string.IsNullOrWhiteSpace(sanitized) ? "profile" : sanitized;
+    }
+
+    private static string SafeShortId(string id) =>
+        string.IsNullOrWhiteSpace(id) ? "unknown" : id.Length <= 8 ? id : id[..8];
+
     public async Task StopAllAsync()
     {
         List<string> profileIds;

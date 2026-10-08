@@ -128,6 +128,7 @@ public sealed class AgentPipeServer : IAsyncDisposable
                 "profile.create" => CreateProfile(request),
                 "profile.start" => await StartProfileAsync(GetRequired(request, "id")),
                 "profile.stop" => await StopProfileAsync(GetRequired(request, "id")),
+                "profile.clean" => await CleanProfileCachesAsync(request),
                 "profile.endpoint" => GetProfileEndpoint(GetRequired(request, "id")),
                 "profile.open" => await OpenProfileUrlAsync(GetRequired(request, "id"), GetRequired(request, "url")),
                 "profile.attach" => await AttachProfileAsync(GetRequired(request, "id")),
@@ -247,6 +248,14 @@ public sealed class AgentPipeServer : IAsyncDisposable
             await _browserService.StopProfileAsync(profile.Id);
 
         return AgentResponse.Success(ProfileRuntimeData(profile));
+    }
+
+    private async Task<AgentResponse> CleanProfileCachesAsync(AgentRequest request)
+    {
+        var idOrName = GetOptional(request, "id");
+        var backup = !IsFalse(GetOptional(request, "backup"));
+        var result = await _browserService.CleanProfileCachesAsync(idOrName, backup);
+        return AgentResponse.Success(result);
     }
 
     private AgentResponse GetProfileEndpoint(string idOrName)

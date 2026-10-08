@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using Microsoft.Data.Sqlite;
 using YellowFox.Desktop.Models;
 
@@ -578,14 +579,49 @@ public class DatabaseService
 
     public void DeleteProfile(string id)
     {
-        using var connection = new SqliteConnection(_connectionString);
-        connection.Open();
-        
-        var command = connection.CreateCommand();
-        command.CommandText = "DELETE FROM profiles WHERE id = @id";
-        command.Parameters.AddWithValue("@id", id);
-        
-        command.ExecuteNonQuery();
+        using (var connection = new SqliteConnection(_connectionString))
+        {
+            connection.Open();
+
+            var command = connection.CreateCommand();
+            command.CommandText = "DELETE FROM profiles WHERE id = @id";
+            command.Parameters.AddWithValue("@id", id);
+
+            command.ExecuteNonQuery();
+        }
+
+        DeleteProfileDataDirectory(id);
+    }
+
+    private void DeleteProfileDataDirectory(string id)
+    {
+        try
+        {
+            var profileDir = Path.Combine(_dataDirectory, "profiles", id);
+            if (!Directory.Exists(profileDir))
+                return;
+
+            for (var attempt = 0; attempt < 3; attempt++)
+            {
+                try
+                {
+                    Directory.Delete(profileDir, recursive: true);
+                    return;
+                }
+                catch (Exception) when (attempt < 2)
+                {
+                    Thread.Sleep(150);
+                }
+                catch
+                {
+                    return;
+                }
+            }
+        }
+        catch
+        {
+            // Best effort: a locked browser file must not block the DB delete.
+        }
     }
 
     public List<ProfileFolder> GetAllProfileFolders()
@@ -817,6 +853,8 @@ public class DatabaseService
         Directory.CreateDirectory(profileDir);
         return profileDir;
     }
+
+    public string GetDataDirectory() => _dataDirectory;
 
     public string GetProfileLogsDirectory(string profileId)
     {

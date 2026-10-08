@@ -79,6 +79,7 @@ public static class AgentCli
             ("profile", "clone") => "profile.clone",
             ("profile", "start") => "profile.start",
             ("profile", "stop") => "profile.stop",
+            ("profile", "clean") => "profile.clean",
             ("profile", "endpoint") => "profile.endpoint",
             ("profile", "open") => "profile.open",
             ("profile", "attach") => "profile.attach",

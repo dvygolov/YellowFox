@@ -11,6 +11,14 @@ public sealed record ProfileCleanupResult(long BytesFreed, int ItemsRemoved, IRe
     public bool FreedAnything => ItemsRemoved > 0;
 }
 
+public sealed record ProfileCleanupBatchResult(
+    int ProfilesCleaned,
+    int ProfilesSkipped,
+    long BytesFreed,
+    long BackupBytes,
+    string? BackupDirectory,
+    IReadOnlyList<string> Errors);
+
 /// <summary>
 /// Strips regenerable browser data from a stopped profile so only per-profile
 /// identity/state stays on disk: cookies, logins, <c>storage</c>, prefs,

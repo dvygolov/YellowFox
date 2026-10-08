@@ -472,6 +472,9 @@ public partial class ProfilesViewModel : ViewModelBase
 
         if (result)
         {
+            if (profileVm.IsRunning)
+                await _browserService.StopProfileAsync(profileVm.Profile.Id);
+
             _databaseService.DeleteProfile(profileVm.Profile.Id);
             LoadProfiles();
         }

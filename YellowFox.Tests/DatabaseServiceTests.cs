@@ -494,6 +494,23 @@ public class DatabaseServiceTests : IDisposable
         Assert.DoesNotContain("InFun", titles);
     }
 
+    [Fact]
+    public void DeleteProfile_RemovesProfileDataDirectory()
+    {
+        var database = new DatabaseService(_testDataDir, disablePooling: true);
+        var profile = new Profile { Name = "Disposable" };
+        database.CreateProfile(profile);
+
+        var profileDir = database.GetProfileDataDirectory(profile.Id);
+        File.WriteAllText(Path.Combine(profileDir, "cookies.sqlite"), "session");
+        Assert.True(Directory.Exists(profileDir));
+
+        database.DeleteProfile(profile.Id);
+
+        Assert.Null(database.GetProfile(profile.Id));
+        Assert.False(Directory.Exists(profileDir));
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_testDataDir))
