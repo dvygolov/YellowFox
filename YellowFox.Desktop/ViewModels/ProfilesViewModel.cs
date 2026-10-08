@@ -909,6 +909,9 @@ public partial class ProfileItemViewModel : ProfileNodeViewModel
     private bool _isNotesExpanded;
 
     [ObservableProperty]
+    private string _notesEdit = string.Empty;
+
+    [ObservableProperty]
     private bool _isImportingCookies;
 
     [ObservableProperty]
@@ -978,6 +981,8 @@ public partial class ProfileItemViewModel : ProfileNodeViewModel
         _showProxy = showProxy;
         _showNotes = showNotes;
         _showTags = showTags;
+
+        _notesEdit = TextSanitizer.HtmlToPlainText(profile.Notes);
 
         if (tags != null)
         {
@@ -1053,8 +1058,28 @@ public partial class ProfileItemViewModel : ProfileNodeViewModel
     [RelayCommand]
     private void ToggleNotes()
     {
-        if (HasNotes)
-            IsNotesExpanded = !IsNotesExpanded;
+        IsNotesExpanded = !IsNotesExpanded;
+    }
+
+    partial void OnNotesEditChanged(string value)
+    {
+        var normalized = value ?? string.Empty;
+        if (string.Equals(Profile.Notes ?? string.Empty, normalized, StringComparison.Ordinal))
+            return;
+
+        Profile.Notes = string.IsNullOrWhiteSpace(normalized) ? null : normalized;
+
+        try
+        {
+            _databaseService.UpdateProfileNotes(Profile.Id, Profile.Notes);
+        }
+        catch
+        {
+            // Keep the in-memory note even if persisting it fails; the next edit retries.
+        }
+
+        OnPropertyChanged(nameof(NotesDisplay));
+        OnPropertyChanged(nameof(HasNotes));
     }
 
     partial void OnIsRunningChanged(bool value)

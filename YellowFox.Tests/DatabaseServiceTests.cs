@@ -112,6 +112,20 @@ public class DatabaseServiceTests : IDisposable
     }
 
     [Fact]
+    public void UpdateProfileNotes_ShouldPersistAndClearNotes()
+    {
+        var database = new DatabaseService(_testDataDir, disablePooling: true);
+        var profile = new Profile { Name = "Inline Notes" };
+        database.CreateProfile(profile);
+
+        database.UpdateProfileNotes(profile.Id, "first note");
+        Assert.Equal("first note", database.GetProfile(profile.Id)!.Notes);
+
+        database.UpdateProfileNotes(profile.Id, "   ");
+        Assert.Null(database.GetProfile(profile.Id)!.Notes);
+    }
+
+    [Fact]
     public void CreateAndReadExtension_ShouldPersist()
     {
         var database = new DatabaseService(_testDataDir, disablePooling: true);

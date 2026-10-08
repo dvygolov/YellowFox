@@ -542,7 +542,7 @@ def apply_profile_identity(config, server_process, executable_path, user_data_di
     try:
         native = load_native_identity_helpers()
         icon_path = native.ensure_profile_icon(config.get("profile_icon_path"), config.get("profile_name"))
-        native.apply_taskbar_identity(
+        applied = native.apply_taskbar_identity(
             server_process.pid,
             config.get("profile_name"),
             config.get("profile_id"),
@@ -551,6 +551,31 @@ def apply_profile_identity(config, server_process, executable_path, user_data_di
             executable_path,
             config.get("profile_app_user_model_id"),
         )
+        print(
+            f"YELLOWFOX_TASKBAR_IDENTITY_APPLIED windows={applied} icon={icon_path}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+        def refresh_identity():
+            # Firefox can replace the window icon while the startup window paints,
+            # so re-apply it a few times right after launch.
+            for _ in range(6):
+                time.sleep(1.5)
+                if server_process.poll() is not None:
+                    return
+                with contextlib.suppress(Exception):
+                    native.apply_taskbar_identity(
+                        server_process.pid,
+                        config.get("profile_name"),
+                        config.get("profile_id"),
+                        user_data_dir,
+                        icon_path,
+                        executable_path,
+                        config.get("profile_app_user_model_id"),
+                    )
+
+        threading.Thread(target=refresh_identity, daemon=True).start()
     except Exception as exc:
         print(f"YELLOWFOX_PROFILE_IDENTITY_ERROR {exc}", file=sys.stderr, flush=True)
 

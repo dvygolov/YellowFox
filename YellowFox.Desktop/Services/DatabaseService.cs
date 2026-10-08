@@ -549,6 +549,18 @@ public class DatabaseService
         }
     }
     
+    public void UpdateProfileNotes(string id, string? notes)
+    {
+        using var connection = new SqliteConnection(_connectionString);
+        connection.Open();
+
+        var command = connection.CreateCommand();
+        command.CommandText = "UPDATE profiles SET notes = @notes WHERE id = @id";
+        command.Parameters.AddWithValue("@id", id);
+        command.Parameters.AddWithValue("@notes", ToDbNotesValue(notes));
+        command.ExecuteNonQuery();
+    }
+
     public void DeleteProfile(string id)
     {
         using var connection = new SqliteConnection(_connectionString);

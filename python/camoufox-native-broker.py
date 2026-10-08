@@ -158,11 +158,47 @@ def proxy_firefox_prefs(proxy):
     return {key: prefs[key] for key in proxy_keys}
 
 
-def profile_icon_lines(profile_name):
-    words = [part for part in re.split(r"\s+", str(profile_name or "").strip()) if part]
-    if not words:
+def profile_icon_lines(profile_name, max_lines=3, max_chars=7):
+    """Wrap a profile name into a few short lines that fit inside the icon."""
+    text = re.sub(r"\s+", " ", str(profile_name or "").strip())
+    if not text:
         return ["YF"]
-    return [word[:6] for word in words[:3]]
+
+    # Break words that are longer than a single line so nothing is cut off.
+    chunks = []
+    for word in text.split(" "):
+        while word:
+            chunks.append(word[:max_chars])
+            word = word[max_chars:]
+
+    lines = []
+    current = ""
+    for chunk in chunks:
+        if not current:
+            current = chunk
+        elif len(current) + 1 + len(chunk) <= max_chars:
+            current = f"{current} {chunk}"
+        else:
+            lines.append(current)
+            current = chunk
+        if len(lines) == max_lines:
+            break
+
+    if len(lines) < max_lines and current:
+        lines.append(current)
+
+    if not lines:
+        return ["YF"]
+
+    # Mark dropped characters so a truncated name is still recognizable.
+    consumed = len("".join(line.replace(" ", "") for line in lines))
+    if consumed < len(text.replace(" ", "")):
+        last = lines[-1]
+        if len(last) >= max_chars:
+            last = last[: max_chars - 1]
+        lines[-1] = last + "\u2026"
+
+    return lines
 
 
 def ensure_profile_icon(icon_path, profile_name):
@@ -285,14 +321,22 @@ def _render_profile_icon_image(size, lines):
         user32.FrameRect(memdc, ctypes.byref(border_rect), border)
         gdi32.DeleteObject(border)
 
-        text = "\n".join(lines)
-        font_height = -max(7, min(16, int(size / (len(lines) + 1.15))))
+        lines = [line for line in lines if line] or ["YF"]
+        longest = max(len(line) for line in lines)
+        height_limit = size / (len(lines) + 0.7)
+        width_limit = (size * 0.92) / max(1.0, longest * 0.62)
+        font_height = -max(6, min(18, int(min(height_limit, width_limit))))
         font = gdi32.CreateFontW(font_height, 0, 0, 0, 800, 0, 0, 0, 1, 0, 0, 4, 0, "Segoe UI")
         old_font = gdi32.SelectObject(memdc, font)
         gdi32.SetBkMode(memdc, 1)
         gdi32.SetTextColor(memdc, 0x00000000)
-        text_rect = wintypes.RECT(2, 2, int(size) - 2, int(size) - 2)
-        user32.DrawTextW(memdc, text, -1, ctypes.byref(text_rect), 0x00000001 | 0x00000004 | 0x00000010)
+
+        line_height = abs(font_height)
+        top = max(0, int((size - line_height * len(lines)) / 2))
+        flags = 0x00000001 | 0x00000004 | 0x00000020 | 0x00000800  # CENTER | VCENTER | SINGLELINE | NOPREFIX
+        for index, line in enumerate(lines):
+            text_rect = wintypes.RECT(1, top + index * line_height, int(size) - 1, top + (index + 1) * line_height)
+            user32.DrawTextW(memdc, line, -1, ctypes.byref(text_rect), flags)
 
         stride = int(size) * 4
         raw = bytearray((ctypes.c_ubyte * (stride * int(size))).from_address(dib_bits.value))
@@ -318,9 +362,27 @@ def _render_profile_icon_image(size, lines):
             user32.ReleaseDC(None, hdc)
 
 
+def register_app_user_model_id(app_id, profile_name, icon_path):
+    """Register the per-profile AppUserModelID so Windows uses our icon/name."""
+    if not sys.platform.startswith("win") or not app_id:
+        return
+
+    try:
+        import winreg
+
+        key_path = rf"Software\Classes\AppUserModelId\{app_id}"
+        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_WRITE) as key:
+            if profile_name:
+                winreg.SetValueEx(key, "DisplayName", 0, winreg.REG_SZ, str(profile_name))
+            if icon_path:
+                winreg.SetValueEx(key, "IconUri", 0, winreg.REG_EXPAND_SZ, str(icon_path))
+    except Exception as exc:
+        print(f"YELLOWFOX_TASKBAR_IDENTITY_ERROR {exc}", file=sys.stderr, flush=True)
+
+
 def apply_taskbar_identity(process_id, profile_name, profile_id, profile_dir, icon_path, executable_path, app_user_model_id=None):
     if not sys.platform.startswith("win") or not profile_name:
-        return
+        return 0
 
     try:
         import ctypes
@@ -450,10 +512,11 @@ def apply_taskbar_identity(process_id, profile_name, profile_id, profile_dir, ic
                 break
             time.sleep(0.25)
         if not handles:
-            return
+            return 0
 
         fallback_slug = re.sub(r"[^A-Za-z0-9]", "", str(profile_id or profile_dir))[:48]
         app_id = app_user_model_id or f"YellowFox.Camoufox.{fallback_slug}"
+        register_app_user_model_id(app_id, profile_name, icon_path)
         icon_resource = f"{icon_path},0" if icon_path else None
         relaunch_command = f'"{executable_path}" -no-remote -profile "{profile_dir}"' if executable_path and profile_dir else None
         gwl_style = -16
@@ -525,11 +588,16 @@ def apply_taskbar_identity(process_id, profile_name, profile_id, profile_dir, ic
 
         ole32.CoInitialize(None)
         for hwnd in handles:
-            ensure_native_window_frame(hwnd)
-            set_window_properties(hwnd)
-            set_window_icon(hwnd)
+            with contextlib.suppress(Exception):
+                ensure_native_window_frame(hwnd)
+            with contextlib.suppress(Exception):
+                set_window_properties(hwnd)
+            with contextlib.suppress(Exception):
+                set_window_icon(hwnd)
+        return len(handles)
     except Exception as exc:
         print(f"YELLOWFOX_TASKBAR_IDENTITY_ERROR {exc}", file=sys.stderr, flush=True)
+        return 0
 
 
 def fit_visible_window(width, height, process_id):

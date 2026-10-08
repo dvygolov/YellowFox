@@ -415,6 +415,7 @@
                                          Text="{Binding NotesDisplay}"
                                          IsReadOnly="True"
                                          IsVisible="{Binding IsNotesCollapsed}"
+                                         Watermark="Add note…"
                                          MinHeight="34"
                                          MaxHeight="46"
                                          TextWrapping="Wrap"
@@ -425,9 +426,10 @@
 
                                 <TextBox Grid.Column="0"
                                          Classes="ProfileNotesTextBox"
-                                         Text="{Binding NotesDisplay}"
-                                         IsReadOnly="True"
+                                         Text="{Binding NotesEdit, Mode=TwoWay}"
+                                         IsReadOnly="False"
                                          IsVisible="{Binding IsNotesExpanded}"
+                                         Watermark="Type a note…"
                                          MinHeight="70"
                                          MaxHeight="190"
                                          TextWrapping="Wrap"
@@ -439,7 +441,6 @@
                                         Classes="NotesToggle"
                                         Content="{Binding NotesToggleIcon}"
                                         Command="{Binding ToggleNotesCommand}"
-                                        IsVisible="{Binding HasNotes}"
                                         ToolTip.Tip="{Binding NotesToggleTip}"
                                         Margin="6,3,6,3"
                                         VerticalAlignment="Top" />
