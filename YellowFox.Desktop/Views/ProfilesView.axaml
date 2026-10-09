@@ -421,7 +421,7 @@
                                          MaxHeight="46"
                                          TextWrapping="Wrap"
                                          AcceptsReturn="True"
-                                         VerticalContentAlignment="Center"
+                                         VerticalContentAlignment="Top"
                                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                          ScrollViewer.VerticalScrollBarVisibility="Disabled" />
 
@@ -488,14 +488,6 @@
                                     Command="{Binding PasskeysCommand}"
                                     Content="&#xE192;"
                                     ToolTip.Tip="Passkeys" />
-
-                            <Button Classes="SecondaryAction"
-                                    Command="{Binding EditCommand}"
-                                    Content="&#xE70F;"
-                                    ToolTip.Tip="Edit profile"
-                                    Background="#235A8F"
-                                    BorderBrush="#1F5C92"
-                                    Foreground="#FFFFFF" />
                         </StackPanel>
                     </Grid>
                 </TreeDataTemplate>
