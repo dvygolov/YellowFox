@@ -51,8 +51,13 @@ public partial class ProfilesViewModel : ViewModelBase
 
     public ObservableCollection<ProfileNodeViewModel> RootNodes { get; } = new();
 
+    public ObservableCollection<TagFilterItemViewModel> TagFilterOptions { get; } = new();
+
     public bool HasSelection => SelectedCount > 0;
     public bool IsSearching => !string.IsNullOrWhiteSpace(SearchText);
+    public bool IsTagFiltering => TagFilterOptions.Any(option => option.IsSelected);
+    public bool HasActiveFilter => IsSearching || IsTagFiltering;
+    public int SelectedTagFilterCount => TagFilterOptions.Count(option => option.IsSelected);
 
     public ProfilesViewModel(DatabaseService databaseService, BrowserService browserService, SettingsService settingsService)
     {
@@ -118,8 +123,11 @@ public partial class ProfilesViewModel : ViewModelBase
         var profiles = _databaseService.GetAllProfiles();
 
         _tagsById.Clear();
-        foreach (var tag in _databaseService.GetAllTags())
+        var allTags = _databaseService.GetAllTags();
+        foreach (var tag in allTags)
             _tagsById[tag.Id] = tag;
+
+        SyncTagFilterOptions(allTags);
 
         foreach (var folder in folders)
             _foldersById[folder.Id] = folder;
@@ -128,11 +136,13 @@ public partial class ProfilesViewModel : ViewModelBase
             _profilesById[profile.Id] = profile;
 
         var filter = IsSearching ? SearchText.Trim() : null;
+        var tagFilter = IsTagFiltering ? SelectedTagFilterIds() : null;
+        var hasFilter = filter != null || tagFilter != null;
 
         foreach (var folder in OrderedFolders(null))
         {
-            var node = BuildFolderNode(folder, filter);
-            if (filter != null && node.Children.Count == 0)
+            var node = BuildFolderNode(folder, filter, tagFilter);
+            if (hasFilter && node.Children.Count == 0)
                 continue;
 
             RootNodes.Add(node);
@@ -140,21 +150,67 @@ public partial class ProfilesViewModel : ViewModelBase
 
         foreach (var profile in OrderedProfiles(null))
         {
-            if (MatchesFilter(profile, filter))
+            if (MatchesFilters(profile, filter, tagFilter))
                 RootNodes.Add(BuildProfileNode(profile));
         }
 
         UpdateSelectedCount();
     }
 
-    private ProfileFolderNodeViewModel BuildFolderNode(ProfileFolder folder, string? filter)
+    private HashSet<string> SelectedTagFilterIds()
+    {
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var option in TagFilterOptions)
+        {
+            if (option.IsSelected)
+                ids.Add(option.TagId);
+        }
+
+        return ids;
+    }
+
+    private void SyncTagFilterOptions(List<Tag> tags, bool force = false)
+    {
+        if (!force
+            && TagFilterOptions.Count == tags.Count
+            && TagFilterOptions.Select(option => option.TagId).SequenceEqual(tags.Select(tag => tag.Id), StringComparer.Ordinal))
+        {
+            return;
+        }
+
+        var selectedIds = SelectedTagFilterIds();
+        TagFilterOptions.Clear();
+        foreach (var tag in tags)
+            TagFilterOptions.Add(new TagFilterItemViewModel(tag, selectedIds.Contains(tag.Id), OnTagFilterOptionChanged));
+    }
+
+    private void OnTagFilterOptionChanged()
+    {
+        OnPropertyChanged(nameof(IsTagFiltering));
+        OnPropertyChanged(nameof(HasActiveFilter));
+        OnPropertyChanged(nameof(SelectedTagFilterCount));
+        LoadProfiles();
+    }
+
+    [RelayCommand]
+    private void ClearTagFilter()
+    {
+        if (!IsTagFiltering)
+            return;
+
+        foreach (var option in TagFilterOptions)
+            option.IsSelected = false;
+    }
+
+    private ProfileFolderNodeViewModel BuildFolderNode(ProfileFolder folder, string? filter, HashSet<string>? tagFilter)
     {
         var node = CreateFolderNode(folder);
+        var hasFilter = filter != null || tagFilter != null;
 
         foreach (var childFolder in OrderedFolders(folder.Id))
         {
-            var childNode = BuildFolderNode(childFolder, filter);
-            if (filter != null && childNode.Children.Count == 0)
+            var childNode = BuildFolderNode(childFolder, filter, tagFilter);
+            if (hasFilter && childNode.Children.Count == 0)
                 continue;
 
             node.Children.Add(childNode);
@@ -162,13 +218,13 @@ public partial class ProfilesViewModel : ViewModelBase
 
         foreach (var childProfile in OrderedProfiles(folder.Id))
         {
-            if (!MatchesFilter(childProfile, filter))
+            if (!MatchesFilters(childProfile, filter, tagFilter))
                 continue;
 
             node.Children.Add(BuildProfileNode(childProfile));
         }
 
-        if (filter != null)
+        if (hasFilter)
             node.IsExpanded = true;
 
         node.TotalProfileCount = CountProfiles(folder.Id);
@@ -208,20 +264,29 @@ public partial class ProfilesViewModel : ViewModelBase
     public void ReloadTagChips()
     {
         _tagsById.Clear();
-        foreach (var tag in _databaseService.GetAllTags())
+        var allTags = _databaseService.GetAllTags();
+        foreach (var tag in allTags)
             _tagsById[tag.Id] = tag;
+
+        SyncTagFilterOptions(allTags, force: true);
 
         foreach (var item in EnumerateProfileNodes())
             item.SetTags(ResolveTags(item.Profile.TagIds));
     }
 
-    private static bool MatchesFilter(Profile profile, string? filter)
+    private static bool MatchesFilters(Profile profile, string? filter, HashSet<string>? tagFilter)
     {
-        if (filter == null)
-            return true;
+        if (filter != null
+            && !profile.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)
+            && !(profile.Notes?.Contains(filter, StringComparison.OrdinalIgnoreCase) ?? false))
+        {
+            return false;
+        }
 
-        return profile.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)
-               || (profile.Notes?.Contains(filter, StringComparison.OrdinalIgnoreCase) ?? false);
+        if (tagFilter != null && !profile.TagIds.Any(tagFilter.Contains))
+            return false;
+
+        return true;
     }
 
     private int CountProfiles(string folderId)
@@ -263,7 +328,7 @@ public partial class ProfilesViewModel : ViewModelBase
 
     private void OnFolderNodePropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (IsSearching)
+        if (HasActiveFilter)
             return;
 
         if (sender is ProfileFolderNodeViewModel node && e.PropertyName == nameof(ProfileNodeViewModel.IsExpanded))
@@ -1158,4 +1223,32 @@ public sealed class TagChipViewModel
     public string Glyph { get; }
     public string Color { get; }
     public IBrush Brush { get; }
+}
+
+public partial class TagFilterItemViewModel : ViewModelBase
+{
+    private readonly Action _selectionChanged;
+
+    [ObservableProperty]
+    private bool _isSelected;
+
+    public TagFilterItemViewModel(Tag tag, bool isSelected, Action selectionChanged)
+    {
+        TagId = tag.Id;
+        Name = tag.Name;
+        Glyph = TagIconCatalog.GlyphFor(tag.Icon);
+        Brush = new SolidColorBrush(Avalonia.Media.Color.Parse(tag.Color));
+        _isSelected = isSelected;
+        _selectionChanged = selectionChanged;
+    }
+
+    public string TagId { get; }
+    public string Name { get; }
+    public string Glyph { get; }
+    public IBrush Brush { get; }
+
+    partial void OnIsSelectedChanged(bool value)
+    {
+        _selectionChanged();
+    }
 }

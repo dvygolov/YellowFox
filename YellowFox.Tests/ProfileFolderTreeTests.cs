@@ -138,6 +138,65 @@ public class ProfileFolderTreeTests : IDisposable
         Assert.Equal("Work", folderNode.Name);
     }
 
+    [Fact]
+    public void TagFilterShowsProfilesWithAnySelectedTag()
+    {
+        var (database, viewModel) = CreateViewModel();
+
+        var work = new Tag { Name = "Work" };
+        var farm = new Tag { Name = "Farm" };
+        database.CreateTag(work);
+        database.CreateTag(farm);
+
+        database.CreateProfile(new Profile { Name = "A", TagIds = new List<string> { work.Id } });
+        database.CreateProfile(new Profile { Name = "B", TagIds = new List<string> { farm.Id } });
+        database.CreateProfile(new Profile { Name = "C" });
+        viewModel.RefreshCommand.Execute(null);
+
+        Assert.False(viewModel.IsTagFiltering);
+        Assert.Equal(3, viewModel.EnumerateProfileNodes().Count());
+
+        viewModel.TagFilterOptions.Single(o => o.TagId == work.Id).IsSelected = true;
+
+        Assert.True(viewModel.IsTagFiltering);
+        var visible = viewModel.EnumerateProfileNodes().Select(p => p.Name).ToList();
+        Assert.Equal(new[] { "A" }, visible);
+
+        viewModel.TagFilterOptions.Single(o => o.TagId == farm.Id).IsSelected = true;
+
+        visible = viewModel.EnumerateProfileNodes().Select(p => p.Name).OrderBy(n => n).ToList();
+        Assert.Equal(new[] { "A", "B" }, visible);
+
+        viewModel.ClearTagFilterCommand.Execute(null);
+
+        Assert.False(viewModel.IsTagFiltering);
+        Assert.Equal(3, viewModel.EnumerateProfileNodes().Count());
+    }
+
+    [Fact]
+    public void TagFilterKeepsAncestorFoldersOfMatchingProfiles()
+    {
+        var (database, viewModel) = CreateViewModel();
+
+        var tag = new Tag { Name = "Work" };
+        database.CreateTag(tag);
+
+        var folder = new ProfileFolder { Name = "WorkFolder" };
+        database.CreateProfileFolder(folder);
+        var emptyFolder = new ProfileFolder { Name = "EmptyFolder" };
+        database.CreateProfileFolder(emptyFolder);
+
+        database.CreateProfile(new Profile { Name = "Tagged", FolderId = folder.Id, TagIds = new List<string> { tag.Id } });
+        database.CreateProfile(new Profile { Name = "Untagged", FolderId = emptyFolder.Id });
+        viewModel.RefreshCommand.Execute(null);
+
+        viewModel.TagFilterOptions.Single(o => o.TagId == tag.Id).IsSelected = true;
+
+        var folderNode = Assert.IsType<ProfileFolderNodeViewModel>(viewModel.RootNodes.Single());
+        Assert.Equal("WorkFolder", folderNode.Name);
+        Assert.Equal("Tagged", folderNode.Children.Single().Name);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_testDataDir))
