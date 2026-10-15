@@ -12,6 +12,7 @@ namespace YellowFox.Desktop.ViewModels;
 public partial class ProfileEditorViewModel : ViewModelBase
 {
     private readonly DatabaseService _databaseService;
+    private readonly ProxyStatusService? _proxyStatusService;
     private readonly Profile? _existingProfile;
     private readonly bool _isCloneMode;
     private readonly string? _initialFolderId;
@@ -49,9 +50,10 @@ public partial class ProfileEditorViewModel : ViewModelBase
     public bool IsEditMode => _existingProfile != null && !_isCloneMode;
     public string Title => _isCloneMode ? "Clone Profile" : (IsEditMode ? "Edit Profile" : "New Profile");
     
-    public ProfileEditorViewModel(DatabaseService databaseService, Profile? existingProfile, bool isCloneMode = false, string? initialFolderId = null)
+    public ProfileEditorViewModel(DatabaseService databaseService, Profile? existingProfile, bool isCloneMode = false, string? initialFolderId = null, ProxyStatusService? proxyStatusService = null)
     {
         _databaseService = databaseService;
+        _proxyStatusService = proxyStatusService;
         _existingProfile = existingProfile;
         _isCloneMode = isCloneMode;
         _initialFolderId = initialFolderId;
@@ -159,7 +161,7 @@ public partial class ProfileEditorViewModel : ViewModelBase
     private void LoadProxies(string? selectedProxyId)
     {
         ProxyOptions.Clear();
-        ProxyOptions.Add(new ProxyOption(null, "No proxy"));
+        ProxyOptions.Add(ProxyOption.None);
 
         var proxies = _databaseService.GetAllProxies()
             .Where(p => p.IsEnabled)
@@ -167,10 +169,17 @@ public partial class ProfileEditorViewModel : ViewModelBase
 
         foreach (var proxy in proxies)
         {
-            ProxyOptions.Add(new ProxyOption(proxy.Id, $"{proxy.Name} ({proxy.Type.ToUpperInvariant()} {proxy.Host}:{proxy.Port})"));
+            ProxyOptions.Add(new ProxyOption(proxy, _proxyStatusService));
         }
 
         SelectedProxyOption = ProxyOptions.FirstOrDefault(p => p.Id == selectedProxyId) ?? ProxyOptions.First();
+    }
+
+    /// <summary>Unsubscribes proxy options from the app-lifetime status service.</summary>
+    public void Detach()
+    {
+        foreach (var option in ProxyOptions)
+            option.Detach();
     }
 
     partial void OnTagLimitMessageChanged(string value)
@@ -233,16 +242,97 @@ public partial class TagSelectionItem : ViewModelBase
     }
 }
 
-public sealed class ProxyOption
+public partial class ProxyOption : ViewModelBase
 {
-    public ProxyOption(string? id, string displayName)
+    private readonly ProxyStatusService? _statusService;
+
+    [ObservableProperty]
+    private ProxyValidationState _status = ProxyValidationState.Unknown;
+
+    private ProxyOption(string? id, string displayName)
     {
         Id = id;
         DisplayName = displayName;
+        Endpoint = string.Empty;
+        TypeLabel = string.Empty;
+        TypeToolTip = string.Empty;
+        TypeBadgeForeground = "#CCCCCC";
+        TypeBadgeBackground = "#2A2E33";
     }
 
+    public ProxyOption(Proxy proxy, ProxyStatusService? statusService)
+        : this(proxy.Id, proxy.Name)
+    {
+        Endpoint = $"({proxy.Host}:{proxy.Port})";
+
+        var isSocks = string.Equals(Proxy.NormalizeType(proxy.Type), Proxy.Socks5Type, StringComparison.Ordinal);
+        TypeLabel = isSocks ? "S5" : "HTTP";
+        TypeToolTip = isSocks ? "SOCKS5 proxy" : "HTTP proxy";
+        TypeBadgeForeground = isSocks ? "#C9A7FF" : "#7CC4FF";
+        TypeBadgeBackground = isSocks ? "#2E2145" : "#16324A";
+
+        _statusService = statusService;
+        if (_statusService != null)
+        {
+            Status = _statusService.GetStatus(proxy.Id);
+            _statusService.StatusChanged += OnServiceStatusChanged;
+            _statusService.EnsureChecked(proxy);
+        }
+    }
+
+    public static ProxyOption None { get; } = new(null, "No proxy");
+
     public string? Id { get; }
+    public bool IsProxy => Id != null;
     public string DisplayName { get; }
+    public string Endpoint { get; }
+    public string TypeLabel { get; }
+    public string TypeToolTip { get; }
+    public string TypeBadgeForeground { get; }
+    public string TypeBadgeBackground { get; }
+
+    public string StatusGlyph => Status switch
+    {
+        ProxyValidationState.Success => "\uE73E",
+        ProxyValidationState.Failed => "\uE711",
+        ProxyValidationState.Checking => "\uE895",
+        _ => "\uE738"
+    };
+
+    public string StatusForeground => Status switch
+    {
+        ProxyValidationState.Success => "#6EDB76",
+        ProxyValidationState.Failed => "#FF5F5F",
+        ProxyValidationState.Checking => "#4FA8FF",
+        _ => "#777D84"
+    };
+
+    public string StatusToolTip => Status switch
+    {
+        ProxyValidationState.Success => "Proxy is alive",
+        ProxyValidationState.Failed => "Proxy check failed",
+        ProxyValidationState.Checking => "Checking proxy...",
+        _ => "Proxy not checked yet"
+    };
+
+    partial void OnStatusChanged(ProxyValidationState value)
+    {
+        OnPropertyChanged(nameof(StatusGlyph));
+        OnPropertyChanged(nameof(StatusForeground));
+        OnPropertyChanged(nameof(StatusToolTip));
+    }
+
+    private void OnServiceStatusChanged(string proxyId, ProxyValidationState state)
+    {
+        if (proxyId == Id)
+            Status = state;
+    }
+
+    public void Detach()
+    {
+        if (_statusService != null)
+            _statusService.StatusChanged -= OnServiceStatusChanged;
+    }
 }
 
 public sealed class OsOption

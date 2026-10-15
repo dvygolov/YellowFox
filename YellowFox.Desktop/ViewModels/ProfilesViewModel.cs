@@ -25,6 +25,7 @@ public partial class ProfilesViewModel : ViewModelBase
     private readonly DatabaseService _databaseService;
     private readonly BrowserService _browserService;
     private readonly SettingsService _settingsService;
+    private readonly ProxyStatusService? _proxyStatusService;
     private readonly PasskeyStoreService _passkeyStore = new();
     private readonly Dictionary<string, bool> _folderExpansion = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ProfileFolder> _foldersById = new(StringComparer.Ordinal);
@@ -59,11 +60,12 @@ public partial class ProfilesViewModel : ViewModelBase
     public bool HasActiveFilter => IsSearching || IsTagFiltering;
     public int SelectedTagFilterCount => TagFilterOptions.Count(option => option.IsSelected);
 
-    public ProfilesViewModel(DatabaseService databaseService, BrowserService browserService, SettingsService settingsService)
+    public ProfilesViewModel(DatabaseService databaseService, BrowserService browserService, SettingsService settingsService, ProxyStatusService? proxyStatusService = null)
     {
         _databaseService = databaseService;
         _browserService = browserService;
         _settingsService = settingsService;
+        _proxyStatusService = proxyStatusService;
 
         var settings = _settingsService.GetSettings();
         _showProxy = settings.ProfileTreeShowProxy;
@@ -406,7 +408,7 @@ public partial class ProfilesViewModel : ViewModelBase
     private async Task NewProfile()
     {
         var folderId = SelectedFolderId();
-        var editorVm = new ProfileEditorViewModel(_databaseService, null, initialFolderId: folderId);
+        var editorVm = new ProfileEditorViewModel(_databaseService, null, initialFolderId: folderId, proxyStatusService: _proxyStatusService);
         var dialog = new ProfileEditorWindow
         {
             DataContext = editorVm
@@ -508,7 +510,7 @@ public partial class ProfilesViewModel : ViewModelBase
 
     public async Task EditProfile(ProfileItemViewModel profileVm)
     {
-        var editorVm = new ProfileEditorViewModel(_databaseService, profileVm.Profile);
+        var editorVm = new ProfileEditorViewModel(_databaseService, profileVm.Profile, proxyStatusService: _proxyStatusService);
         var dialog = new ProfileEditorWindow
         {
             DataContext = editorVm
@@ -547,7 +549,7 @@ public partial class ProfilesViewModel : ViewModelBase
 
     public async Task CloneProfile(ProfileItemViewModel profileVm)
     {
-        var editorVm = new ProfileEditorViewModel(_databaseService, profileVm.Profile, isCloneMode: true);
+        var editorVm = new ProfileEditorViewModel(_databaseService, profileVm.Profile, isCloneMode: true, proxyStatusService: _proxyStatusService);
         var dialog = new ProfileEditorWindow
         {
             DataContext = editorVm

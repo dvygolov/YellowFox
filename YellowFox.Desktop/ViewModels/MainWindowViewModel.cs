@@ -60,10 +60,11 @@ public partial class MainWindowViewModel : ViewModelBase
         ProxyValidatorService proxyValidatorService,
         ExtensionStorageService extensionStorageService,
         ProxyIpRotationService proxyIpRotationService,
-        SettingsService settingsService)
+        SettingsService settingsService,
+        ProxyStatusService? proxyStatusService = null)
     {
         _browserService = browserService;
-        ProfilesViewModel = new ProfilesViewModel(databaseService, browserService, settingsService);
+        ProfilesViewModel = new ProfilesViewModel(databaseService, browserService, settingsService, proxyStatusService);
         ProxiesViewModel = new ProxiesViewModel(databaseService, proxyValidatorService, proxyIpRotationService);
         ExtensionsViewModel = new ExtensionsViewModel(databaseService, extensionStorageService);
         BookmarksViewModel = new BookmarksViewModel(databaseService);

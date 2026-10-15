@@ -15,6 +15,7 @@ public partial class ProfileEditorWindow : Window
     public ProfileEditorWindow()
     {
         InitializeComponent();
+        Closed += (_, _) => (DataContext as ProfileEditorViewModel)?.Detach();
     }
     
     private async void SaveButton_Click(object? sender, RoutedEventArgs e)

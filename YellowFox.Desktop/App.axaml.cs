@@ -42,6 +42,7 @@ public partial class App : Application
             var settingsService = new SettingsService();
             var databaseService = new DatabaseService();
             var proxyValidatorService = new ProxyValidatorService();
+            var proxyStatusService = new ProxyStatusService(databaseService, proxyValidatorService);
             var proxyIpRotationService = new ProxyIpRotationService();
             var extensionStorageService = new ExtensionStorageService(databaseService);
             var camoufoxUpdateService = new CamoufoxUpdateService(settingsService);
@@ -50,7 +51,7 @@ public partial class App : Application
             _agentPipeServer = new AgentPipeServer(databaseService, _browserService, proxyValidatorService, dolphinImportService, extensionStorageService, proxyIpRotationService);
             _agentPipeServer.Start();
 
-            var mainWindowViewModel = new MainWindowViewModel(databaseService, _browserService, proxyValidatorService, extensionStorageService, proxyIpRotationService, settingsService);
+            var mainWindowViewModel = new MainWindowViewModel(databaseService, _browserService, proxyValidatorService, extensionStorageService, proxyIpRotationService, settingsService, proxyStatusService);
             var mainWindow = new MainWindow
             {
                 DataContext = mainWindowViewModel,
@@ -58,6 +59,9 @@ public partial class App : Application
             desktop.MainWindow = mainWindow;
             mainWindowViewModel.BrowserUpdateRequested = () => CheckCamoufoxUpdateAsync(mainWindow, mainWindowViewModel, camoufoxUpdateService);
             mainWindow.Opened += async (_, _) => await CheckCamoufoxEnvironmentAsync(mainWindow, mainWindowViewModel, camoufoxUpdateService);
+
+            // Check all proxies in the background so editor dropdowns can show alive/dead status.
+            proxyStatusService.EnsureAllChecked();
 
             // Handle application exit
             desktop.ShutdownRequested += OnShutdownRequested;

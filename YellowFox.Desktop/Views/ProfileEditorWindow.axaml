@@ -187,7 +187,38 @@
                           CornerRadius="6">
                     <ComboBox.ItemTemplate>
                         <DataTemplate x:DataType="vm:ProxyOption">
-                            <TextBlock Text="{Binding DisplayName}" />
+                            <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8">
+                                <TextBlock Grid.Column="0"
+                                           IsVisible="{Binding IsProxy}"
+                                           Text="{Binding StatusGlyph}"
+                                           FontFamily="Segoe MDL2 Assets"
+                                           FontSize="12"
+                                           Foreground="{Binding StatusForeground}"
+                                           VerticalAlignment="Center"
+                                           ToolTip.Tip="{Binding StatusToolTip}" />
+                                <TextBlock Grid.Column="1"
+                                           Text="{Binding DisplayName}"
+                                           VerticalAlignment="Center"
+                                           TextTrimming="CharacterEllipsis" />
+                                <TextBlock Grid.Column="2"
+                                           IsVisible="{Binding IsProxy}"
+                                           Text="{Binding Endpoint}"
+                                           Foreground="#858585"
+                                           FontSize="12"
+                                           VerticalAlignment="Center" />
+                                <Border Grid.Column="3"
+                                        IsVisible="{Binding IsProxy}"
+                                        CornerRadius="4"
+                                        Padding="5,1"
+                                        Background="{Binding TypeBadgeBackground}"
+                                        VerticalAlignment="Center"
+                                        ToolTip.Tip="{Binding TypeToolTip}">
+                                    <TextBlock Text="{Binding TypeLabel}"
+                                               FontSize="10"
+                                               FontWeight="SemiBold"
+                                               Foreground="{Binding TypeBadgeForeground}" />
+                                </Border>
+                            </Grid>
                         </DataTemplate>
                     </ComboBox.ItemTemplate>
                 </ComboBox>
