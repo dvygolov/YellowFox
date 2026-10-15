@@ -39,21 +39,21 @@ index 22cefd6..b31ed23 100644
              var inputId = Guid.NewGuid().ToString();
              var source = (KeyInputSource)inputState.CreateInputSource("key");
 diff --git a/src/FlaUI.WebDriver/Controllers/SessionController.cs b/src/FlaUI.WebDriver/Controllers/SessionController.cs
-index e6e8f96..b8d29a4 100644
+index e6e8f96..6551ad4 100644
 --- a/src/FlaUI.WebDriver/Controllers/SessionController.cs
 +++ b/src/FlaUI.WebDriver/Controllers/SessionController.cs
 @@ -54,11 +54,25 @@ namespace FlaUI.WebDriver.Controllers
                  newCommandTimeout = TimeSpan.FromSeconds(newCommandTimeoutFromCapabilities);
              }
  
-+            var clickStrategy = ClickStrategy.Mouse;
++            var clickStrategy = ClickStrategy.Invoke;
 +            if (capabilities.TryGetStringCapability("appium:clickStrategy", out var clickStrategyString)
 +                && Enum.TryParse<ClickStrategy>(clickStrategyString, ignoreCase: true, out var parsedClickStrategy))
 +            {
 +                clickStrategy = parsedClickStrategy;
 +            }
 +
-+            var typeStrategy = TypeStrategy.Keys;
++            var typeStrategy = TypeStrategy.Value;
 +            if (capabilities.TryGetStringCapability("appium:typeStrategy", out var typeStrategyString)
 +                && Enum.TryParse<TypeStrategy>(typeStrategyString, ignoreCase: true, out var parsedTypeStrategy))
 +            {
@@ -88,7 +88,7 @@ index e6e8f96..b8d29a4 100644
              if (notMatchedStandardOrAppiumCapabilities.Any())
 diff --git a/src/FlaUI.WebDriver/InputStrategies.cs b/src/FlaUI.WebDriver/InputStrategies.cs
 new file mode 100644
-index 0000000..415aebe
+index 0000000..7bcea3d
 --- /dev/null
 +++ b/src/FlaUI.WebDriver/InputStrategies.cs
 @@ -0,0 +1,212 @@
@@ -98,25 +98,25 @@ index 0000000..415aebe
 +namespace FlaUI.WebDriver
 +{
 +    /// <summary>
-+    /// How <c>element/click</c> is performed. <see cref="Mouse"/> is the upstream
-+    /// behaviour (physical SendInput, moves the real cursor). <see cref="Invoke"/>
++    /// How <c>element/click</c> is performed. <see cref="Invoke"/> (the default)
 +    /// tries UI Automation patterns and Win32 PostMessage so the cursor is never moved.
++    /// <see cref="Mouse"/> is the upstream behaviour (physical SendInput, moves the cursor).
 +    /// </summary>
 +    public enum ClickStrategy
 +    {
-+        Mouse,
-+        Invoke
++        Invoke,
++        Mouse
 +    }
 +
 +    /// <summary>
-+    /// How <c>element/value</c> (send keys) is performed. <see cref="Keys"/> is the
-+    /// upstream behaviour (physical SendInput). <see cref="Value"/> sets the value via
-+    /// the UI Automation ValuePattern instead, without touching the keyboard.
++    /// How <c>element/value</c> (send keys) is performed. <see cref="Value"/> (the default)
++    /// sets the value via the UI Automation ValuePattern, without touching the keyboard.
++    /// <see cref="Keys"/> is the upstream behaviour (physical SendInput).
 +    /// </summary>
 +    public enum TypeStrategy
 +    {
-+        Keys,
-+        Value
++        Value,
++        Keys
 +    }
 +
 +    public static class CursorFreeInput
@@ -305,7 +305,7 @@ index 0000000..415aebe
 +    }
 +}
 diff --git a/src/FlaUI.WebDriver/Session.cs b/src/FlaUI.WebDriver/Session.cs
-index 305cf8c..fb79c9e 100644
+index 305cf8c..15cc895 100644
 --- a/src/FlaUI.WebDriver/Session.cs
 +++ b/src/FlaUI.WebDriver/Session.cs
 @@ -8,7 +8,8 @@ namespace FlaUI.WebDriver
@@ -314,7 +314,7 @@ index 305cf8c..fb79c9e 100644
      {
 -        public Session(Application? app, bool isAppOwnedBySession, TimeoutsConfiguration timeoutsConfiguration, TimeSpan newCommandTimeout)
 +        public Session(Application? app, bool isAppOwnedBySession, TimeoutsConfiguration timeoutsConfiguration, TimeSpan newCommandTimeout,
-+            ClickStrategy clickStrategy = ClickStrategy.Mouse, TypeStrategy typeStrategy = TypeStrategy.Keys)
++            ClickStrategy clickStrategy = ClickStrategy.Invoke, TypeStrategy typeStrategy = TypeStrategy.Value)
          {
              App = app;
              SessionId = Guid.NewGuid().ToString();

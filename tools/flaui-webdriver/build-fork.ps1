@@ -14,11 +14,12 @@
     powershell -File build-fork.ps1 -WorkDir D:\flaui-src -OutDir D:\flaui-bin
 
   Capabilities added by the patch (session creation):
-    appium:clickStrategy  "mouse" (default) | "invoke"
+    appium:clickStrategy  "invoke" (default) | "mouse"
         invoke = click via UI Automation patterns, else Win32 PostMessage;
-        never moves the physical cursor.
-    appium:typeStrategy   "keys" (default) | "value"
+        never moves the physical cursor. "mouse" restores upstream SendInput.
+    appium:typeStrategy   "value" (default) | "keys"
         value = set text via UI Automation ValuePattern; never touches the keyboard.
+        "keys" restores upstream physical typing.
 
   Example session capabilities:
     { "platformName": "windows", "appium:automationName": "FlaUI",
