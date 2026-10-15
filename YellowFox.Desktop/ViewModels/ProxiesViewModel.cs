@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
@@ -51,7 +52,10 @@ public partial class ProxiesViewModel : ViewModelBase
     private string _statusMessage = "Ready";
 
     [ObservableProperty]
-    private bool _isLastCheckSuccessful = true;
+    private ProxyStatusFilter _statusFilter = ProxyStatusFilter.All;
+
+    private readonly List<ProxyItemViewModel> _allProxies = new();
+    private readonly List<ProxyItemViewModel> _selectedProxies = new();
 
     public ObservableCollection<ProxyItemViewModel> Proxies { get; } = new();
 
@@ -65,11 +69,39 @@ public partial class ProxiesViewModel : ViewModelBase
     public string FormTitle => IsEditMode ? "Edit Proxy" : "New Proxy";
     public bool IsHttpType => string.Equals(Type, "http", StringComparison.OrdinalIgnoreCase);
     public bool IsNotHttpType => !IsHttpType;
-    public bool CanChangeIp => SelectedProxy?.HasIpChangeUrl == true;
-    public string ConnectionStatusText => IsLastCheckSuccessful ? "Active" : "Error";
-    public string ConnectionStatusForeground => IsLastCheckSuccessful ? "#6EDB76" : "#FF6E6E";
-    public string ConnectionStatusBackground => IsLastCheckSuccessful ? "#153A1B" : "#3A1515";
-    public string ConnectionStatusBorder => IsLastCheckSuccessful ? "#2E7D32" : "#A33A3A";
+
+    public bool IsSingleSelection => _selectedProxies.Count == 1;
+    public bool CanChangeIpForSelection => _selectedProxies.Count > 0 && _selectedProxies.All(p => p.HasIpChangeUrl);
+    public string CheckMenuHeader => _selectedProxies.Count > 1 ? $"✅ Check ({_selectedProxies.Count})" : "✅ Check";
+    public string ChangeIpMenuHeader => _selectedProxies.Count > 1 ? $"🔁 Change IP ({_selectedProxies.Count})" : "🔁 Change IP";
+    public string DeleteMenuHeader => _selectedProxies.Count > 1 ? $"🗑️ Delete ({_selectedProxies.Count})" : "🗑️ Delete";
+
+    public string StatusFilterColor => StatusFilter == ProxyStatusFilter.All ? "#858585" : "#4FA8FF";
+    public string StatusFilterToolTip => StatusFilter switch
+    {
+        ProxyStatusFilter.Valid => "Filter: checked only (click to change)",
+        ProxyStatusFilter.Invalid => "Filter: failed only (click to change)",
+        _ => "Filter: all (click to change)"
+    };
+
+    /// <summary>Called from the view when the grid selection changes.</summary>
+    public void SyncSelection(IEnumerable<ProxyItemViewModel> selected)
+    {
+        _selectedProxies.Clear();
+        _selectedProxies.AddRange(selected);
+        OnPropertyChanged(nameof(IsSingleSelection));
+        OnPropertyChanged(nameof(CanChangeIpForSelection));
+        OnPropertyChanged(nameof(CheckMenuHeader));
+        OnPropertyChanged(nameof(ChangeIpMenuHeader));
+        OnPropertyChanged(nameof(DeleteMenuHeader));
+    }
+
+    partial void OnStatusFilterChanged(ProxyStatusFilter value)
+    {
+        OnPropertyChanged(nameof(StatusFilterColor));
+        OnPropertyChanged(nameof(StatusFilterToolTip));
+        ApplyFilter();
+    }
 
     public ProxiesViewModel(DatabaseService databaseService, ProxyValidatorService proxyValidatorService, ProxyIpRotationService proxyIpRotationService)
     {
@@ -98,21 +130,12 @@ public partial class ProxiesViewModel : ViewModelBase
 
         OnPropertyChanged(nameof(IsEditMode));
         OnPropertyChanged(nameof(FormTitle));
-        OnPropertyChanged(nameof(CanChangeIp));
     }
 
     partial void OnTypeChanged(string value)
     {
         OnPropertyChanged(nameof(IsHttpType));
         OnPropertyChanged(nameof(IsNotHttpType));
-    }
-
-    partial void OnIsLastCheckSuccessfulChanged(bool value)
-    {
-        OnPropertyChanged(nameof(ConnectionStatusText));
-        OnPropertyChanged(nameof(ConnectionStatusForeground));
-        OnPropertyChanged(nameof(ConnectionStatusBackground));
-        OnPropertyChanged(nameof(ConnectionStatusBorder));
     }
 
     [RelayCommand]
@@ -139,20 +162,21 @@ public partial class ProxiesViewModel : ViewModelBase
     [RelayCommand]
     private async Task EditProxy()
     {
-        if (SelectedProxy == null)
+        var target = _selectedProxies.Count == 1 ? _selectedProxies[0] : SelectedProxy;
+        if (target == null)
             return;
 
-        var editor = new ProxyEditorViewModel(SelectedProxy.Proxy);
+        var editor = new ProxyEditorViewModel(target.Proxy);
         if (!await ShowProxyEditorAsync(editor))
             return;
 
         try
         {
-            var proxy = editor.BuildProxy(SelectedProxy.Proxy);
+            var proxy = editor.BuildProxy(target.Proxy);
             _databaseService.UpdateProxy(proxy);
             StatusMessage = $"Updated proxy: {proxy.Name}";
             await RefreshAndCheckAsync();
-            SelectedProxy = Proxies.FirstOrDefault(item => item.Proxy.Id == proxy.Id);
+            SelectedProxy = Proxies.FirstOrDefault(p => p.Proxy.Id == proxy.Id);
         }
         catch (Exception ex)
         {
@@ -207,80 +231,103 @@ public partial class ProxiesViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private async Task DeleteProxy()
+    private async Task DeleteProxies()
     {
-        if (SelectedProxy == null)
+        var targets = _selectedProxies.Count > 0
+            ? _selectedProxies.ToList()
+            : (SelectedProxy != null ? new List<ProxyItemViewModel> { SelectedProxy } : new List<ProxyItemViewModel>());
+        if (targets.Count == 0)
             return;
 
-        var confirmed = await ConfirmDelete(SelectedProxy.Proxy.Name);
+        var message = targets.Count == 1
+            ? $"Delete proxy '{targets[0].Proxy.Name}'?"
+            : $"Delete {targets.Count} proxies?";
+        var confirmed = await ConfirmDelete(message);
         if (!confirmed)
             return;
 
-        _databaseService.DeleteProxy(SelectedProxy.Proxy.Id);
-        StatusMessage = $"Deleted proxy: {SelectedProxy.Proxy.Name}";
+        foreach (var target in targets)
+            _databaseService.DeleteProxy(target.Proxy.Id);
+
+        StatusMessage = targets.Count == 1
+            ? $"Deleted proxy: {targets[0].Proxy.Name}"
+            : $"Deleted {targets.Count} proxies";
 
         await RefreshAndCheckAsync();
         ResetForm();
         SelectedProxy = null;
     }
 
-    [RelayCommand]
-    private async Task TestProxy()
+    [RelayCommand(AllowConcurrentExecutions = true)]
+    private async Task TestProxies()
     {
-        if (SelectedProxy == null)
+        var targets = _selectedProxies.Count > 0
+            ? _selectedProxies.ToList()
+            : (SelectedProxy != null ? new List<ProxyItemViewModel> { SelectedProxy } : new List<ProxyItemViewModel>());
+        if (targets.Count == 0)
             return;
 
-        StatusMessage = "Testing proxy...";
-        var selectedItem = SelectedProxy;
-        var proxy = selectedItem.Proxy;
-        var result = await _proxyValidatorService.ValidateAsync(proxy);
+        StatusMessage = targets.Count == 1
+            ? $"Testing proxy: {targets[0].Proxy.Name}..."
+            : $"Checking {targets.Count} proxies...";
+        await Task.WhenAll(targets.Select(CheckProxyItemAsync));
 
-        if (result.IsSuccess)
+        var ok = targets.Count(p => p.ValidationState == ProxyValidationState.Success);
+        StatusMessage = targets.Count == 1
+            ? (targets[0].ValidationState == ProxyValidationState.Success
+                ? $"OK | {targets[0].Proxy.Name} | {targets[0].ValidationMessage}"
+                : $"FAILED | {targets[0].Proxy.Name} | {targets[0].ValidationMessage}")
+            : $"Checked {targets.Count} proxies: {ok} OK, {targets.Count - ok} failed";
+    }
+
+    [RelayCommand(AllowConcurrentExecutions = true)]
+    private async Task ChangeIps()
+    {
+        var targets = (_selectedProxies.Count > 0
+                ? _selectedProxies.ToList()
+                : (SelectedProxy != null ? new List<ProxyItemViewModel> { SelectedProxy } : new List<ProxyItemViewModel>()))
+            .Where(p => p.HasIpChangeUrl)
+            .ToList();
+        if (targets.Count == 0)
+            return;
+
+        var succeeded = 0;
+        foreach (var target in targets)
         {
-            IsLastCheckSuccessful = true;
-            var countryFlagPath = await GetCountryFlagPathAsync(result.CountryCode);
-            selectedItem.SetSuccess(result.ExternalIp, result.LatencyMs, result.CountryCode, result.CountryName, countryFlagPath);
-            StatusMessage = FormatValidationMessage(result.ExternalIp, result.LatencyMs);
+            StatusMessage = $"Changing IP for {target.Proxy.Name}...";
+            try
+            {
+                var rotation = await _proxyIpRotationService.ChangeIpAsync(target.Proxy);
+                if (!rotation.Success)
+                {
+                    target.SetFailed(rotation.Message);
+                    StatusMessage = $"IP change failed for {target.Proxy.Name}: {rotation.Message}";
+                    continue;
+                }
+
+                await CheckProxyItemAsync(target);
+                if (target.ValidationState == ProxyValidationState.Success)
+                    succeeded++;
+            }
+            catch (Exception ex)
+            {
+                target.SetFailed(ex.Message);
+                StatusMessage = $"IP change failed for {target.Proxy.Name}: {ex.Message}";
+            }
         }
-        else
-        {
-            IsLastCheckSuccessful = false;
-            selectedItem.SetFailed(result.Error);
-            StatusMessage = $"FAILED | {result.Error}";
-        }
+
+        StatusMessage = targets.Count == 1
+            ? (succeeded == 1
+                ? $"IP changed: {targets[0].ValidationMessage}"
+                : $"IP change requested, recheck failed: {targets[0].ValidationMessage}")
+            : $"IP change done: {succeeded}/{targets.Count} succeeded";
     }
 
     [RelayCommand]
-    private async Task ChangeIp()
+    private void SetStatusFilter(string? filter)
     {
-        if (SelectedProxy == null || !SelectedProxy.HasIpChangeUrl)
-            return;
-
-        var selectedItem = SelectedProxy;
-        StatusMessage = $"Changing IP for {selectedItem.Proxy.Name}...";
-        try
-        {
-            var rotation = await _proxyIpRotationService.ChangeIpAsync(selectedItem.Proxy);
-            if (!rotation.Success)
-            {
-                selectedItem.SetFailed(rotation.Message);
-                IsLastCheckSuccessful = false;
-                StatusMessage = $"IP change failed: {rotation.Message}";
-                return;
-            }
-
-            StatusMessage = "IP change requested. Rechecking proxy...";
-            await CheckProxyItemAsync(selectedItem);
-            StatusMessage = selectedItem.ValidationState == ProxyValidationState.Success
-                ? $"IP changed: {selectedItem.ValidationMessage}"
-                : $"IP change requested, recheck failed: {selectedItem.ValidationMessage}";
-        }
-        catch (Exception ex)
-        {
-            selectedItem.SetFailed(ex.Message);
-            IsLastCheckSuccessful = false;
-            StatusMessage = $"IP change failed: {ex.Message}";
-        }
+        if (Enum.TryParse<ProxyStatusFilter>(filter, ignoreCase: true, out var parsed))
+            StatusFilter = parsed;
     }
 
     [RelayCommand]
@@ -292,29 +339,47 @@ public partial class ProxiesViewModel : ViewModelBase
     public async Task RefreshAndCheckAsync()
     {
         LoadProxies();
-        if (Proxies.Count == 0)
+        if (_allProxies.Count == 0)
         {
             StatusMessage = "No proxies";
             return;
         }
 
-        StatusMessage = $"Checking {Proxies.Count} proxies...";
-        var tasks = Proxies.Select(CheckProxyItemAsync).ToArray();
+        StatusMessage = $"Checking {_allProxies.Count} proxies...";
+        var tasks = _allProxies.Select(CheckProxyItemAsync).ToArray();
         await Task.WhenAll(tasks);
 
-        var ok = Proxies.Count(proxy => proxy.ValidationState == ProxyValidationState.Success);
-        var failed = Proxies.Count(proxy => proxy.ValidationState == ProxyValidationState.Failed);
+        var ok = _allProxies.Count(proxy => proxy.ValidationState == ProxyValidationState.Success);
+        var failed = _allProxies.Count(proxy => proxy.ValidationState == ProxyValidationState.Failed);
         StatusMessage = $"Checked proxies: {ok} OK, {failed} failed";
     }
 
     private void LoadProxies()
     {
-        Proxies.Clear();
+        _allProxies.Clear();
         var proxies = _databaseService.GetAllProxies();
         foreach (var proxy in proxies)
         {
-            Proxies.Add(new ProxyItemViewModel(proxy));
+            _allProxies.Add(new ProxyItemViewModel(proxy));
         }
+        ApplyFilter();
+    }
+
+    private void ApplyFilter()
+    {
+        Proxies.Clear();
+        foreach (var item in _allProxies.Where(MatchesFilter))
+            Proxies.Add(item);
+    }
+
+    private bool MatchesFilter(ProxyItemViewModel item)
+    {
+        return StatusFilter switch
+        {
+            ProxyStatusFilter.Valid => item.ValidationState == ProxyValidationState.Success,
+            ProxyStatusFilter.Invalid => item.ValidationState == ProxyValidationState.Failed,
+            _ => true
+        };
     }
 
     private async Task CheckProxyItemAsync(ProxyItemViewModel item)
@@ -353,11 +418,6 @@ public partial class ProxiesViewModel : ViewModelBase
         }
     }
 
-    private static string FormatValidationMessage(string? externalIp, long latencyMs)
-    {
-        return $"OK | IP: {externalIp ?? "unknown"} | {latencyMs}ms";
-    }
-
     private void ResetForm()
     {
         Name = string.Empty;
@@ -367,7 +427,6 @@ public partial class ProxiesViewModel : ViewModelBase
         Username = string.Empty;
         Password = string.Empty;
         IpChangeLink = string.Empty;
-        IsLastCheckSuccessful = true;
     }
 
     private bool ValidateForm(out string validationError)
@@ -420,14 +479,14 @@ public partial class ProxiesViewModel : ViewModelBase
         return proxy;
     }
 
-    private async Task<bool> ConfirmDelete(string proxyName)
+    private async Task<bool> ConfirmDelete(string message)
     {
         var mainWindow = GetMainWindow();
         var box = MessageBoxManager.GetMessageBoxCustom(
             new MessageBoxCustomParams
             {
                 ContentTitle = "Delete Proxy",
-                ContentMessage = $"Delete proxy '{proxyName}'?",
+                ContentMessage = message,
                 ButtonDefinitions = new[]
                 {
                     new ButtonDefinition { Name = "Yes", IsDefault = true },
@@ -663,4 +722,11 @@ public enum ProxyValidationState
     Checking,
     Success,
     Failed
+}
+
+public enum ProxyStatusFilter
+{
+    All,
+    Valid,
+    Invalid
 }
