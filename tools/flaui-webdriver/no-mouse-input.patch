@@ -1,0 +1,338 @@
+diff --git a/src/FlaUI.WebDriver/Controllers/ElementController.cs b/src/FlaUI.WebDriver/Controllers/ElementController.cs
+index 22cefd6..b31ed23 100644
+--- a/src/FlaUI.WebDriver/Controllers/ElementController.cs
++++ b/src/FlaUI.WebDriver/Controllers/ElementController.cs
+@@ -80,7 +80,15 @@ namespace FlaUI.WebDriver.Controllers
+                 }
+             }
+ 
+-            element.Click();
++            if (session.ClickStrategy == ClickStrategy.Invoke)
++            {
++                var method = CursorFreeInput.Click(element);
++                _logger.LogDebug("Invoked element {ElementId} via {Method} without moving the cursor", elementId, method);
++            }
++            else
++            {
++                element.Click();
++            }
+ 
+             return WebDriverResult.Success();
+         }
+@@ -210,6 +218,18 @@ namespace FlaUI.WebDriver.Controllers
+             // In English: "the caret should be placed at the end of the text before sending keys". That doesn't seem to be possible
+             // with UIA, meaning that the text gets inserted at the beginning, which is also WinAppDriver's behavior.
+ 
++            if (session.TypeStrategy == TypeStrategy.Value)
++            {
++                var valuePattern = element.Patterns.Value.PatternOrDefault;
++                if (valuePattern != null && !valuePattern.IsReadOnly.ValueOrDefault)
++                {
++                    var current = valuePattern.Value.ValueOrDefault ?? string.Empty;
++                    valuePattern.SetValue(current + elementSendKeysRequest.Text);
++                    return WebDriverResult.Success();
++                }
++                _logger.LogDebug("TypeStrategy Value requested but element {ElementId} has no writable ValuePattern; falling back to keys", elementId);
++            }
++
+             var inputState = session.InputState;
+             var inputId = Guid.NewGuid().ToString();
+             var source = (KeyInputSource)inputState.CreateInputSource("key");
+diff --git a/src/FlaUI.WebDriver/Controllers/SessionController.cs b/src/FlaUI.WebDriver/Controllers/SessionController.cs
+index e6e8f96..b8d29a4 100644
+--- a/src/FlaUI.WebDriver/Controllers/SessionController.cs
++++ b/src/FlaUI.WebDriver/Controllers/SessionController.cs
+@@ -54,11 +54,25 @@ namespace FlaUI.WebDriver.Controllers
+                 newCommandTimeout = TimeSpan.FromSeconds(newCommandTimeoutFromCapabilities);
+             }
+ 
++            var clickStrategy = ClickStrategy.Mouse;
++            if (capabilities.TryGetStringCapability("appium:clickStrategy", out var clickStrategyString)
++                && Enum.TryParse<ClickStrategy>(clickStrategyString, ignoreCase: true, out var parsedClickStrategy))
++            {
++                clickStrategy = parsedClickStrategy;
++            }
++
++            var typeStrategy = TypeStrategy.Keys;
++            if (capabilities.TryGetStringCapability("appium:typeStrategy", out var typeStrategyString)
++                && Enum.TryParse<TypeStrategy>(typeStrategyString, ignoreCase: true, out var parsedTypeStrategy))
++            {
++                typeStrategy = parsedTypeStrategy;
++            }
++
+             Application? app = GetApp(capabilities, out bool isAppOwnedBySession);
+             Session session;
+             try
+             {
+-                session = new Session(app, isAppOwnedBySession, timeoutsConfiguration, newCommandTimeout);
++                session = new Session(app, isAppOwnedBySession, timeoutsConfiguration, newCommandTimeout, clickStrategy, typeStrategy);
+             }
+             catch (Exception)
+             {
+@@ -199,6 +213,16 @@ namespace FlaUI.WebDriver.Controllers
+                 matchedCapabilities.Copy("timeouts", capabilities);
+             }
+ 
++            if (capabilities.Contains("appium:clickStrategy"))
++            {
++                matchedCapabilities.Copy("appium:clickStrategy", capabilities);
++            }
++
++            if (capabilities.Contains("appium:typeStrategy"))
++            {
++                matchedCapabilities.Copy("appium:typeStrategy", capabilities);
++            }
++
+             var notMatchedCapabilities = capabilities.Capabilities.Keys.Except(matchedCapabilities.Capabilities.Keys);
+             var notMatchedStandardOrAppiumCapabilities = notMatchedCapabilities.Where(c => !c.Contains(":") || c.StartsWith("appium:"));
+             if (notMatchedStandardOrAppiumCapabilities.Any())
+diff --git a/src/FlaUI.WebDriver/InputStrategies.cs b/src/FlaUI.WebDriver/InputStrategies.cs
+new file mode 100644
+index 0000000..415aebe
+--- /dev/null
++++ b/src/FlaUI.WebDriver/InputStrategies.cs
+@@ -0,0 +1,212 @@
++using System.Runtime.InteropServices;
++using FlaUI.Core.AutomationElements;
++
++namespace FlaUI.WebDriver
++{
++    /// <summary>
++    /// How <c>element/click</c> is performed. <see cref="Mouse"/> is the upstream
++    /// behaviour (physical SendInput, moves the real cursor). <see cref="Invoke"/>
++    /// tries UI Automation patterns and Win32 PostMessage so the cursor is never moved.
++    /// </summary>
++    public enum ClickStrategy
++    {
++        Mouse,
++        Invoke
++    }
++
++    /// <summary>
++    /// How <c>element/value</c> (send keys) is performed. <see cref="Keys"/> is the
++    /// upstream behaviour (physical SendInput). <see cref="Value"/> sets the value via
++    /// the UI Automation ValuePattern instead, without touching the keyboard.
++    /// </summary>
++    public enum TypeStrategy
++    {
++        Keys,
++        Value
++    }
++
++    public static class CursorFreeInput
++    {
++        /// <summary>
++        /// Clicks without moving the physical cursor: UI Automation patterns first,
++        /// then a Win32 PostMessage click, and finally the physical mouse as a last resort.
++        /// </summary>
++        public static string Click(AutomationElement element)
++        {
++            if (TryPatternClick(element, out var patternMethod))
++            {
++                return patternMethod;
++            }
++
++            if (TryPostMessageClick(element))
++            {
++                return "PostMessage";
++            }
++
++            element.Click();
++            return "Mouse";
++        }
++
++        private static bool TryPatternClick(AutomationElement element, out string method)
++        {
++            var invoke = element.Patterns.Invoke.PatternOrDefault;
++            if (invoke != null)
++            {
++                invoke.Invoke();
++                method = "Invoke";
++                return true;
++            }
++
++            var toggle = element.Patterns.Toggle.PatternOrDefault;
++            if (toggle != null)
++            {
++                toggle.Toggle();
++                method = "Toggle";
++                return true;
++            }
++
++            var selectionItem = element.Patterns.SelectionItem.PatternOrDefault;
++            if (selectionItem != null)
++            {
++                selectionItem.Select();
++                method = "SelectionItem";
++                return true;
++            }
++
++            var expandCollapse = element.Patterns.ExpandCollapse.PatternOrDefault;
++            if (expandCollapse != null)
++            {
++                expandCollapse.Expand();
++                method = "ExpandCollapse";
++                return true;
++            }
++
++            method = string.Empty;
++            return false;
++        }
++
++        // Sends WM_LBUTTONDOWN/UP to the element's window at the element centre.
++        // The window is found by geometry (any visible top-level window of the
++        // element's process that contains the point), so it works even when the
++        // app is behind other windows and for popups (e.g. MenuFlyout).
++        private static bool TryPostMessageClick(AutomationElement element)
++        {
++            var rect = element.BoundingRectangle;
++            if (rect.IsEmpty)
++            {
++                return false;
++            }
++
++            var point = new POINT { X = rect.Left + (rect.Width / 2), Y = rect.Top + (rect.Height / 2) };
++            int processId;
++            try
++            {
++                processId = element.Properties.ProcessId.Value;
++            }
++            catch
++            {
++                processId = 0;
++            }
++
++            var hwnd = processId > 0 ? FindWindowForPoint(processId, point) : IntPtr.Zero;
++            if (hwnd == IntPtr.Zero)
++            {
++                // Fall back to the window physically under the point.
++                var hit = WindowFromPoint(point);
++                if (hit == IntPtr.Zero)
++                {
++                    return false;
++                }
++                var root = GetAncestor(hit, GA_ROOT);
++                hwnd = root != IntPtr.Zero ? root : hit;
++            }
++
++            ScreenToClient(hwnd, ref point);
++
++            var lParam = (IntPtr)((point.Y << 16) | (point.X & 0xFFFF));
++            PostMessage(hwnd, WM_LBUTTONDOWN, (IntPtr)MK_LBUTTON, lParam);
++            Thread.Sleep(30);
++            PostMessage(hwnd, WM_LBUTTONUP, IntPtr.Zero, lParam);
++            return true;
++        }
++
++        // Smallest visible top-level window of the process whose rect contains the point.
++        private static IntPtr FindWindowForPoint(int processId, POINT point)
++        {
++            var best = IntPtr.Zero;
++            long bestArea = long.MaxValue;
++            EnumWindows((hwnd, _) =>
++            {
++                GetWindowThreadProcessId(hwnd, out var windowProcessId);
++                if (windowProcessId != processId || !IsWindowVisible(hwnd))
++                {
++                    return true;
++                }
++                if (!GetWindowRect(hwnd, out var windowRect))
++                {
++                    return true;
++                }
++                if (point.X < windowRect.Left || point.X >= windowRect.Right ||
++                    point.Y < windowRect.Top || point.Y >= windowRect.Bottom)
++                {
++                    return true;
++                }
++                var area = (long)(windowRect.Right - windowRect.Left) * (windowRect.Bottom - windowRect.Top);
++                if (area < bestArea)
++                {
++                    bestArea = area;
++                    best = hwnd;
++                }
++                return true;
++            }, IntPtr.Zero);
++            return best;
++        }
++
++        private const uint GA_ROOT = 2;
++        private const uint WM_LBUTTONDOWN = 0x0201;
++        private const uint WM_LBUTTONUP = 0x0202;
++        private const int MK_LBUTTON = 0x0001;
++
++        private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
++
++        [StructLayout(LayoutKind.Sequential)]
++        private struct POINT
++        {
++            public int X;
++            public int Y;
++        }
++
++        [StructLayout(LayoutKind.Sequential)]
++        private struct RECT
++        {
++            public int Left;
++            public int Top;
++            public int Right;
++            public int Bottom;
++        }
++
++        [DllImport("user32.dll")]
++        private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr lParam);
++
++        [DllImport("user32.dll")]
++        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out int processId);
++
++        [DllImport("user32.dll")]
++        private static extern bool IsWindowVisible(IntPtr hWnd);
++
++        [DllImport("user32.dll")]
++        private static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
++
++        [DllImport("user32.dll")]
++        private static extern IntPtr WindowFromPoint(POINT point);
++
++        [DllImport("user32.dll")]
++        private static extern IntPtr GetAncestor(IntPtr hWnd, uint flags);
++
++        [DllImport("user32.dll")]
++        private static extern bool ScreenToClient(IntPtr hWnd, ref POINT point);
++
++        [DllImport("user32.dll")]
++        private static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
++    }
++}
+diff --git a/src/FlaUI.WebDriver/Session.cs b/src/FlaUI.WebDriver/Session.cs
+index 305cf8c..fb79c9e 100644
+--- a/src/FlaUI.WebDriver/Session.cs
++++ b/src/FlaUI.WebDriver/Session.cs
+@@ -8,7 +8,8 @@ namespace FlaUI.WebDriver
+ {
+     public class Session : IDisposable
+     {
+-        public Session(Application? app, bool isAppOwnedBySession, TimeoutsConfiguration timeoutsConfiguration, TimeSpan newCommandTimeout)
++        public Session(Application? app, bool isAppOwnedBySession, TimeoutsConfiguration timeoutsConfiguration, TimeSpan newCommandTimeout,
++            ClickStrategy clickStrategy = ClickStrategy.Mouse, TypeStrategy typeStrategy = TypeStrategy.Keys)
+         {
+             App = app;
+             SessionId = Guid.NewGuid().ToString();
+@@ -17,6 +18,8 @@ namespace FlaUI.WebDriver
+             TimeoutsConfiguration = timeoutsConfiguration;
+             IsAppOwnedBySession = isAppOwnedBySession;
+             NewCommandTimeout = newCommandTimeout;
++            ClickStrategy = clickStrategy;
++            TypeStrategy = typeStrategy;
+ 
+             if (app != null)
+             {
+@@ -40,6 +43,8 @@ namespace FlaUI.WebDriver
+         public TimeSpan PageLoadTimeout => TimeSpan.FromMilliseconds(TimeoutsConfiguration.PageLoadTimeoutMs);
+         public TimeSpan? ScriptTimeout => TimeoutsConfiguration.ScriptTimeoutMs.HasValue ? TimeSpan.FromMilliseconds(TimeoutsConfiguration.ScriptTimeoutMs.Value) : null;
+         public bool IsAppOwnedBySession { get; }
++        public ClickStrategy ClickStrategy { get; }
++        public TypeStrategy TypeStrategy { get; }
+ 
+         public TimeoutsConfiguration TimeoutsConfiguration { get; set; }
+ 
