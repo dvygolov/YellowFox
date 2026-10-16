@@ -74,19 +74,29 @@
                 </ContextMenu>
             </DataGrid.ContextMenu>
             <DataGrid.Columns>
-                <DataGridTemplateColumn Width="48" CanUserSort="False">
+                <DataGridTemplateColumn Width="68" CanUserSort="True" SortMemberPath="StatusSortRank">
                     <DataGridTemplateColumn.Header>
-                        <TextBlock x:Name="ProxyStatusFilterHeader"
-                                   AutomationProperties.AutomationId="ProxyStatusFilterHeader"
-                                   Text="&#xE71C;"
-                                   FontFamily="Segoe MDL2 Assets"
-                                   FontSize="14"
-                                   HorizontalAlignment="Center"
-                                   VerticalAlignment="Center"
-                                   Cursor="Hand"
-                                   ToolTip.Tip="{Binding StatusFilterToolTip}"
-                                   Foreground="{Binding StatusFilterColor}"
-                                   PointerPressed="OnFilterHeaderPressed" />
+                        <StackPanel Orientation="Horizontal"
+                                    Spacing="5"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center">
+                            <TextBlock Text="&#xE738;"
+                                       FontFamily="Segoe MDL2 Assets"
+                                       FontSize="14"
+                                       Foreground="#858585"
+                                       VerticalAlignment="Center"
+                                       ToolTip.Tip="Sort by proxy status" />
+                            <TextBlock x:Name="ProxyStatusFilterHeader"
+                                       AutomationProperties.AutomationId="ProxyStatusFilterHeader"
+                                       Text="&#xE71C;"
+                                       FontFamily="Segoe MDL2 Assets"
+                                       FontSize="14"
+                                       VerticalAlignment="Center"
+                                       Cursor="Hand"
+                                       ToolTip.Tip="{Binding StatusFilterToolTip}"
+                                       Foreground="{Binding StatusFilterColor}"
+                                       PointerPressed="OnFilterHeaderPressed" />
+                        </StackPanel>
                     </DataGridTemplateColumn.Header>
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate x:DataType="vm:ProxyItemViewModel">
@@ -170,9 +180,25 @@
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
-                <DataGridTextColumn Header="Type" Binding="{Binding TypeDisplay}" Width="120" />
+                <DataGridTemplateColumn Header="Type" Width="78" SortMemberPath="Proxy.Type">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate x:DataType="vm:ProxyItemViewModel">
+                            <Border CornerRadius="4"
+                                    Padding="5,1"
+                                    Background="{Binding TypeBadgeBackground}"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center"
+                                    ToolTip.Tip="{Binding TypeToolTip}">
+                                <TextBlock Text="{Binding TypeLabel}"
+                                           FontSize="10"
+                                           FontWeight="SemiBold"
+                                           Foreground="{Binding TypeBadgeForeground}" />
+                            </Border>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
                 <DataGridTextColumn Header="Endpoint" Binding="{Binding Endpoint}" Width="2*" />
-                <DataGridTextColumn Header="Login" Binding="{Binding AuthDisplay}" Width="160" />
+                <DataGridTextColumn Header="Profiles" Binding="{Binding ProfileCount}" Width="90" />
                 <DataGridTextColumn Header="Status" Binding="{Binding ValidationMessage}" Width="2*" />
             </DataGrid.Columns>
         </DataGrid>

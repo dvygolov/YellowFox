@@ -358,9 +358,15 @@ public partial class ProxiesViewModel : ViewModelBase
     {
         _allProxies.Clear();
         var proxies = _databaseService.GetAllProxies();
+        var profileCounts = _databaseService.GetAllProfiles()
+            .Where(profile => !string.IsNullOrWhiteSpace(profile.ProxyId))
+            .GroupBy(profile => profile.ProxyId!)
+            .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
+
         foreach (var proxy in proxies)
         {
-            _allProxies.Add(new ProxyItemViewModel(proxy));
+            profileCounts.TryGetValue(proxy.Id, out var profileCount);
+            _allProxies.Add(new ProxyItemViewModel(proxy, profileCount));
         }
         ApplyFilter();
     }
@@ -563,11 +569,22 @@ public partial class ProxyItemViewModel : ViewModelBase
     [ObservableProperty]
     private string _countryToolTip = string.Empty;
 
-    public string TypeDisplay => Proxy.Type.ToUpperInvariant();
+    public int ProfileCount { get; }
+    public string TypeLabel => string.Equals(Proxy.NormalizeType(Proxy.Type), Proxy.Socks5Type, StringComparison.Ordinal) ? "S5" : "HTTP";
+    public string TypeToolTip => string.Equals(Proxy.NormalizeType(Proxy.Type), Proxy.Socks5Type, StringComparison.Ordinal) ? "SOCKS5 proxy" : "HTTP proxy";
+    public string TypeBadgeForeground => string.Equals(Proxy.NormalizeType(Proxy.Type), Proxy.Socks5Type, StringComparison.Ordinal) ? "#C9A7FF" : "#7CC4FF";
+    public string TypeBadgeBackground => string.Equals(Proxy.NormalizeType(Proxy.Type), Proxy.Socks5Type, StringComparison.Ordinal) ? "#2E2145" : "#16324A";
     public string Endpoint => $"{Proxy.Host}:{Proxy.Port}";
-    public string AuthDisplay => string.IsNullOrWhiteSpace(Proxy.Username) ? "No auth" : Proxy.Username!;
     public string EnabledDisplay => Proxy.IsEnabled ? "Enabled" : "Disabled";
     public bool HasIpChangeUrl => !string.IsNullOrWhiteSpace(Proxy.IpChangeUrl);
+    public int StatusSortRank => ValidationState switch
+    {
+        ProxyValidationState.Failed => 0,
+        ProxyValidationState.Unknown => 1,
+        ProxyValidationState.Checking => 2,
+        ProxyValidationState.Success => 3,
+        _ => 1
+    };
     public string StatusColor => ValidationState switch
     {
         ProxyValidationState.Success => "#6EDB76",
@@ -611,13 +628,15 @@ public partial class ProxyItemViewModel : ViewModelBase
     public bool IsChecking => ValidationState == ProxyValidationState.Checking;
     public bool IsNotChecking => !IsChecking;
 
-    public ProxyItemViewModel(Proxy proxy)
+    public ProxyItemViewModel(Proxy proxy, int profileCount)
     {
         Proxy = proxy;
+        ProfileCount = profileCount;
     }
 
     partial void OnValidationStateChanged(ProxyValidationState value)
     {
+        OnPropertyChanged(nameof(StatusSortRank));
         OnPropertyChanged(nameof(StatusColor));
         OnPropertyChanged(nameof(StatusBorderColor));
         OnPropertyChanged(nameof(StatusGlyph));
