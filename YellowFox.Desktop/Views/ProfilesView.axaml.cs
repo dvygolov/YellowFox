@@ -89,6 +89,9 @@ public partial class ProfilesView : UserControl
         if (e.Key != Key.Delete || DataContext is not ProfilesViewModel viewModel)
             return;
 
+        if (e.Source is TextBox)
+            return;
+
         _ = viewModel.DeleteSelectedNodes();
         e.Handled = true;
     }
