@@ -16,9 +16,19 @@ public partial class ProxiesView : UserControl
     public ProxiesView()
     {
         InitializeComponent();
+        ProxiesList.AddHandler(InputElement.KeyDownEvent, OnListKeyDown, RoutingStrategies.Bubble, handledEventsToo: true);
         ProxiesList.SelectionChanged += OnSelectionChanged;
         ProxiesList.AddHandler(InputElement.PointerPressedEvent, OnProxiesListPointerPressed, RoutingStrategies.Tunnel, handledEventsToo: true);
         ProxiesList.ContextRequested += OnProxiesListContextRequested;
+    }
+
+    private void OnListKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Delete || DataContext is not ProxiesViewModel vm)
+            return;
+
+        vm.DeleteProxiesCommand.Execute(null);
+        e.Handled = true;
     }
 
     private void OnSelectionChanged(object? sender, SelectionChangedEventArgs e)

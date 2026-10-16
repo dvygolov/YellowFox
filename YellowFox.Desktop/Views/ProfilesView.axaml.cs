@@ -26,8 +26,8 @@ public partial class ProfilesView : UserControl
     {
         InitializeComponent();
 
-        ProfilesTree.AddHandler(InputElement.PointerPressedEvent, ProfilesTree_PointerPressed, handledEventsToo: true);
-        ProfilesTree.AddHandler(InputElement.PointerMovedEvent, ProfilesTree_PointerMoved, handledEventsToo: true);
+        ProfilesTree.AddHandler(InputElement.PointerPressedEvent, ProfilesTree_PointerPressed, RoutingStrategies.Tunnel, handledEventsToo: true);
+        ProfilesTree.AddHandler(InputElement.KeyDownEvent, ProfilesTree_KeyDown, RoutingStrategies.Bubble, handledEventsToo: true);
         ProfilesTree.AddHandler(InputElement.PointerReleasedEvent, ProfilesTree_PointerReleased, handledEventsToo: true);
         ProfilesTree.AddHandler(InputElement.DoubleTappedEvent, ProfilesTree_DoubleTapped, handledEventsToo: true);
         ProfilesTree.AddHandler(DragDrop.DragOverEvent, ProfilesTree_DragOver);
@@ -49,10 +49,8 @@ public partial class ProfilesView : UserControl
         var pressedNode = FindNode(e.Source);
 
         var checkBox = FindSourceCheckBox(e.Source);
-        if (checkBox?.DataContext is ProfileItemViewModel current)
-        {
+        if (checkBox?.DataContext is ProfileNodeViewModel current)
             HandleCheckBoxSelection(e, checkBox, current);
-        }
 
         if (IsInteractiveSource(e.Source))
         {
@@ -64,17 +62,34 @@ public partial class ProfilesView : UserControl
         _dragStartPoint = e.GetPosition(ProfilesTree);
     }
 
-    private void HandleCheckBoxSelection(PointerPressedEventArgs e, CheckBox checkBox, ProfileItemViewModel current)
+    private void HandleCheckBoxSelection(PointerPressedEventArgs e, CheckBox checkBox, ProfileNodeViewModel current)
     {
+        ProfilesTree.SelectedItem = current;
         var isShiftClick = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
-        if (!isShiftClick || _selectionAnchor == null)
+        var newSelectionState = checkBox.IsChecked != true;
+        if (current is ProfileFolderNodeViewModel folder)
         {
-            _selectionAnchor = current;
+            folder.SetSelectedRecursive(newSelectionState);
+            e.Handled = true;
             return;
         }
 
-        var newSelectionState = checkBox.IsChecked != true;
-        SelectProfileRange(_selectionAnchor, current, newSelectionState);
+        if (!isShiftClick || _selectionAnchor == null)
+        {
+            _selectionAnchor = (ProfileItemViewModel)current;
+            return;
+        }
+
+        SelectProfileRange(_selectionAnchor, (ProfileItemViewModel)current, newSelectionState);
+        e.Handled = true;
+    }
+
+    private void ProfilesTree_KeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Delete || DataContext is not ProfilesViewModel viewModel)
+            return;
+
+        _ = viewModel.DeleteSelectedNodes();
         e.Handled = true;
     }
 

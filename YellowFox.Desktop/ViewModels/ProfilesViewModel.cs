@@ -330,11 +330,15 @@ public partial class ProfilesViewModel : ViewModelBase
 
     private void OnFolderNodePropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (HasActiveFilter)
-            return;
-
         if (sender is ProfileFolderNodeViewModel node && e.PropertyName == nameof(ProfileNodeViewModel.IsExpanded))
-            _folderExpansion[node.Folder.Id] = node.IsExpanded;
+        {
+            if (!HasActiveFilter)
+                _folderExpansion[node.Folder.Id] = node.IsExpanded;
+            return;
+        }
+
+        if (e.PropertyName == nameof(ProfileNodeViewModel.IsSelected))
+            OnPropertyChanged(nameof(HasSelection));
     }
 
     private void OnProfileItemPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -661,19 +665,28 @@ public partial class ProfilesViewModel : ViewModelBase
     [RelayCommand]
     private async Task DeleteAllSelected()
     {
-        var selected = EnumerateProfileNodes().Where(p => p.IsSelected).ToList();
+        await DeleteSelectedNodes();
+    }
+
+    public async Task DeleteSelectedNodes()
+    {
+        var selectedProfiles = EnumerateProfileNodes().Where(p => p.IsSelected).ToList();
+        var selectedFolders = EnumerateNodes(RootNodes).OfType<ProfileFolderNodeViewModel>().Where(f => f.IsSelected).ToList();
+        if (selectedProfiles.Count == 0 && selectedFolders.Count == 0)
+            return;
 
         var result = await ShowConfirmation(
-            "Delete Profiles",
-            $"Are you sure you want to delete {selected.Count} profile(s)?");
+            "Delete Selected",
+            $"Are you sure you want to delete {selectedProfiles.Count} profile(s) and {selectedFolders.Count} folder(s)?");
+        if (!result)
+            return;
 
-        if (result)
-        {
-            foreach (var profile in selected)
-                _databaseService.DeleteProfile(profile.Profile.Id);
+        foreach (var profile in selectedProfiles)
+            _databaseService.DeleteProfile(profile.Profile.Id);
+        foreach (var folder in selectedFolders)
+            _databaseService.DeleteProfileFolder(folder.Folder.Id);
 
-            LoadProfiles();
-        }
+        LoadProfiles();
     }
 
     public bool CanMoveNode(ProfileNodeViewModel dragged, ProfileNodeViewModel? target, ProfileDropPosition position)
@@ -942,9 +955,19 @@ public abstract partial class ProfileNodeViewModel : ViewModelBase
     [ObservableProperty]
     private bool _isExpanded = true;
 
+    [ObservableProperty]
+    private bool _isSelected;
+
     public abstract string Name { get; }
     public int TotalProfileCount { get; internal set; }
     public bool IsFolder => this is ProfileFolderNodeViewModel;
+
+    public void SetSelectedRecursive(bool value)
+    {
+        IsSelected = value;
+        foreach (var child in Children)
+            child.SetSelectedRecursive(value);
+    }
 }
 
 public partial class ProfileFolderNodeViewModel : ProfileNodeViewModel
@@ -989,10 +1012,6 @@ public partial class ProfileItemViewModel : ProfileNodeViewModel
 
     [ObservableProperty]
     private bool _isRunning;
-
-    [ObservableProperty]
-    private bool _isSelected;
-
     [ObservableProperty]
     private bool _isNotesExpanded;
 

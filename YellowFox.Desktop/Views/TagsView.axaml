@@ -54,6 +54,7 @@
         </Border>
 
         <DataGrid Grid.Row="1"
+                  x:Name="TagsList"
                   AutomationProperties.AutomationId="TagsList"
                   ItemsSource="{Binding Tags}"
                   SelectedItem="{Binding SelectedTag}"

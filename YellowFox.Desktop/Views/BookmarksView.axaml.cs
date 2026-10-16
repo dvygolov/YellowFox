@@ -18,11 +18,21 @@ public partial class BookmarksView : UserControl
     public BookmarksView()
     {
         InitializeComponent();
+        BookmarksTree.AddHandler(InputElement.KeyDownEvent, OnTreeKeyDown, RoutingStrategies.Bubble, handledEventsToo: true);
         BookmarksTree.AddHandler(InputElement.PointerPressedEvent, BookmarksTree_PointerPressed, handledEventsToo: true);
         BookmarksTree.AddHandler(InputElement.PointerMovedEvent, BookmarksTree_PointerMoved, handledEventsToo: true);
         BookmarksTree.AddHandler(InputElement.PointerReleasedEvent, BookmarksTree_PointerReleased, handledEventsToo: true);
         BookmarksTree.AddHandler(DragDrop.DragOverEvent, BookmarksTree_DragOver);
         BookmarksTree.AddHandler(DragDrop.DropEvent, BookmarksTree_Drop);
+    }
+
+    private void OnTreeKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Delete || DataContext is not BookmarksViewModel vm)
+            return;
+
+        vm.DeleteCommand.Execute(null);
+        e.Handled = true;
     }
 
     private void BookmarksTree_PointerPressed(object? sender, PointerPressedEventArgs e)

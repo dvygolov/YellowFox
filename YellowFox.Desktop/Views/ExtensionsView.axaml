@@ -80,6 +80,7 @@
         </Border>
 
         <DataGrid Grid.Row="1"
+                  x:Name="ExtensionsList"
                   AutomationProperties.AutomationId="ExtensionsList"
                   ItemsSource="{Binding Extensions}"
                   SelectedItem="{Binding SelectedExtension}"
