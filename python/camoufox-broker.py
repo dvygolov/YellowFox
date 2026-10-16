@@ -141,9 +141,141 @@ class BrokerState:
         self.closed = False
         self.context.set_default_timeout(5000)
         self.context.set_default_navigation_timeout(15000)
+        self.network_lock = threading.RLock()
+        self.network_entries = []
+        self.network_enabled = False
+        self.network_filters = []
+        self.network_capture_bodies = False
+        self.network_max_entries = 5000
+        self.network_page_ids = set()
         for page in list(self.context.pages):
             self.attach_download_handler(page)
         self.context.on("page", self.attach_download_handler)
+        for page in list(self.context.pages):
+            self.attach_network_handler(page)
+        self.context.on("page", self.attach_network_handler)
+
+    # ------------------------------------------------------------------
+    # Network capture (used by the CLI/agent to sniff API traffic such as
+    # Facebook Ads Manager placements mutations). Entries are appended from
+    # Playwright's event thread, so every access goes through network_lock.
+    # ------------------------------------------------------------------
+    def attach_network_handler(self, page):
+        page_id = id(page)
+        with self.network_lock:
+            if page_id in self.network_page_ids:
+                return
+            self.network_page_ids.add(page_id)
+        page.on("request", self.on_network_request)
+        page.on("response", self.on_network_response)
+
+    def _network_matches(self, url):
+        if not self.network_filters:
+            return True
+        lowered = str(url or "").lower()
+        return any(token in lowered for token in self.network_filters)
+
+    def _network_append(self, entry):
+        with self.network_lock:
+            if len(self.network_entries) >= self.network_max_entries:
+                return
+            self.network_entries.append(entry)
+
+    def on_network_request(self, request):
+        if not self.network_enabled or not self._network_matches(request.url):
+            return
+        entry = {
+            "kind": "request",
+            "ts": time.time(),
+            "method": request.method,
+            "url": request.url,
+            "resourceType": request.resource_type,
+            "headers": dict(request.headers),
+            "postData": request.post_data,
+        }
+        try:
+            frame = request.frame
+            entry["frameUrl"] = frame.url if frame else None
+        except Exception:
+            entry["frameUrl"] = None
+        self._network_append(entry)
+
+    def on_network_response(self, response):
+        if not self.network_enabled or not self._network_matches(response.url):
+            return
+        entry = {
+            "kind": "response",
+            "ts": time.time(),
+            "status": response.status,
+            "url": response.url,
+            "requestMethod": response.request.method,
+        }
+        if self.network_capture_bodies:
+            try:
+                content_type = (response.header_value("content-type") or "").lower()
+                if any(token in content_type for token in ("json", "text", "javascript")):
+                    body = response.text()
+                    if body is not None:
+                        entry["body"] = body[:200000]
+            except Exception as exc:
+                entry["bodyError"] = str(exc)
+        self._network_append(entry)
+
+    def start_network_capture(self, filters=None, bodies=False, max_entries=5000):
+        with self.network_lock:
+            self.network_filters = [str(token).lower() for token in (filters or []) if str(token).strip()]
+            self.network_capture_bodies = bool(bodies)
+            self.network_max_entries = int(max_entries or 5000)
+            self.network_entries = []
+            self.network_enabled = True
+        for page in list(self.context.pages):
+            self.attach_network_handler(page)
+        return {
+            "filters": self.network_filters,
+            "bodies": self.network_capture_bodies,
+            "maxEntries": self.network_max_entries,
+        }
+
+    def stop_network_capture(self):
+        with self.network_lock:
+            self.network_enabled = False
+            count = len(self.network_entries)
+        return {"count": count}
+
+    def dump_network(self, since=None):
+        with self.network_lock:
+            entries = list(self.network_entries)
+        if since is not None:
+            try:
+                cutoff = float(since)
+                entries = [entry for entry in entries if entry.get("ts", 0) >= cutoff]
+            except Exception:
+                pass
+        return entries
+
+    def clear_network(self):
+        with self.network_lock:
+            self.network_entries = []
+        return {"cleared": True}
+
+    def evaluate(self, expression, index=None, url_contains=None):
+        with self.lock:
+            pages = list(self.context.pages)
+            if not pages:
+                raise RuntimeError("No open page found.")
+            page = None
+            if url_contains:
+                needle = str(url_contains).lower()
+                page = next((p for p in pages if needle in (p.url or "").lower()), None)
+            if page is None and index is not None:
+                try:
+                    page = pages[int(index)]
+                except Exception:
+                    page = None
+            if page is None:
+                page = pages[-1]
+            result = page.evaluate(expression)
+            return {"url": page.url, "result": result}
 
     def attach_download_handler(self, page):
         page_id = id(page)
@@ -424,6 +556,12 @@ def make_handler(state):
                 if parsed.path == "/status":
                     self._send(200, {"ok": True, **state.status()})
                     return
+                if parsed.path == "/network":
+                    query = parse_qs(parsed.query)
+                    since = (query.get("since") or [None])[0]
+                    entries = state.dump_network(since)
+                    self._send(200, {"ok": True, "count": len(entries), "entries": entries})
+                    return
                 self._send(404, {"ok": False, "error": "not_found"})
             except Exception as exc:
                 self._send(500, {"ok": False, "error": str(exc)})
@@ -443,6 +581,28 @@ def make_handler(state):
                 if parsed.path == "/cookies":
                     count = state.import_cookies(data.get("cookies") or [], only_missing=False)
                     self._send(200, {"ok": True, "count": count})
+                    return
+                if parsed.path == "/evaluate":
+                    payload = state.evaluate(
+                        data["expression"],
+                        index=data.get("index"),
+                        url_contains=data.get("urlContains"),
+                    )
+                    self._send(200, {"ok": True, **payload})
+                    return
+                if parsed.path == "/network/start":
+                    payload = state.start_network_capture(
+                        filters=data.get("filters"),
+                        bodies=bool(data.get("bodies")),
+                        max_entries=data.get("maxEntries"),
+                    )
+                    self._send(200, {"ok": True, **payload})
+                    return
+                if parsed.path == "/network/stop":
+                    self._send(200, {"ok": True, **state.stop_network_capture()})
+                    return
+                if parsed.path == "/network/clear":
+                    self._send(200, {"ok": True, **state.clear_network()})
                     return
                 if parsed.path == "/stop":
                     state.stopping = True
