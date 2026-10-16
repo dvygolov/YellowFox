@@ -258,6 +258,35 @@ class BrokerState:
             self.network_entries = []
         return {"cleared": True}
 
+    def screenshot(self, path=None, full_page=False, selector=None, index=None, url_contains=None):
+        with self.lock:
+            pages = list(self.context.pages)
+            if not pages:
+                raise RuntimeError("No open page found.")
+            page = None
+            if url_contains:
+                needle = str(url_contains).lower()
+                page = next((p for p in pages if needle in (p.url or "").lower()), None)
+            if page is None and index is not None:
+                try:
+                    page = pages[int(index)]
+                except Exception:
+                    page = None
+            if page is None:
+                page = pages[-1]
+            if not path:
+                import tempfile
+                path = str(Path(tempfile.gettempdir()) / f"yellowfox-screenshot-{int(time.time())}.png")
+            if selector:
+                page.locator(selector).screenshot(path=path)
+            else:
+                page.screenshot(path=path, full_page=bool(full_page))
+            try:
+                page.bring_to_front()
+            except Exception:
+                pass
+            return {"path": path, "url": page.url}
+
     def evaluate(self, expression, index=None, url_contains=None):
         with self.lock:
             pages = list(self.context.pages)
@@ -581,6 +610,16 @@ def make_handler(state):
                 if parsed.path == "/cookies":
                     count = state.import_cookies(data.get("cookies") or [], only_missing=False)
                     self._send(200, {"ok": True, "count": count})
+                    return
+                if parsed.path == "/screenshot":
+                    payload = state.screenshot(
+                        path=data.get("path"),
+                        full_page=bool(data.get("fullPage")),
+                        selector=data.get("selector"),
+                        index=data.get("index"),
+                        url_contains=data.get("urlContains"),
+                    )
+                    self._send(200, {"ok": True, **payload})
                     return
                 if parsed.path == "/evaluate":
                     payload = state.evaluate(
