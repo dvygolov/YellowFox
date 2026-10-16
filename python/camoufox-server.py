@@ -109,11 +109,11 @@ def build_launch_kwargs(config):
         "firefox_user_prefs": {
             "browser.places.importBookmarksHTML": True,
             "browser.bookmarks.restore_default_bookmarks": False,
-            "browser.toolbars.bookmarks.visibility": "always",
+            "browser.toolbars.bookmarks.visibility": "never",
             "browser.toolbars.bookmarks.showOtherBookmarks": False,
             "browser.toolbars.bookmarks.showInPrivateBrowsing": True,
             "browser.bookmarks.addedImportButton": True,
-            "browser.policies.runOncePerModification.displayBookmarksToolbar": "always",
+            "browser.policies.runOncePerModification.displayBookmarksToolbar": "never",
             "browser.startup.page": 3,
             "keyword.enabled": True,
             "dom.event.contextmenu.enabled": False,
@@ -223,7 +223,7 @@ def ensure_browser_policies(executable_path, bookmarks):
 
         policies = {
             "policies": {
-                "DisplayBookmarksToolbar": "always",
+                "DisplayBookmarksToolbar": "never",
                 "DontCheckDefaultBrowser": True,
                 "SkipTermsOfUse": True,
                 "SearchEngines": {
@@ -281,7 +281,6 @@ lockPref("browser.urlbar.placeholderName.private", "Google");
 
 try {
   const { Services } = ChromeUtils.importESModule("resource://gre/modules/Services.sys.mjs");
-  Services.prefs.setCharPref("browser.toolbars.bookmarks.visibility", "always");
 
   async function enforceGoogleSearchEngine() {
     try {
@@ -314,39 +313,6 @@ try {
     } catch (e) {}
   }
   enforceGoogleSearchEngine();
-
-  function showBookmarksToolbar(win) {
-    try {
-      if (!win || !win.document) {
-        return;
-      }
-
-      const root = win.document.documentElement;
-      const chromeHidden = root.getAttribute("chromehidden");
-      if (chromeHidden) {
-        root.setAttribute(
-          "chromehidden",
-          chromeHidden
-            .split(" ")
-            .filter((value) => value !== "directories" && value !== "toolbar")
-            .join(" ")
-        );
-      }
-
-      const toolbar = win.document.getElementById("PersonalToolbar");
-      if (toolbar) {
-        toolbar.removeAttribute("collapsed");
-        toolbar.removeAttribute("hidden");
-        toolbar.collapsed = false;
-        toolbar.hidden = false;
-      }
-    } catch (e) {}
-  }
-
-  Services.obs.addObserver((subject) => showBookmarksToolbar(subject), "browser-delayed-startup-finished");
-  for (const win of Services.wm.getEnumerator("navigator:browser")) {
-    showBookmarksToolbar(win);
-  }
 } catch (e) {}
 
 try {

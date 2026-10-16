@@ -210,6 +210,10 @@ public class BrowserServiceTests : IDisposable
         Assert.Equal(1, result.RemovedCount);
         Assert.False(File.Exists(Path.Combine(profileExtensionsDir, "managed@yellowfox.test.xpi")));
         Assert.True(File.Exists(Path.Combine(manualDir, "manifest.json")));
+        userJs = File.ReadAllText(Path.Combine(_testDataDir, "user.js"));
+        Assert.Contains("browser.uiCustomization.state", userJs);
+        Assert.Contains("personal-bookmarks", userJs);
+        Assert.DoesNotContain("managed_yellowfox_test-browser-action", userJs);
     }
 
     [Fact]
@@ -350,10 +354,10 @@ public class BrowserServiceTests : IDisposable
         var userJs = File.ReadAllText(Path.Combine(_testDataDir, "user.js"));
         Assert.Contains("browser.places.importBookmarksHTML", userJs);
         Assert.Contains("browser.places.importBookmarksHTML\", false", userJs);
-        Assert.Contains("browser.toolbars.bookmarks.visibility\", \"always\"", userJs);
+        Assert.Contains("browser.toolbars.bookmarks.visibility\", \"never\"", userJs);
         Assert.Contains("browser.toolbars.bookmarks.showOtherBookmarks\", false", userJs);
         Assert.Contains("browser.toolbars.bookmarks.showInPrivateBrowsing\", true", userJs);
-        Assert.Contains("browser.policies.runOncePerModification.displayBookmarksToolbar\", \"always\"", userJs);
+        Assert.Contains("browser.policies.runOncePerModification.displayBookmarksToolbar\", \"never\"", userJs);
         Assert.DoesNotContain("toolkit.legacyUserProfileCustomizations.stylesheets", userJs);
         Assert.Contains("browser.startup.page\", 3", userJs);
         Assert.Contains("browser.aboutwelcome.enabled\", false", userJs);
@@ -388,7 +392,7 @@ public class BrowserServiceTests : IDisposable
         Assert.Contains("browser.link.open_newwindow.restriction\", 0", userJs);
         Assert.DoesNotContain("toolkit.telemetry.reportingpolicy.firstRun", userJs);
         var prefsJs = File.ReadAllText(Path.Combine(_testDataDir, "prefs.js"));
-        Assert.Contains("browser.toolbars.bookmarks.visibility\", \"always\"", prefsJs);
+        Assert.Contains("browser.toolbars.bookmarks.visibility\", \"never\"", prefsJs);
         Assert.Contains("browser.preonboarding.enabled\", false", prefsJs);
         Assert.Contains("taskbar.grouping.useprofile\", true", prefsJs);
         Assert.Contains("browser.startup.blankWindow\", false", prefsJs);
@@ -490,10 +494,10 @@ public class BrowserServiceTests : IDisposable
     }
 
     [Fact]
-    public void PrepareSharedBookmarks_ShouldForceBookmarksToolbarInExistingPrefs()
+    public void PrepareSharedBookmarks_ShouldNormalizeBookmarksToolbarVisibilityInExistingPrefs()
     {
         File.WriteAllText(Path.Combine(_testDataDir, "prefs.js"), """
-        user_pref("browser.toolbars.bookmarks.visibility", "never");
+        user_pref("browser.toolbars.bookmarks.visibility", "always");
         user_pref("toolkit.legacyUserProfileCustomizations.stylesheets", false);
         """);
 
@@ -503,8 +507,8 @@ public class BrowserServiceTests : IDisposable
         });
 
         var prefsJs = File.ReadAllText(Path.Combine(_testDataDir, "prefs.js"));
-        Assert.Contains("browser.toolbars.bookmarks.visibility\", \"always\"", prefsJs);
-        Assert.DoesNotContain("browser.toolbars.bookmarks.visibility\", \"never\"", prefsJs);
+        Assert.Contains("browser.toolbars.bookmarks.visibility\", \"never\"", prefsJs);
+        Assert.DoesNotContain("browser.toolbars.bookmarks.visibility\", \"always\"", prefsJs);
         Assert.DoesNotContain("toolkit.legacyUserProfileCustomizations.stylesheets", prefsJs);
         Assert.DoesNotContain("browser.uiCustomization.state", prefsJs);
     }

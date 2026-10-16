@@ -1121,10 +1121,10 @@ public class BrowserService
 
         EnsureUserPref(userJsLines, "browser.places.importBookmarksHTML", shouldImportBookmarksHtml ? "true" : "false");
         EnsureUserPref(userJsLines, "browser.bookmarks.restore_default_bookmarks", "false");
-        EnsureUserPref(userJsLines, "browser.toolbars.bookmarks.visibility", "\"always\"");
+        EnsureUserPref(userJsLines, "browser.toolbars.bookmarks.visibility", "\"never\"");
         EnsureUserPref(userJsLines, "browser.toolbars.bookmarks.showOtherBookmarks", "false");
         EnsureUserPref(userJsLines, "browser.toolbars.bookmarks.showInPrivateBrowsing", "true");
-        EnsureUserPref(userJsLines, "browser.policies.runOncePerModification.displayBookmarksToolbar", "\"always\"");
+        EnsureUserPref(userJsLines, "browser.policies.runOncePerModification.displayBookmarksToolbar", "\"never\"");
         EnsureUserPref(userJsLines, "browser.bookmarks.addedImportButton", "true");
         EnsureUserPref(userJsLines, "browser.startup.page", "3");
         EnsureUserPref(userJsLines, "browser.aboutwelcome.enabled", "false");
@@ -2239,7 +2239,7 @@ public class BrowserService
             ? File.ReadAllLines(prefsPath).ToList()
             : new List<string>();
 
-        EnsureUserPref(lines, "browser.toolbars.bookmarks.visibility", "\"always\"");
+        EnsureUserPref(lines, "browser.toolbars.bookmarks.visibility", "\"never\"");
         EnsureUserPref(lines, "browser.places.importBookmarksHTML", shouldImportBookmarksHtml ? "true" : "false");
         EnsureUserPref(lines, "browser.toolbars.bookmarks.showOtherBookmarks", "false");
         EnsureUserPref(lines, "browser.toolbars.bookmarks.showInPrivateBrowsing", "true");
@@ -2347,19 +2347,14 @@ public class BrowserService
     private static void WriteExtensionToolbarPrefs(string profileDir, IEnumerable<ManagedExtensionState> extensions)
     {
         var extensionStates = extensions.ToList();
-        var toolbarPrefValue = extensionStates.Count > 0
-            ? JsonSerializer.Serialize(JsonSerializer.Serialize(BuildToolbarCustomizationState(extensionStates)))
-            : null;
+        var toolbarPrefValue = JsonSerializer.Serialize(JsonSerializer.Serialize(BuildToolbarCustomizationState(extensionStates)));
         foreach (var fileName in new[] { "user.js", "prefs.js" })
         {
             var path = Path.Combine(profileDir, fileName);
             var lines = File.Exists(path)
                 ? File.ReadAllLines(path).ToList()
                 : new List<string>();
-            if (toolbarPrefValue == null)
-                RemoveUserPref(lines, "browser.uiCustomization.state");
-            else
-                EnsureUserPref(lines, "browser.uiCustomization.state", toolbarPrefValue);
+            EnsureUserPref(lines, "browser.uiCustomization.state", toolbarPrefValue);
             File.WriteAllLines(path, lines);
         }
     }
@@ -2382,6 +2377,7 @@ public class BrowserService
         };
         navBarItems.AddRange(extensionWidgets);
         navBarItems.Add("unified-extensions-button");
+        navBarItems.Add("personal-bookmarks");
 
         var state = new
         {
@@ -2393,7 +2389,7 @@ public class BrowserService
                 ["toolbar-menubar"] = new[] { "menubar-items" },
                 ["TabsToolbar"] = new[] { "tabbrowser-tabs", "new-tab-button", "alltabs-button", "titlebar-buttonbox-container" },
                 ["vertical-tabs"] = Array.Empty<string>(),
-                ["PersonalToolbar"] = new[] { "personal-bookmarks" }
+                ["PersonalToolbar"] = Array.Empty<string>()
             },
             seen = extensionWidgets.Concat(new[] { "developer-button", "screenshot-button", "unified-extensions-button" }).ToArray(),
             dirtyAreaCache = new[] { "nav-bar", "vertical-tabs", "toolbar-menubar", "TabsToolbar", "PersonalToolbar", "unified-extensions-area" },
