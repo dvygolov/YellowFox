@@ -672,12 +672,33 @@ public partial class ProfilesViewModel : ViewModelBase
     {
         var selectedProfiles = EnumerateProfileNodes().Where(p => p.IsSelected).ToList();
         var selectedFolders = EnumerateNodes(RootNodes).OfType<ProfileFolderNodeViewModel>().Where(f => f.IsSelected).ToList();
+
+        // No checkboxes checked — fall back to the highlighted tree row.
+        if (selectedProfiles.Count == 0 && selectedFolders.Count == 0 && SelectedNode != null)
+        {
+            switch (SelectedNode)
+            {
+                case ProfileItemViewModel profile:
+                    selectedProfiles.Add(profile);
+                    break;
+                case ProfileFolderNodeViewModel folder:
+                    selectedFolders.Add(folder);
+                    break;
+            }
+        }
+
         if (selectedProfiles.Count == 0 && selectedFolders.Count == 0)
             return;
 
+        var parts = new List<string>();
+        if (selectedProfiles.Count > 0)
+            parts.Add($"{selectedProfiles.Count} profile(s)");
+        if (selectedFolders.Count > 0)
+            parts.Add($"{selectedFolders.Count} folder(s)");
+
         var result = await ShowConfirmation(
             "Delete Selected",
-            $"Are you sure you want to delete {selectedProfiles.Count} profile(s) and {selectedFolders.Count} folder(s)?");
+            $"Are you sure you want to delete {string.Join(" and ", parts)}?");
         if (!result)
             return;
 

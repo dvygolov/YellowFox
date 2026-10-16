@@ -86,14 +86,40 @@ public partial class ProfilesView : UserControl
 
     private void ProfilesTree_KeyDown(object? sender, KeyEventArgs e)
     {
-        if (e.Key != Key.Delete || DataContext is not ProfilesViewModel viewModel)
+        // Ignore keys typed into row controls (notes editor, buttons, checkboxes):
+        // Space must keep activating them instead of toggling selection.
+        if (e.Source is TextBox or Button or CheckBox)
             return;
 
-        if (e.Source is TextBox)
-            return;
+        switch (e.Key)
+        {
+            case Key.Delete:
+                if (DataContext is ProfilesViewModel viewModel)
+                {
+                    _ = viewModel.DeleteSelectedNodes();
+                    e.Handled = true;
+                }
+                break;
+            case Key.Space:
+                e.Handled = ToggleSelectedNode();
+                break;
+        }
+    }
 
-        _ = viewModel.DeleteSelectedNodes();
-        e.Handled = true;
+    private bool ToggleSelectedNode()
+    {
+        switch (ProfilesTree.SelectedItem)
+        {
+            case ProfileFolderNodeViewModel folder:
+                folder.SetSelectedRecursive(!folder.IsSelected);
+                return true;
+            case ProfileItemViewModel profile:
+                profile.IsSelected = !profile.IsSelected;
+                _selectionAnchor = profile;
+                return true;
+            default:
+                return false;
+        }
     }
 
     private async void ProfilesTree_PointerMoved(object? sender, PointerEventArgs e)
