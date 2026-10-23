@@ -302,6 +302,20 @@
                             FontSize="13"
                             FontWeight="SemiBold"
                             CornerRadius="6" />
+
+                    <!-- Move To Folder Button -->
+                    <Button x:Name="MoveSelectedToFolderButton"
+                            AutomationProperties.AutomationId="MoveSelectedToFolderButton"
+                            Content="📁 MOVE TO…"
+                            ToolTip.Tip="Move the checked profiles and folders into another folder (F2 renames)"
+                            Background="Transparent"
+                            Foreground="#4FA3E0"
+                            BorderBrush="#4FA3E0"
+                            BorderThickness="1"
+                            Padding="24,10"
+                            FontSize="13"
+                            FontWeight="SemiBold"
+                            CornerRadius="6" />
                     
                     <!-- Delete All Button -->
                     <Button Content="🗑️ DELETE ALL" 
@@ -405,6 +419,7 @@
                         <Grid.ContextMenu>
                             <ContextMenu>
                                 <MenuItem Header="Edit" Command="{Binding EditCommand}" />
+                                <MenuItem Header="Rename" Command="{Binding RenameCommand}" />
                                 <MenuItem Header="Clone" Command="{Binding CloneCommand}" />
                                 <Separator />
                                 <MenuItem Header="Export cookies" Command="{Binding ExportCookiesCommand}" />

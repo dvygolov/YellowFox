@@ -465,6 +465,32 @@ public partial class ProfilesViewModel : ViewModelBase
         LoadProfiles();
     }
 
+    public async Task RenameProfile(ProfileItemViewModel profileVm)
+    {
+        var name = await PromptForText("Rename Profile", "Profile name", profileVm.Profile.Name, "Enter profile name...");
+        if (string.IsNullOrWhiteSpace(name))
+            return;
+
+        var trimmed = name.Trim();
+        if (string.Equals(trimmed, profileVm.Profile.Name, StringComparison.Ordinal))
+            return;
+
+        var previousName = profileVm.Profile.Name;
+        profileVm.Profile.Name = trimmed;
+        try
+        {
+            _databaseService.UpdateProfile(profileVm.Profile);
+        }
+        catch (Exception ex)
+        {
+            profileVm.Profile.Name = previousName;
+            await ShowInfo("Rename Failed", ex.Message);
+            return;
+        }
+
+        LoadProfiles();
+    }
+
     public async Task NewSubfolder(ProfileFolderNodeViewModel folderNode)
     {
         var name = await PromptForText("New Subfolder", "Folder name", string.Empty, "Enter folder name...");
@@ -758,9 +784,188 @@ public partial class ProfilesViewModel : ViewModelBase
         LoadProfiles();
     }
 
+    public void MoveNodes(IReadOnlyList<ProfileNodeViewModel> nodes, ProfileNodeViewModel? target, ProfileDropPosition position)
+    {
+        if (nodes.Count == 0)
+            return;
+
+        if (nodes.Count == 1)
+        {
+            MoveNode(nodes[0], target, position);
+            return;
+        }
+
+        MoveNodesToFolder(nodes, ResolveDropTargetFolderId(target, position));
+    }
+
+    public bool CanMoveNodes(IReadOnlyList<ProfileNodeViewModel> nodes, ProfileNodeViewModel? target, ProfileDropPosition position)
+    {
+        if (nodes.Count == 0)
+            return false;
+
+        if (nodes.Count == 1)
+            return CanMoveNode(nodes[0], target, position);
+
+        var targetFolderId = ResolveDropTargetFolderId(target, position);
+        if (targetFolderId != null
+            && nodes.OfType<ProfileFolderNodeViewModel>().Any(folder => IsFolderOrDescendant(targetFolderId, folder.Folder.Id)))
+        {
+            return false;
+        }
+
+        return nodes.Any(node => CanMoveNodeToFolder(node, targetFolderId));
+    }
+
+    public bool CanMoveNodeToFolder(ProfileNodeViewModel node, string? targetFolderId)
+    {
+        if (node is not (ProfileItemViewModel or ProfileFolderNodeViewModel))
+            return false;
+
+        return targetFolderId == null
+               || node is not ProfileFolderNodeViewModel folder
+               || !IsFolderOrDescendant(targetFolderId, folder.Folder.Id);
+    }
+
+    public static string? ResolveDropTargetFolderId(ProfileNodeViewModel? target, ProfileDropPosition position)
+    {
+        if (target == null)
+            return null;
+
+        if (position == ProfileDropPosition.Inside && target is ProfileFolderNodeViewModel insideFolder)
+            return insideFolder.Folder.Id;
+
+        return target switch
+        {
+            ProfileItemViewModel profile => profile.Profile.FolderId,
+            ProfileFolderNodeViewModel folder => folder.Folder.ParentId,
+            _ => null
+        };
+    }
+
+    /// <summary>
+    /// Moves every given node into the target folder (null means the tree root),
+    /// keeping the current order of the nodes.
+    /// </summary>
+    public void MoveNodesToFolder(IEnumerable<ProfileNodeViewModel> nodeSource, string? targetFolderId)
+    {
+        var nodes = nodeSource.Distinct().ToList();
+        var targetFolder = string.IsNullOrWhiteSpace(targetFolderId) ? null : targetFolderId;
+
+        var folderNodes = nodes.OfType<ProfileFolderNodeViewModel>().ToList();
+        var profileNodes = nodes.OfType<ProfileItemViewModel>().ToList();
+        if (folderNodes.Count == 0 && profileNodes.Count == 0)
+            return;
+
+        var moved = false;
+
+        if (targetFolder != null
+            && folderNodes.Any(folderNode => IsFolderOrDescendant(targetFolder, folderNode.Folder.Id)))
+        {
+            return;
+        }
+
+        foreach (var folderNode in folderNodes)
+        {
+            var folder = folderNode.Folder;
+            if (targetFolder != null && IsFolderOrDescendant(targetFolder, folder.Id))
+                continue;
+
+            MoveFolderCore(folder, targetFolder, OrderedFolders(targetFolder, folder.Id).Count);
+            moved = true;
+        }
+
+        var movedFolderIds = folderNodes.Select(node => node.Folder.Id).ToList();
+
+        bool TravelsWithMovedFolder(string? folderId)
+        {
+            if (string.IsNullOrWhiteSpace(folderId))
+                return false;
+
+            return movedFolderIds.Any(movedId => IsFolderOrDescendant(folderId, movedId));
+        }
+
+        foreach (var profileNode in profileNodes)
+        {
+            var profile = profileNode.Profile;
+
+            // Profiles that sit inside a folder moving along keep their place in that folder.
+            if (TravelsWithMovedFolder(profile.FolderId))
+                continue;
+
+            MoveProfileCore(profile, targetFolder, OrderedProfiles(targetFolder, profile.Id).Count);
+            moved = true;
+        }
+
+        if (!moved)
+            return;
+
+        LoadProfiles();
+    }
+
+    public IReadOnlyList<ProfileNodeViewModel> GetSelection()
+    {
+        var selected = EnumerateNodes(RootNodes).Where(node => node.IsSelected).ToList();
+        if (selected.Count == 0 && SelectedNode != null)
+            selected.Add(SelectedNode);
+
+        return selected;
+    }
+
+    public IReadOnlyList<ProfileNodeViewModel> GetMoveSelection(ProfileNodeViewModel node)
+    {
+        var selected = GetSelection();
+        return node.IsSelected && selected.Count > 1
+            ? selected
+            : new List<ProfileNodeViewModel> { node };
+    }
+
+    public void SelectAll()
+    {
+        foreach (var node in EnumerateNodes(RootNodes))
+            node.IsSelected = true;
+    }
+
+    /// <summary>
+    /// Builds "move to folder" entries for the given nodes; folders that belong to the
+    /// dragged set (or live inside them) are skipped, because they cannot be their own target.
+    /// </summary>
+    public List<ProfileMoveTarget> BuildMoveTargets(IEnumerable<ProfileNodeViewModel> nodeSource)
+    {
+        var nodes = nodeSource.Distinct().ToList();
+        var blockedFolderIds = nodes.OfType<ProfileFolderNodeViewModel>()
+            .Select(node => node.Folder.Id)
+            .ToList();
+
+        var targets = new List<ProfileMoveTarget>
+        {
+            new(null, "Root", "— Root —", new RelayCommand(() => MoveNodesToFolder(nodes, null)))
+        };
+
+        void AddTargets(string? parentId, string prefix, int depth)
+        {
+            foreach (var folder in OrderedFolders(parentId))
+            {
+                if (blockedFolderIds.Any(blockedId => IsFolderOrDescendant(folder.Id, blockedId)))
+                    continue;
+
+                var path = string.IsNullOrEmpty(prefix) ? folder.Name : $"{prefix} / {folder.Name}";
+                var folderId = folder.Id;
+                targets.Add(new ProfileMoveTarget(
+                    folderId,
+                    folder.Name,
+                    new string('\u2003', depth) + path,
+                    new RelayCommand(() => MoveNodesToFolder(nodes, folderId))));
+
+                AddTargets(folderId, path, depth + 1);
+            }
+        }
+
+        AddTargets(null, string.Empty, 0);
+        return targets;
+    }
+
     private void MoveProfile(Profile profile, ProfileNodeViewModel? target, ProfileDropPosition position)
     {
-        var oldFolderId = profile.FolderId;
         string? newFolderId;
         int insertIndex;
 
@@ -787,6 +992,12 @@ public partial class ProfilesViewModel : ViewModelBase
             }
         }
 
+        MoveProfileCore(profile, newFolderId, insertIndex);
+    }
+
+    private void MoveProfileCore(Profile profile, string? newFolderId, int insertIndex)
+    {
+        var oldFolderId = profile.FolderId;
         profile.FolderId = newFolderId;
         var list = OrderedProfiles(newFolderId, profile.Id);
         list.Insert(Math.Clamp(insertIndex, 0, list.Count), profile);
@@ -810,7 +1021,6 @@ public partial class ProfilesViewModel : ViewModelBase
 
     private void MoveFolder(ProfileFolder folder, ProfileNodeViewModel? target, ProfileDropPosition position)
     {
-        var oldParentId = folder.ParentId;
         string? newParentId;
         int insertIndex;
 
@@ -840,6 +1050,12 @@ public partial class ProfilesViewModel : ViewModelBase
             }
         }
 
+        MoveFolderCore(folder, newParentId, insertIndex);
+    }
+
+    private void MoveFolderCore(ProfileFolder folder, string? newParentId, int insertIndex)
+    {
+        var oldParentId = folder.ParentId;
         folder.ParentId = newParentId;
         var list = OrderedFolders(newParentId, folder.Id);
         list.Insert(Math.Clamp(insertIndex, 0, list.Count), folder);
@@ -1154,6 +1370,12 @@ public partial class ProfileItemViewModel : ProfileNodeViewModel
     }
 
     [RelayCommand]
+    private async Task RenameAsync()
+    {
+        await _parent.RenameProfile(this);
+    }
+
+    [RelayCommand]
     private async Task DeleteAsync()
     {
         await _parent.DeleteProfile(this);
@@ -1249,6 +1471,22 @@ public enum ProfileDropPosition
     After,
     Inside,
     RootEnd
+}
+
+public sealed class ProfileMoveTarget
+{
+    public ProfileMoveTarget(string? folderId, string name, string display, IRelayCommand command)
+    {
+        FolderId = folderId;
+        Name = name;
+        Display = display;
+        Command = command;
+    }
+
+    public string? FolderId { get; }
+    public string Name { get; }
+    public string Display { get; }
+    public IRelayCommand Command { get; }
 }
 
 public sealed class TagChipViewModel

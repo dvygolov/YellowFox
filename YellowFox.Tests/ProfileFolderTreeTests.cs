@@ -197,6 +197,111 @@ public class ProfileFolderTreeTests : IDisposable
         Assert.Equal("Tagged", folderNode.Children.Single().Name);
     }
 
+    [Fact]
+    public void MoveNodesToFolder_MovesWholeSelection()
+    {
+        var (database, viewModel) = CreateViewModel();
+
+        var source = new ProfileFolder { Name = "NRD" };
+        database.CreateProfileFolder(source);
+        var target = new ProfileFolder { Name = "GGL" };
+        database.CreateProfileFolder(target);
+
+        var first = new Profile { Name = "GGL1", FolderId = source.Id };
+        var second = new Profile { Name = "GGL2", FolderId = source.Id };
+        var untouched = new Profile { Name = "Other", FolderId = source.Id };
+        database.CreateProfile(first);
+        database.CreateProfile(second);
+        database.CreateProfile(untouched);
+        viewModel.RefreshCommand.Execute(null);
+
+        var selected = viewModel.EnumerateProfileNodes().Where(p => p.Name != "Other").Cast<ProfileNodeViewModel>().ToList();
+
+        viewModel.MoveNodesToFolder(selected, target.Id);
+
+        Assert.Equal(target.Id, database.GetProfile(first.Id)!.FolderId);
+        Assert.Equal(target.Id, database.GetProfile(second.Id)!.FolderId);
+        Assert.Equal(source.Id, database.GetProfile(untouched.Id)!.FolderId);
+
+        var targetNode = viewModel.RootNodes.OfType<ProfileFolderNodeViewModel>().Single(n => n.Name == "GGL");
+        Assert.Equal(new[] { "GGL1", "GGL2" }, targetNode.Children.Select(c => c.Name).ToArray());
+    }
+
+    [Fact]
+    public void MoveNodesToFolder_KeepsProfilesThatTravelWithTheirFolder()
+    {
+        var (database, viewModel) = CreateViewModel();
+
+        var work = new ProfileFolder { Name = "Work" };
+        database.CreateProfileFolder(work);
+        var archive = new ProfileFolder { Name = "Archive" };
+        database.CreateProfileFolder(archive);
+
+        var profile = new Profile { Name = "Nested", FolderId = work.Id };
+        database.CreateProfile(profile);
+        viewModel.RefreshCommand.Execute(null);
+
+        // Checking folder "Work" in the UI also checks the profiles inside it.
+        var workNode = viewModel.RootNodes.OfType<ProfileFolderNodeViewModel>().Single(n => n.Name == "Work");
+        workNode.SetSelectedRecursive(true);
+
+        viewModel.MoveNodesToFolder(viewModel.GetSelection(), archive.Id);
+
+        Assert.Equal(archive.Id, database.GetAllProfileFolders().Single(f => f.Id == work.Id).ParentId);
+        Assert.Equal(work.Id, database.GetProfile(profile.Id)!.FolderId);
+    }
+
+    [Fact]
+    public void BuildMoveTargets_SkipsMovedFolderAndItsDescendants()
+    {
+        var (database, viewModel) = CreateViewModel();
+
+        var parent = new ProfileFolder { Name = "Parent" };
+        database.CreateProfileFolder(parent);
+        var child = new ProfileFolder { Name = "Child", ParentId = parent.Id };
+        database.CreateProfileFolder(child);
+        var sibling = new ProfileFolder { Name = "Sibling" };
+        database.CreateProfileFolder(sibling);
+        database.CreateProfile(new Profile { Name = "P", FolderId = parent.Id });
+        viewModel.RefreshCommand.Execute(null);
+
+        var profileNode = viewModel.EnumerateProfileNodes().Single();
+        var targets = viewModel.BuildMoveTargets(new ProfileNodeViewModel[] { profileNode });
+
+        Assert.Contains(targets, t => t.FolderId == null);
+        Assert.Contains(targets, t => t.FolderId == child.Id);
+
+        var parentNode = viewModel.RootNodes.OfType<ProfileFolderNodeViewModel>().Single(n => n.Name == "Parent");
+        var folderTargets = viewModel.BuildMoveTargets(new ProfileNodeViewModel[] { parentNode });
+
+        Assert.DoesNotContain(folderTargets, t => t.FolderId == parent.Id);
+        Assert.DoesNotContain(folderTargets, t => t.FolderId == child.Id);
+        Assert.Contains(folderTargets, t => t.FolderId == sibling.Id);
+    }
+
+    [Fact]
+    public void MoveNodes_WithMultipleNodesDropsSelectionIntoFolder()
+    {
+        var (database, viewModel) = CreateViewModel();
+
+        var folder = new ProfileFolder { Name = "Target" };
+        database.CreateProfileFolder(folder);
+        var first = new Profile { Name = "A" };
+        var second = new Profile { Name = "B" };
+        database.CreateProfile(first);
+        database.CreateProfile(second);
+        viewModel.RefreshCommand.Execute(null);
+
+        var folderNode = viewModel.RootNodes.OfType<ProfileFolderNodeViewModel>().Single();
+        var nodes = viewModel.EnumerateProfileNodes().Cast<ProfileNodeViewModel>().ToList();
+
+        Assert.True(viewModel.CanMoveNodes(nodes, folderNode, ProfileDropPosition.Inside));
+        viewModel.MoveNodes(nodes, folderNode, ProfileDropPosition.Inside);
+
+        Assert.Equal(folder.Id, database.GetProfile(first.Id)!.FolderId);
+        Assert.Equal(folder.Id, database.GetProfile(second.Id)!.FolderId);
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_testDataDir))
