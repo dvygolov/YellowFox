@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -281,7 +282,7 @@ public class BrowserService
                 throw new InvalidOperationException("Failed to start Python broker process");
             await WriteLogAsync(logPath, "INFO", $"Python broker process started. PID={process.Id}");
 
-            var endpoints = await WaitForBrokerEndpointsAsync(process, TimeSpan.FromSeconds(120));
+            var endpoints = await WaitForBrokerEndpointsAsync(process, GetBrokerLaunchTimeout());
             await WriteLogAsync(logPath, "INFO", $"Received Playwright endpoint: {endpoints.PlaywrightEndpoint}");
             await WriteLogAsync(logPath, "INFO", $"Received broker endpoint: {endpoints.BrokerUrl}");
             _ = DrainProcessOutputAsync(process.StandardOutput, logPath, "Broker stdout");
@@ -4168,6 +4169,19 @@ public class BrowserService
         }
     }
 
+    private static TimeSpan GetBrokerLaunchTimeout()
+    {
+        // Camoufox startup on a slow or synced disk regularly exceeds two minutes:
+        // the first launch also downloads GeoLite2 databases and browser policy files.
+        const int defaultSeconds = 240;
+        var configured = Environment.GetEnvironmentVariable("YELLOWFOX_BROKER_TIMEOUT_SECONDS");
+        if (int.TryParse(configured, out var seconds) && seconds >= 60 && seconds <= 900)
+        {
+            return TimeSpan.FromSeconds(seconds);
+        }
+        return TimeSpan.FromSeconds(defaultSeconds);
+    }
+
     private static async Task<BrokerEndpoints> WaitForBrokerEndpointsAsync(Process process, TimeSpan timeout)
     {
         var startedAt = DateTime.UtcNow;
@@ -4464,6 +4478,8 @@ public class BrowserService
             startInfo.Environment["XDG_CACHE_HOME"] = xdgCache;
 
         startInfo.Environment["PYTHONUTF8"] = "1";
+        startInfo.Environment["YELLOWFOX_BROKER_TIMEOUT_SECONDS"] =
+            ((int)GetBrokerLaunchTimeout().TotalSeconds).ToString(CultureInfo.InvariantCulture);
         startInfo.Environment.TryGetValue("PYTHONPATH", out var pythonPath);
         startInfo.Environment["PYTHONPATH"] = string.IsNullOrWhiteSpace(pythonPath)
             ? pythonDir

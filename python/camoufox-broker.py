@@ -665,6 +665,21 @@ def drain_stream(stream, label):
     threading.Thread(target=run, daemon=True).start()
 
 
+def broker_launch_timeout():
+    """Seconds to wait for the Playwright server endpoint.
+
+    Camoufox needs well over two minutes on a slow or synced profile disk: the
+    first launch also downloads GeoLite2 databases and browser policy files.
+    """
+    try:
+        configured = int(os.environ.get("YELLOWFOX_BROKER_TIMEOUT_SECONDS", ""))
+    except (TypeError, ValueError):
+        configured = 0
+    if 60 <= configured <= 900:
+        return configured
+    return 240
+
+
 def launch_playwright_server(launcher, launch_kwargs, bookmarks):
     with contextlib.redirect_stdout(sys.stderr):
         options = launcher.launch_options(**copy.deepcopy(launch_kwargs))
@@ -703,7 +718,7 @@ def launch_playwright_server(launcher, launch_kwargs, bookmarks):
     threading.Thread(target=collect_stdout, daemon=True).start()
 
     endpoint_pattern = re.compile(r"(wss?://[^\s\x1b]+)")
-    deadline = time.time() + 120
+    deadline = time.time() + broker_launch_timeout()
     while time.time() < deadline:
         if process.poll() is not None:
             raise RuntimeError(f"Playwright server exited before endpoint. ExitCode={process.returncode}")
