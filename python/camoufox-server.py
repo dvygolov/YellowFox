@@ -257,6 +257,12 @@ def ensure_minimal_browser_autoconfig(browser_root):
         (defaults_pref_dir / "autoconfig.js").write_text(autoconfig_js, encoding="utf-8")
 
     cfg = r'''
+// Playwright's Firefox launcher waits for Juggler's "Juggler listening to the
+// pipe" line, which Juggler prints with dump(). Camoufox 158 turned dump() off
+// in official builds, and this file replaces the browser's own camoufox.cfg,
+// so the default has to be restored here or every launch hangs until timeout.
+defaultPref("browser.dom.window.dump.enabled", true);
+
 // YellowFox minimal startup chrome visibility.
 lockPref("keyword.enabled", true);
 lockPref("browser.fixup.fallback-to-https", true);
