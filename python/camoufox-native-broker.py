@@ -16,7 +16,11 @@ from urllib.parse import parse_qs, urlparse
 
 import websocket
 
-_window_icon_handles = []
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+TH32CS_SNAPPROCESS = 0x00000002
+
+_loaded_window_icons = {}
+_registered_app_user_model_ids = set()
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -362,6 +366,219 @@ def _render_profile_icon_image(size, lines):
             user32.ReleaseDC(None, hdc)
 
 
+def _process_api():
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.windll.kernel32
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    kernel32.GetProcessTimes.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+    ]
+    kernel32.GetProcessTimes.restype = wintypes.BOOL
+    kernel32.QueryFullProcessImageNameW.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.LPWSTR,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+    kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
+    kernel32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
+    kernel32.Process32FirstW.restype = wintypes.BOOL
+    kernel32.Process32NextW.restype = wintypes.BOOL
+    return kernel32
+
+
+def _normalize_image_path(path):
+    if not path:
+        return ""
+    return os.path.normcase(os.path.normpath(str(path)))
+
+
+def _process_creation_time(kernel32, process_id):
+    """Creation time of a process in 100 ns ticks, or None once it has exited."""
+    import ctypes
+    from ctypes import wintypes
+
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(process_id))
+    if not handle:
+        return None
+    try:
+        times = [wintypes.FILETIME() for _ in range(4)]
+        if not kernel32.GetProcessTimes(
+            handle,
+            ctypes.byref(times[0]),
+            ctypes.byref(times[1]),
+            ctypes.byref(times[2]),
+            ctypes.byref(times[3]),
+        ):
+            return None
+        return (int(times[0].dwHighDateTime) << 32) | int(times[0].dwLowDateTime)
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _process_image_path(kernel32, process_id):
+    import ctypes
+    from ctypes import wintypes
+
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(process_id))
+    if not handle:
+        return ""
+    try:
+        buffer = ctypes.create_unicode_buffer(1024)
+        size = wintypes.DWORD(len(buffer))
+        if not kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)):
+            return ""
+        return buffer.value
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _process_parents(kernel32):
+    import ctypes
+    from ctypes import wintypes
+
+    class ProcessEntry32(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.POINTER(wintypes.ULONG)),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", wintypes.LONG),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", wintypes.WCHAR * 260),
+        ]
+
+    parents = {}
+    snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if not snapshot or snapshot == wintypes.HANDLE(-1).value:
+        return parents
+    try:
+        entry = ProcessEntry32()
+        entry.dwSize = ctypes.sizeof(ProcessEntry32)
+        ok = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
+        while ok:
+            parents[int(entry.th32ProcessID)] = int(entry.th32ParentProcessID)
+            ok = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
+    finally:
+        kernel32.CloseHandle(snapshot)
+    return parents
+
+
+def descendant_process_ids(root_process_id):
+    """Process ids started by the given process.
+
+    Windows keeps the parent id a process was created with even after that parent
+    is gone, so a recycled id can make an unrelated process look like a child.
+    A recycled id always belongs to a process created after the process that
+    originally owned it, so a real child is never older than its parent.
+    """
+    if not sys.platform.startswith("win"):
+        return {int(root_process_id)}
+
+    kernel32 = _process_api()
+    root_process_id = int(root_process_id)
+    created = {root_process_id: _process_creation_time(kernel32, root_process_id)}
+    parents = _process_parents(kernel32)
+    changed = True
+    while changed:
+        changed = False
+        for process_id, parent_process_id in parents.items():
+            if process_id in created or parent_process_id not in created:
+                continue
+            child_created = _process_creation_time(kernel32, process_id)
+            if child_created is None:
+                continue
+            parent_created = created[parent_process_id]
+            if parent_created is not None and child_created < parent_created:
+                continue
+            created[process_id] = child_created
+            changed = True
+    return set(created)
+
+
+def browser_window_handles(root_process_id, executable_path=None):
+    """Visible top-level windows owned by the browser started as root_process_id."""
+    if not sys.platform.startswith("win"):
+        return []
+
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    kernel32 = _process_api()
+    enum_windows_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    user32.EnumWindows.argtypes = [enum_windows_proc, wintypes.LPARAM]
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+
+    expected_image = _normalize_image_path(executable_path)
+    process_ids = descendant_process_ids(root_process_id)
+    process_images = {}
+    handles = []
+
+    def image_matches(process_id):
+        if not expected_image:
+            return True
+        if process_id not in process_images:
+            process_images[process_id] = _normalize_image_path(_process_image_path(kernel32, process_id))
+        return process_images[process_id] == expected_image
+
+    def callback(hwnd, _):
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        owner = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        owner_process_id = int(owner.value)
+        if owner_process_id in process_ids and image_matches(owner_process_id):
+            handles.append(hwnd)
+        return True
+
+    user32.EnumWindows(enum_windows_proc(callback), 0)
+    return handles
+
+
+def load_profile_icon(user32, icon_path, size):
+    """Load the profile icon once per size; the handle stays alive for the process."""
+    if not icon_path:
+        return 0
+
+    import ctypes
+    from ctypes import wintypes
+
+    key = (str(icon_path), int(size))
+    handle = _loaded_window_icons.get(key)
+    if handle:
+        return handle
+    user32.LoadImageW.argtypes = [
+        wintypes.HANDLE,
+        wintypes.LPCWSTR,
+        wintypes.UINT,
+        ctypes.c_int,
+        ctypes.c_int,
+        wintypes.UINT,
+    ]
+    user32.LoadImageW.restype = wintypes.HANDLE
+    handle = user32.LoadImageW(None, str(icon_path), 1, int(size), int(size), 0x0010)
+    if handle:
+        _loaded_window_icons[key] = handle
+    return handle
+
+
 def register_app_user_model_id(app_id, profile_name, icon_path):
     """Register the per-profile AppUserModelID so Windows uses our icon/name."""
     if not sys.platform.startswith("win") or not app_id:
@@ -370,17 +587,27 @@ def register_app_user_model_id(app_id, profile_name, icon_path):
     try:
         import winreg
 
+        registration = (str(app_id), str(profile_name), str(icon_path))
+        if registration in _registered_app_user_model_ids:
+            return
+
         key_path = rf"Software\Classes\AppUserModelId\{app_id}"
         with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_WRITE) as key:
             if profile_name:
                 winreg.SetValueEx(key, "DisplayName", 0, winreg.REG_SZ, str(profile_name))
             if icon_path:
                 winreg.SetValueEx(key, "IconUri", 0, winreg.REG_EXPAND_SZ, str(icon_path))
+        _registered_app_user_model_ids.add(registration)
     except Exception as exc:
         print(f"YELLOWFOX_TASKBAR_IDENTITY_ERROR {exc}", file=sys.stderr, flush=True)
 
 
 def apply_taskbar_identity(process_id, profile_name, profile_id, profile_dir, icon_path, executable_path, app_user_model_id=None):
+    """Put the profile icon and name on the windows of the browser started as process_id.
+
+    Runs repeatedly while the browser lives, so a window that still shows the
+    browser identity is the only thing it touches again.
+    """
     if not sys.platform.startswith("win") or not profile_name:
         return 0
 
@@ -391,11 +618,17 @@ def apply_taskbar_identity(process_id, profile_name, profile_id, profile_dir, ic
         user32 = ctypes.windll.user32
         shell32 = ctypes.windll.shell32
         ole32 = ctypes.windll.ole32
-        user32.LoadImageW.restype = ctypes.c_void_p
-        enum_windows = user32.EnumWindows
-        enum_windows_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-        is_window_visible = user32.IsWindowVisible
-        get_window_thread_process_id = user32.GetWindowThreadProcessId
+        send_message_timeout = user32.SendMessageTimeoutW
+        send_message_timeout.argtypes = [
+            wintypes.HWND,
+            wintypes.UINT,
+            wintypes.WPARAM,
+            wintypes.LPARAM,
+            wintypes.UINT,
+            wintypes.UINT,
+            ctypes.POINTER(ctypes.c_size_t),
+        ]
+        send_message_timeout.restype = wintypes.LPARAM
         get_window_long = user32.GetWindowLongPtrW if ctypes.sizeof(ctypes.c_void_p) == 8 else user32.GetWindowLongW
         set_window_long = user32.SetWindowLongPtrW if ctypes.sizeof(ctypes.c_void_p) == 8 else user32.SetWindowLongW
         if ctypes.sizeof(ctypes.c_void_p) == 8:
@@ -417,7 +650,6 @@ def apply_taskbar_identity(process_id, profile_name, profile_id, profile_dir, ic
             ctypes.c_int,
             wintypes.UINT,
         ]
-        user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
 
         class GUID(ctypes.Structure):
             _fields_ = [
@@ -448,77 +680,13 @@ def apply_taskbar_identity(process_id, profile_name, profile_id, profile_dir, ic
         iid_property_store = guid("{886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99}")
         fmtid_app_user_model = guid("{9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3}")
 
-        def process_tree_pids(root_pid):
-            with contextlib.suppress(Exception):
-                kernel32 = ctypes.windll.kernel32
-                snapshot = kernel32.CreateToolhelp32Snapshot(0x00000002, 0)
-                if snapshot == wintypes.HANDLE(-1).value:
-                    return {int(root_pid)}
-
-                class ProcessEntry32(ctypes.Structure):
-                    _fields_ = [
-                        ("dwSize", wintypes.DWORD),
-                        ("cntUsage", wintypes.DWORD),
-                        ("th32ProcessID", wintypes.DWORD),
-                        ("th32DefaultHeapID", ctypes.POINTER(wintypes.ULONG)),
-                        ("th32ModuleID", wintypes.DWORD),
-                        ("cntThreads", wintypes.DWORD),
-                        ("th32ParentProcessID", wintypes.DWORD),
-                        ("pcPriClassBase", wintypes.LONG),
-                        ("dwFlags", wintypes.DWORD),
-                        ("szExeFile", wintypes.WCHAR * 260),
-                    ]
-
-                entry = ProcessEntry32()
-                entry.dwSize = ctypes.sizeof(ProcessEntry32)
-                parents = {}
-                ok = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
-                while ok:
-                    parents[int(entry.th32ProcessID)] = int(entry.th32ParentProcessID)
-                    ok = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
-                kernel32.CloseHandle(snapshot)
-
-                pids = {int(root_pid)}
-                changed = True
-                while changed:
-                    changed = False
-                    for pid, parent_pid in parents.items():
-                        if parent_pid in pids and pid not in pids:
-                            pids.add(pid)
-                            changed = True
-                return pids
-            return {int(root_pid)}
-
-        def window_handles():
-            handles = []
-            target_pids = process_tree_pids(process_id)
-
-            def callback(hwnd, _):
-                if not is_window_visible(hwnd):
-                    return True
-                owner_pid = wintypes.DWORD()
-                get_window_thread_process_id(hwnd, ctypes.byref(owner_pid))
-                if int(owner_pid.value) in target_pids:
-                    handles.append(hwnd)
-                return True
-
-            enum_windows(enum_windows_proc(callback), 0)
-            return handles
-
-        handles = []
-        for _ in range(40):
-            handles = window_handles()
-            if handles:
-                break
-            time.sleep(0.25)
+        handles = browser_window_handles(process_id, executable_path)
         if not handles:
             return 0
 
         fallback_slug = re.sub(r"[^A-Za-z0-9]", "", str(profile_id or profile_dir))[:48]
         app_id = app_user_model_id or f"YellowFox.Camoufox.{fallback_slug}"
         register_app_user_model_id(app_id, profile_name, icon_path)
-        icon_resource = f"{icon_path},0" if icon_path else None
-        relaunch_command = f'"{executable_path}" -no-remote -profile "{profile_dir}"' if executable_path and profile_dir else None
         gwl_style = -16
         ws_caption = 0x00C00000
         ws_sysmenu = 0x00080000
@@ -530,11 +698,37 @@ def apply_taskbar_identity(process_id, profile_name, profile_id, profile_dir, ic
         swp_nozorder = 0x0004
         swp_noactivate = 0x0010
         swp_framechanged = 0x0020
+        wm_geticon = 0x007F
+        wm_seticon = 0x0080
+        icon_small = 0
+        icon_big = 1
+        smto_abortifhung = 0x0002
+        message_timeout = 200
 
         shell32.SHGetPropertyStoreForWindow.argtypes = [wintypes.HWND, ctypes.POINTER(GUID), ctypes.POINTER(ctypes.c_void_p)]
         shell32.SHGetPropertyStoreForWindow.restype = ctypes.c_long
+        ole32.PropVariantClear.argtypes = [ctypes.POINTER(PROPVARIANT)]
         vt_lpwstr = 31
         property_refs = []
+        window_properties = (
+            (5, app_id),
+            (2, f'"{executable_path}" -no-remote -profile "{profile_dir}"' if executable_path and profile_dir else None),
+            (3, f"{icon_path},0" if icon_path else None),
+        )
+
+        def window_message(hwnd, message, wparam, lparam):
+            result = ctypes.c_size_t()
+            if not send_message_timeout(
+                hwnd,
+                message,
+                wparam,
+                lparam,
+                smto_abortifhung,
+                message_timeout,
+                ctypes.byref(result),
+            ):
+                return None
+            return int(result.value)
 
         def set_window_properties(hwnd):
             store = ctypes.c_void_p()
@@ -543,12 +737,21 @@ def apply_taskbar_identity(process_id, profile_name, profile_id, profile_dir, ic
                 return
             vtbl = ctypes.cast(store, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
             release = ctypes.WINFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)(vtbl[2])
+            get_value = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(PROPERTYKEY), ctypes.POINTER(PROPVARIANT))(vtbl[5])
             set_value = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(PROPERTYKEY), ctypes.POINTER(PROPVARIANT))(vtbl[6])
             commit = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p)(vtbl[7])
 
+            def current_string(pid):
+                key = PROPERTYKEY(fmtid_app_user_model, int(pid))
+                variant = PROPVARIANT()
+                if get_value(store, ctypes.byref(key), ctypes.byref(variant)) != 0:
+                    return ""
+                try:
+                    return str(variant.pwszVal) if variant.vt == vt_lpwstr and variant.pwszVal else ""
+                finally:
+                    ole32.PropVariantClear(ctypes.byref(variant))
+
             def set_string(pid, value):
-                if not value:
-                    return
                 key = PROPERTYKEY(fmtid_app_user_model, int(pid))
                 ref = ctypes.c_wchar_p(str(value))
                 property_refs.append(ref)
@@ -556,34 +759,30 @@ def apply_taskbar_identity(process_id, profile_name, profile_id, profile_dir, ic
                 set_value(store, ctypes.byref(key), ctypes.byref(variant))
 
             try:
-                set_string(5, app_id)
-                set_string(2, relaunch_command)
-                set_string(3, icon_resource)
-                commit(store)
+                changed = False
+                for pid, value in window_properties:
+                    if not value or current_string(pid) == str(value):
+                        continue
+                    set_string(pid, value)
+                    changed = True
+                if changed:
+                    commit(store)
             finally:
                 release(store)
 
         def set_window_icon(hwnd):
-            if not icon_path:
-                return
-            image_icon = 1
-            lr_loadfromfile = 0x0010
-            wm_seticon = 0x0080
-            icon_small = 0
-            icon_big = 1
-            big = user32.LoadImageW(None, str(icon_path), image_icon, 64, 64, lr_loadfromfile)
-            small = user32.LoadImageW(None, str(icon_path), image_icon, 32, 32, lr_loadfromfile)
-            if big:
-                user32.SendMessageW(hwnd, wm_seticon, icon_big, big)
-                _window_icon_handles.append(big)
-            if small:
-                user32.SendMessageW(hwnd, wm_seticon, icon_small, small)
-                _window_icon_handles.append(small)
+            for icon_index, size in ((icon_big, 64), (icon_small, 32)):
+                icon = load_profile_icon(user32, icon_path, size)
+                if not icon or window_message(hwnd, wm_geticon, icon_index, 0) == icon:
+                    continue
+                window_message(hwnd, wm_seticon, icon_index, icon)
 
         def ensure_native_window_frame(hwnd):
+            required = ws_caption | ws_sysmenu | ws_thickframe | ws_minimizebox | ws_maximizebox
             style = int(get_window_long(hwnd, gwl_style))
-            style |= ws_caption | ws_sysmenu | ws_thickframe | ws_minimizebox | ws_maximizebox
-            set_window_long(hwnd, gwl_style, style)
+            if (style & required) == required:
+                return
+            set_window_long(hwnd, gwl_style, style | required)
             user32.SetWindowPos(hwnd, None, 0, 0, 0, 0, swp_nomove | swp_nosize | swp_nozorder | swp_noactivate | swp_framechanged)
 
         ole32.CoInitialize(None)
@@ -608,10 +807,6 @@ def fit_visible_window(width, height, process_id):
         from ctypes import wintypes
 
         user32 = ctypes.windll.user32
-        enum_windows = user32.EnumWindows
-        enum_windows_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-        is_window_visible = user32.IsWindowVisible
-        get_window_thread_process_id = user32.GetWindowThreadProcessId
         set_window_pos = user32.SetWindowPos
         show_window = user32.ShowWindow
         hwnd_notopmost = wintypes.HWND(-2 & 0xFFFFFFFFFFFFFFFF)
@@ -632,61 +827,8 @@ def fit_visible_window(width, height, process_id):
         target_width = max(640, min(int(width), work_width - 20))
         target_height = max(480, min(int(height), work_height - 20))
 
-        def process_tree_pids(root_pid):
-            with contextlib.suppress(Exception):
-                kernel32 = ctypes.windll.kernel32
-                snapshot = kernel32.CreateToolhelp32Snapshot(0x00000002, 0)
-                if snapshot == wintypes.HANDLE(-1).value:
-                    return {int(root_pid)}
-
-                class ProcessEntry32(ctypes.Structure):
-                    _fields_ = [
-                        ("dwSize", wintypes.DWORD),
-                        ("cntUsage", wintypes.DWORD),
-                        ("th32ProcessID", wintypes.DWORD),
-                        ("th32DefaultHeapID", ctypes.POINTER(wintypes.ULONG)),
-                        ("th32ModuleID", wintypes.DWORD),
-                        ("cntThreads", wintypes.DWORD),
-                        ("th32ParentProcessID", wintypes.DWORD),
-                        ("pcPriClassBase", wintypes.LONG),
-                        ("dwFlags", wintypes.DWORD),
-                        ("szExeFile", wintypes.WCHAR * 260),
-                    ]
-
-                entry = ProcessEntry32()
-                entry.dwSize = ctypes.sizeof(ProcessEntry32)
-                parents = {}
-                ok = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
-                while ok:
-                    parents[int(entry.th32ProcessID)] = int(entry.th32ParentProcessID)
-                    ok = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
-                kernel32.CloseHandle(snapshot)
-
-                pids = {int(root_pid)}
-                changed = True
-                while changed:
-                    changed = False
-                    for pid, parent_pid in parents.items():
-                        if parent_pid in pids and pid not in pids:
-                            pids.add(pid)
-                            changed = True
-                return pids
-
-            return {int(root_pid)}
-
-        def callback(hwnd, _):
-            if not is_window_visible(hwnd):
-                return True
-            owner_pid = wintypes.DWORD()
-            get_window_thread_process_id(hwnd, ctypes.byref(owner_pid))
-            if int(owner_pid.value) in target_pids:
-                handles.append(hwnd)
-            return True
-
         for _ in range(30):
-            target_pids = process_tree_pids(process_id)
-            handles.clear()
-            enum_windows(enum_windows_proc(callback), 0)
+            handles = browser_window_handles(process_id)
             if handles:
                 break
             time.sleep(0.25)

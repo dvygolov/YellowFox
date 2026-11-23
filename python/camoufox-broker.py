@@ -772,12 +772,10 @@ def apply_profile_identity(config, server_process, executable_path, user_data_di
         )
 
         def refresh_identity():
-            # Firefox can replace the window icon while the startup window paints,
-            # so re-apply it a few times right after launch.
-            for _ in range(6):
-                time.sleep(1.5)
-                if server_process.poll() is not None:
-                    return
+            # Firefox repaints its own icon after startup and can open more windows
+            # later, so keep the profile identity applied while the browser runs.
+            while server_process.poll() is None:
+                time.sleep(2.0)
                 with contextlib.suppress(Exception):
                     native.apply_taskbar_identity(
                         server_process.pid,
