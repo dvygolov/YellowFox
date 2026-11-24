@@ -1,0 +1,55 @@
+name: Cross-platform CI
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-latest
+          - ubuntu-latest
+          - macos-latest
+          - macos-13
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Restore
+        run: dotnet restore YellowFox.sln
+
+      - name: Build
+        run: dotnet build YellowFox.sln --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test YellowFox.sln --configuration Release --no-build --logger "console;verbosity=minimal"
+
+      - name: Install Python test dependencies
+        run: python -m pip install --disable-pip-version-check -r python/requirements.txt
+
+      - name: Python tests
+        run: python -m unittest discover -s python/tests -v
