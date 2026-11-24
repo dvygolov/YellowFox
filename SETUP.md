@@ -126,6 +126,24 @@ directory: `~/Library/Application Support/YellowFox` on macOS and
 `$XDG_DATA_HOME/YellowFox` (usually `~/.local/share/YellowFox`) on Linux. Set
 `YELLOWFOX_DATA_DIR` to use a different location.
 
+## Release Packages
+
+GitHub releases contain installable packages for every supported platform:
+
+- `YellowFox-windows-x64-<version>.zip`
+- `YellowFox-macos-arm64-<version>.zip` and `YellowFox-macos-x64-<version>.zip`
+- `YellowFox-linux-x64-<version>.tar.gz` and `YellowFox-linux-x64.deb`
+
+**macOS:** unpack the archive, move `YellowFox.app` to `~/Applications`, run
+`YellowFox.app/Contents/MacOS/setup-python.sh` once, then open the app (right-click ->
+Open on the first launch of the ad-hoc signed build).
+
+**Linux (deb):** `sudo apt install ./YellowFox-linux-x64.deb`, then run
+`/opt/yellowfox/setup-python.sh` once and start `yellowfox`.
+
+**Linux (tarball):** unpack anywhere, run `./setup-python.sh` once, then start
+`./YellowFox.Desktop`.
+
 ## First Time Usage
 
 ### Creating Your First Profile

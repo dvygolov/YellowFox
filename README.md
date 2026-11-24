@@ -17,7 +17,7 @@ If you like this script, PLEASE DONATE!
 
 # YellowFox
 
-YellowFox is a Windows desktop profile manager for Camoufox/Clover browser
+YellowFox is a cross-platform desktop profile manager for Camoufox/Clover browser
 profiles. It is built for managing isolated browser profiles with proxies,
 bookmarks, extensions, cookie import/export, and an automation-friendly local
 CLI.
@@ -25,11 +25,9 @@ CLI.
 The project uses Avalonia UI and .NET for the desktop application, SQLite for
 local storage, and Python broker scripts to launch and control Camoufox.
 
-> Current platform status: Windows is the primary target and the only platform with a
-> ready-made release package. The build and the Camoufox runtime are platform-aware now
-> (per-OS browser archives, process names, data directories), so macOS and Linux can run
-> the desktop app from source. Window-close detection and macOS/Linux packaging are still
-> being finished.
+> Current platform status: Windows, macOS (x64 and arm64) and Linux (x64) are supported
+> targets. The release workflow builds and tests all of them and produces Windows zips,
+> macOS `.app` bundles and Linux `.deb`/`.tar.gz` packages.
 
 ## Features
 
@@ -320,12 +318,11 @@ profile is not running, the cookies will be applied at the next startup.
 
 ## Platform Status
 
-YellowFox builds and runs from source on Windows, macOS and Linux. Windows is the only
-platform with a ready-made release package today.
+YellowFox builds, tests and packages on Windows, macOS and Linux.
 
 Platform-specific behavior:
 
-- **Data and settings** live next to the executable on Windows (portable layout), under
+- **Data and settings** live in `data/` next to the executable on Windows (portable layout), under
   `~/Library/Application Support/YellowFox` on macOS and `$XDG_DATA_HOME/YellowFox`
   (usually `~/.local/share/YellowFox`) on Linux. `YELLOWFOX_DATA_DIR` overrides the location.
 - **Camoufox** is installed and updated from the official per-OS archive: `win.x86_64`,
@@ -338,8 +335,9 @@ The profile stops as soon as its browser window closes on every platform: Window
 the native window handle, macOS/Linux use the broker's open page count (closing the last
 window keeps Firefox alive on macOS).
 
-Still to do for full macOS/Linux support: `.app`/Linux packaging, a release CI matrix and
-macOS code signing/notarization.
+Known gaps on macOS/Linux: the app still needs a system Python 3 (setup script creates
+`python/venv`), and macOS builds are signed ad-hoc only, so distribution outside a local
+build needs a Developer ID identity and notarization.
 
 ## Security Notes
 

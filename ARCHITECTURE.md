@@ -403,27 +403,24 @@ dotnet run
 
 ### Release Build
 
-```bash
-dotnet publish -c Release -r win-x64 --self-contained
-```
+`.github/workflows/release.yml` runs the tests and publishes a self-contained app for
+`win-x64`, `linux-x64`, `osx-arm64` and `osx-x64`, then packages the output:
 
-Output: `bin/Release/net8.0/win-x64/publish/`
+- `packaging/make-macos-app.sh` builds `YellowFox.app` (`Info.plist`, `.icns`) and zips it.
+- `packaging/make-linux-package.sh` builds a portable `tar.gz` and a `.deb`.
+- Windows is packaged as a zip inside the workflow.
+
+Tags (`v*`) upload every artifact to a single GitHub release.
 
 ### Distribution
 
-**Windows**:
-- Create installer with Inno Setup or WiX
-- Bundle Python runtime (embed Python)
-- Include camoufox in installer
+**Windows**: zip with the desktop app and CLI; `setup-python.bat` prepares Python.
 
-**macOS**:
-- Create .app bundle
-- Sign with Apple Developer certificate
-- Notarize for Gatekeeper
+**macOS**: `.app` bundle signed ad-hoc by default (`MACOS_SIGN_IDENTITY` can supply a
+Developer ID identity); notarization still has to be added for public distribution.
 
-**Linux**:
-- Create .deb/.rpm packages
-- Or AppImage for universal compatibility
+**Linux**: `.deb` (installs to `/opt/yellowfox` with a launcher and desktop entry) and a
+portable `tar.gz`.
 
 ## Future Architecture Changes
 
