@@ -4,8 +4,10 @@ using System.Linq;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Media;
 using Avalonia.VisualTree;
 using YellowFox.Desktop.ViewModels;
 
@@ -22,11 +24,16 @@ public partial class ProfilesView : UserControl
     private ProfileNodeViewModel? _pendingDragNode;
     private Point _dragStartPoint;
     private bool _isDragging;
+    private readonly TranslateTransform _headerScrollTransform = new();
+    private ScrollViewer? _profilesTreeScrollViewer;
 
     public ProfilesView()
     {
         InitializeComponent();
 
+        ProfileHeaderGrid.RenderTransform = _headerScrollTransform;
+
+        ProfilesTree.Loaded += ProfilesTree_Loaded;
         ProfilesTree.AddHandler(InputElement.PointerPressedEvent, ProfilesTree_PointerPressed, RoutingStrategies.Tunnel, handledEventsToo: true);
         ProfilesTree.AddHandler(InputElement.PointerMovedEvent, ProfilesTree_PointerMoved, RoutingStrategies.Bubble, handledEventsToo: true);
         ProfilesTree.AddHandler(InputElement.KeyDownEvent, ProfilesTree_KeyDown, RoutingStrategies.Bubble, handledEventsToo: true);
@@ -36,6 +43,45 @@ public partial class ProfilesView : UserControl
         ProfilesTree.AddHandler(DragDrop.DropEvent, ProfilesTree_Drop);
 
         MoveSelectedToFolderButton.Click += MoveSelectedToFolderButton_Click;
+    }
+
+    /// <summary>
+    /// The header lives outside the TreeView, so follow the tree's horizontal offset
+    /// to keep the columns aligned while wide rows are scrolled.
+    /// </summary>
+    private void ProfilesTree_Loaded(object? sender, RoutedEventArgs e)
+    {
+        if (_profilesTreeScrollViewer != null)
+            return;
+
+        var scrollViewer = ProfilesTree.GetVisualDescendants()
+            .OfType<ScrollViewer>()
+            .FirstOrDefault(scroll => scroll.TemplatedParent == ProfilesTree);
+
+        if (scrollViewer == null)
+            return;
+
+        _profilesTreeScrollViewer = scrollViewer;
+        scrollViewer.ScrollChanged += (_, _) =>
+            _headerScrollTransform.X = -scrollViewer.Offset.X;
+    }
+
+    private void ColumnResizer_DragDelta(object? sender, VectorEventArgs e)
+    {
+        if (sender is not Thumb { Tag: string columnName }
+            || !Enum.TryParse<ProfileColumn>(columnName, ignoreCase: true, out var column)
+            || DataContext is not ProfilesViewModel viewModel)
+        {
+            return;
+        }
+
+        viewModel.ProfileColumns.Resize(column, e.Vector.X);
+    }
+
+    private void ColumnResizer_DragCompleted(object? sender, VectorEventArgs e)
+    {
+        if (DataContext is ProfilesViewModel viewModel)
+            viewModel.SaveProfileColumnWidths();
     }
 
     private void MoveSelectedToFolderButton_Click(object? sender, RoutedEventArgs e)

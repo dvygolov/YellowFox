@@ -19,4 +19,7 @@ public class AppSettings
 
     [JsonPropertyName("ProfileTreeShowTags")]
     public bool ProfileTreeShowTags { get; set; } = true;
+
+    [JsonPropertyName("ProfileTreeColumnWidths")]
+    public Dictionary<string, double> ProfileTreeColumnWidths { get; set; } = new();
 }

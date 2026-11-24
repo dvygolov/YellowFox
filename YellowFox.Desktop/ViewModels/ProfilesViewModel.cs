@@ -52,6 +52,8 @@ public partial class ProfilesViewModel : ViewModelBase
 
     public ObservableCollection<ProfileNodeViewModel> RootNodes { get; } = new();
 
+    public ProfileColumnLayout ProfileColumns { get; } = new();
+
     public ObservableCollection<TagFilterItemViewModel> TagFilterOptions { get; } = new();
 
     public bool HasSelection => SelectedCount > 0;
@@ -71,6 +73,7 @@ public partial class ProfilesViewModel : ViewModelBase
         _showProxy = settings.ProfileTreeShowProxy;
         _showNotes = settings.ProfileTreeShowNotes;
         _showTags = settings.ProfileTreeShowTags;
+        ProfileColumns.Load(settings.ProfileTreeColumnWidths);
 
         _browserService.ProfileRunningStateChanged += OnProfileRunningStateChanged;
         LoadProfiles();
@@ -100,6 +103,13 @@ public partial class ProfilesViewModel : ViewModelBase
         settings.ProfileTreeShowProxy = ShowProxy;
         settings.ProfileTreeShowNotes = ShowNotes;
         settings.ProfileTreeShowTags = ShowTags;
+        _settingsService.SaveSettings(settings);
+    }
+
+    public void SaveProfileColumnWidths()
+    {
+        var settings = _settingsService.GetSettings();
+        settings.ProfileTreeColumnWidths = ProfileColumns.ToSettings();
         _settingsService.SaveSettings(settings);
     }
 
@@ -1187,6 +1197,13 @@ public partial class ProfilesViewModel : ViewModelBase
 
 public abstract partial class ProfileNodeViewModel : ViewModelBase
 {
+    protected ProfileNodeViewModel(ProfileColumnLayout columnLayout)
+    {
+        ColumnLayout = columnLayout;
+    }
+
+    public ProfileColumnLayout ColumnLayout { get; }
+
     public ObservableCollection<ProfileNodeViewModel> Children { get; } = new();
 
     [ObservableProperty]
@@ -1218,6 +1235,7 @@ public partial class ProfileFolderNodeViewModel : ProfileNodeViewModel
     public string ProfileCountDisplay => TotalProfileCount.ToString();
 
     public ProfileFolderNodeViewModel(ProfileFolder folder, ProfilesViewModel parent)
+        : base(parent.ProfileColumns)
     {
         Folder = folder;
         _parent = parent;
@@ -1318,6 +1336,7 @@ public partial class ProfileItemViewModel : ProfileNodeViewModel
     public bool IsStartActionVisible => !IsRunning && !IsImportingCookies;
 
     public ProfileItemViewModel(Profile profile, ProfilesViewModel parent, DatabaseService databaseService, IEnumerable<Tag>? tags = null, bool showProxy = true, bool showNotes = true, bool showTags = true)
+        : base(parent.ProfileColumns)
     {
         Profile = profile;
         _parent = parent;

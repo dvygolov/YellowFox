@@ -91,6 +91,29 @@
             <Setter Property="Background" Value="#3E454B" />
             <Setter Property="BorderBrush" Value="#69737C" />
         </Style>
+        <Style Selector="Thumb.ColumnResizer">
+            <Setter Property="Width" Value="9" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Cursor" Value="SizeWestEast" />
+            <Setter Property="HorizontalAlignment" Value="Right" />
+            <Setter Property="VerticalAlignment" Value="Stretch" />
+            <Setter Property="Margin" Value="0,0,-4,0" />
+            <Setter Property="ToolTip.Tip" Value="Drag to resize" />
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border Background="Transparent">
+                        <Border x:Name="Divider"
+                                Width="1"
+                                Margin="0,5"
+                                HorizontalAlignment="Center"
+                                Background="#3A3E42" />
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+        </Style>
+        <Style Selector="Thumb.ColumnResizer:pointerover /template/ Border#Divider">
+            <Setter Property="Background" Value="#5A9BD4" />
+        </Style>
     </UserControl.Styles>
     
     <DockPanel>
@@ -332,6 +355,99 @@
             </StackPanel>
         </Border>
         
+        <!-- Column headers. The 44px indent matches the top-level TreeViewItem
+             header offset (8px tree padding + 12px chevron margin + 12px chevron +
+             12px margin), so the header columns line up with profile rows. -->
+        <Border DockPanel.Dock="Top"
+                Background="#252526"
+                BorderBrush="#3E3E42"
+                BorderThickness="0,0,0,1"
+                ClipToBounds="True">
+            <Grid x:Name="ProfileHeaderGrid"
+                  Height="34"
+                  Margin="44,0,0,0"
+                  ColumnSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="{Binding ProfileColumns.SelectWidth}" />
+                    <ColumnDefinition Width="{Binding ProfileColumns.ProfileWidth}" />
+                    <ColumnDefinition Width="{Binding ProfileColumns.TagsWidth}" />
+                    <ColumnDefinition Width="{Binding ProfileColumns.ProxyWidth}" />
+                    <ColumnDefinition Width="{Binding ProfileColumns.NotesWidth}" />
+                    <ColumnDefinition Width="{Binding ProfileColumns.ActionsWidth}" />
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Column="0"
+                           Text="Select"
+                           FontSize="11"
+                           FontWeight="SemiBold"
+                           Foreground="#8E969E"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1"
+                           Text="Profile"
+                           Margin="70,0,10,0"
+                           FontSize="11"
+                           FontWeight="SemiBold"
+                           Foreground="#8E969E"
+                           VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis" />
+                <TextBlock Grid.Column="2"
+                           Text="Tags"
+                           Margin="6,0,10,0"
+                           IsVisible="{Binding ShowTags}"
+                           FontSize="11"
+                           FontWeight="SemiBold"
+                           Foreground="#8E969E"
+                           VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis" />
+                <TextBlock Grid.Column="3"
+                           Text="Proxy"
+                           Margin="6,0,10,0"
+                           IsVisible="{Binding ShowProxy}"
+                           FontSize="11"
+                           FontWeight="SemiBold"
+                           Foreground="#8E969E"
+                           VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis" />
+                <TextBlock Grid.Column="4"
+                           Text="Notes"
+                           Margin="6,0,10,0"
+                           IsVisible="{Binding ShowNotes}"
+                           FontSize="11"
+                           FontWeight="SemiBold"
+                           Foreground="#8E969E"
+                           VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis" />
+                <TextBlock Grid.Column="5"
+                           Text="Actions"
+                           Margin="0,0,12,0"
+                           FontSize="11"
+                           FontWeight="SemiBold"
+                           Foreground="#8E969E"
+                           HorizontalAlignment="Right"
+                           VerticalAlignment="Center" />
+
+                <Thumb Grid.Column="0" Classes="ColumnResizer" Tag="Select"
+                       DragDelta="ColumnResizer_DragDelta"
+                       DragCompleted="ColumnResizer_DragCompleted" />
+                <Thumb Grid.Column="1" Classes="ColumnResizer" Tag="Profile"
+                       DragDelta="ColumnResizer_DragDelta"
+                       DragCompleted="ColumnResizer_DragCompleted" />
+                <Thumb Grid.Column="2" Classes="ColumnResizer" Tag="Tags"
+                       DragDelta="ColumnResizer_DragDelta"
+                       DragCompleted="ColumnResizer_DragCompleted" />
+                <Thumb Grid.Column="3" Classes="ColumnResizer" Tag="Proxy"
+                       DragDelta="ColumnResizer_DragDelta"
+                       DragCompleted="ColumnResizer_DragCompleted" />
+                <Thumb Grid.Column="4" Classes="ColumnResizer" Tag="Notes"
+                       DragDelta="ColumnResizer_DragDelta"
+                       DragCompleted="ColumnResizer_DragCompleted" />
+                <Thumb Grid.Column="5" Classes="ColumnResizer" Tag="Actions"
+                       DragDelta="ColumnResizer_DragDelta"
+                       DragCompleted="ColumnResizer_DragCompleted" />
+            </Grid>
+        </Border>
+
         <!-- Profiles Tree -->
         <TreeView x:Name="ProfilesTree"
                   AutomationProperties.AutomationId="ProfilesList"
@@ -341,60 +457,78 @@
                   Background="#1E1E1E"
                   Foreground="#CCCCCC"
                   Padding="8,6"
-                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                  ScrollViewer.HorizontalScrollBarVisibility="Auto"
                   ScrollViewer.VerticalScrollBarVisibility="Auto">
             <TreeView.Styles>
                 <Style Selector="TreeViewItem">
                     <Setter Property="IsExpanded" Value="{ReflectionBinding IsExpanded, Mode=TwoWay}" />
+                    <Setter Property="HorizontalAlignment" Value="Left" />
                 </Style>
                 <Style Selector="TreeViewItem /template/ ContentPresenter">
-                    <Setter Property="HorizontalAlignment" Value="Stretch" />
+                    <!-- Keep the row at its fixed-width column size so the TreeView
+                         reports a horizontal extent and can scroll wide columns. -->
+                    <Setter Property="HorizontalAlignment" Value="Left" />
+                </Style>
+                <Style Selector="TreeView /template/ ItemsPresenter#PART_ItemsPresenter">
+                    <Setter Property="MinWidth" Value="{Binding ProfileColumns.TreeContentWidth}" />
                 </Style>
             </TreeView.Styles>
             <TreeView.DataTemplates>
-                <!-- Folder row -->
+                <!-- Folder row. Columns are shared with the profile row and the header
+                     through ProfileColumnLayout. -->
                 <TreeDataTemplate DataType="vm:ProfileFolderNodeViewModel"
                                   x:DataType="vm:ProfileFolderNodeViewModel"
                                   ItemsSource="{Binding Children}">
-                    <Border Background="Transparent" MinHeight="40" Padding="2,1" HorizontalAlignment="Stretch">
-                        <!-- Keep the columns in sync with the profile row below:
-                             checkbox, status, icon, name, tags, proxy, notes, actions -->
-                        <Grid ColumnDefinitions="34,26,28,220,52,160,*,152"
-                              ColumnSpacing="8"
-                              HorizontalAlignment="Stretch">
+                    <Border Background="Transparent" MinHeight="40" Padding="0,1" HorizontalAlignment="Stretch">
+                        <Grid ColumnSpacing="8" HorizontalAlignment="Stretch">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="{Binding ColumnLayout.SelectWidth}" />
+                                <ColumnDefinition Width="{Binding ColumnLayout.ProfileWidth}" />
+                                <ColumnDefinition Width="{Binding ColumnLayout.TagsWidth}" />
+                                <ColumnDefinition Width="{Binding ColumnLayout.ProxyWidth}" />
+                                <ColumnDefinition Width="{Binding ColumnLayout.NotesWidth}" />
+                                <ColumnDefinition Width="{Binding ColumnLayout.ActionsWidth}" />
+                            </Grid.ColumnDefinitions>
+
                             <CheckBox Grid.Column="0"
                                       VerticalAlignment="Center"
                                       HorizontalAlignment="Center"
                                       IsChecked="{Binding IsSelected}" />
-                            <TextBlock Grid.Column="2"
-                                       Text="&#xE8B7;"
-                                       FontFamily="Segoe MDL2 Assets"
-                                       FontSize="17"
-                                       Foreground="#E0B34A"
-                                       HorizontalAlignment="Center"
-                                       VerticalAlignment="Center" />
-                            <StackPanel Grid.Column="3"
-                                        Orientation="Horizontal"
-                                        Spacing="10"
-                                        VerticalAlignment="Center">
-                                <TextBlock Text="{Binding Name}"
-                                           FontSize="14"
-                                           FontWeight="SemiBold"
-                                           Foreground="#DDDDDD"
-                                           VerticalAlignment="Center"
-                                           MaxWidth="180"
-                                           TextTrimming="CharacterEllipsis" />
-                                <Border Background="#34383C"
-                                        CornerRadius="9"
-                                        Padding="7,1"
-                                        VerticalAlignment="Center"
-                                        IsVisible="{Binding HasProfiles}">
-                                    <TextBlock Text="{Binding ProfileCountDisplay}"
-                                               FontSize="11"
-                                               Foreground="#9AA2AA" />
-                                </Border>
-                            </StackPanel>
-                            <Button Grid.Column="7"
+
+                            <Grid Grid.Column="1"
+                                  ColumnDefinitions="26,8,28,8,*"
+                                  VerticalAlignment="Center">
+                                <TextBlock Grid.Column="2"
+                                           Text="&#xE8B7;"
+                                           FontFamily="Segoe MDL2 Assets"
+                                           FontSize="17"
+                                           Foreground="#E0B34A"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center" />
+                                <StackPanel Grid.Column="4"
+                                            Orientation="Horizontal"
+                                            Spacing="10"
+                                            VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding Name}"
+                                               FontSize="14"
+                                               FontWeight="SemiBold"
+                                               Foreground="#DDDDDD"
+                                               VerticalAlignment="Center"
+                                               MaxWidth="180"
+                                               TextTrimming="CharacterEllipsis" />
+                                    <Border Background="#34383C"
+                                            CornerRadius="9"
+                                            Padding="7,1"
+                                            VerticalAlignment="Center"
+                                            IsVisible="{Binding HasProfiles}">
+                                        <TextBlock Text="{Binding ProfileCountDisplay}"
+                                                   FontSize="11"
+                                                   Foreground="#9AA2AA" />
+                                    </Border>
+                                </StackPanel>
+                            </Grid>
+
+                            <Button Grid.Column="5"
                                     Classes="FolderAction"
                                     Content="&#xE712;"
                                     HorizontalAlignment="Right"
@@ -413,16 +547,23 @@
                     </Border>
                 </TreeDataTemplate>
 
-                <!-- Profile row -->
+                <!-- Profile row. Columns are shared with the folder row and the header. -->
                 <TreeDataTemplate DataType="vm:ProfileItemViewModel"
                                   x:DataType="vm:ProfileItemViewModel"
                                   ItemsSource="{Binding Children}">
-                    <!-- Keep the columns in sync with the folder row above -->
-                    <Grid ColumnDefinitions="34,26,28,220,52,160,*,152"
-                          ColumnSpacing="8"
+                    <Grid ColumnSpacing="8"
                           MinHeight="48"
                           Margin="0,1"
                           HorizontalAlignment="Stretch">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="{Binding ColumnLayout.SelectWidth}" />
+                            <ColumnDefinition Width="{Binding ColumnLayout.ProfileWidth}" />
+                            <ColumnDefinition Width="{Binding ColumnLayout.TagsWidth}" />
+                            <ColumnDefinition Width="{Binding ColumnLayout.ProxyWidth}" />
+                            <ColumnDefinition Width="{Binding ColumnLayout.NotesWidth}" />
+                            <ColumnDefinition Width="{Binding ColumnLayout.ActionsWidth}" />
+                        </Grid.ColumnDefinitions>
+
                         <Grid.ContextMenu>
                             <ContextMenu>
                                 <MenuItem Header="Edit" Command="{Binding EditCommand}" />
@@ -443,40 +584,44 @@
                                   HorizontalAlignment="Center"
                                   IsChecked="{Binding IsSelected}" />
 
-                        <Ellipse Grid.Column="1"
-                                 Width="10"
-                                 Height="10"
-                                 VerticalAlignment="Center"
-                                 HorizontalAlignment="Center"
-                                 Fill="{Binding IsRunning, Converter={StaticResource StatusColorConverter}}" />
-
-                        <Grid Grid.Column="2"
-                              Width="28"
-                              Height="24"
-                              VerticalAlignment="Center"
-                              ToolTip.Tip="{Binding OsIconTip}">
-                            <Viewbox Width="{Binding OsIconBoxSize}"
-                                     Height="{Binding OsIconBoxSize}"
-                                     HorizontalAlignment="Center"
+                        <Grid Grid.Column="1"
+                              ColumnDefinitions="26,8,28,8,*"
+                              VerticalAlignment="Center">
+                            <Ellipse Grid.Column="0"
+                                     Width="10"
+                                     Height="10"
                                      VerticalAlignment="Center"
-                                     Stretch="Uniform">
-                                <Path Width="24"
-                                      Height="24"
-                                      Stretch="Uniform"
-                                      Data="{Binding OsIconData}"
-                                      Fill="{Binding OsIconFill}" />
-                            </Viewbox>
+                                     HorizontalAlignment="Center"
+                                     Fill="{Binding IsRunning, Converter={StaticResource StatusColorConverter}}" />
+
+                            <Grid Grid.Column="2"
+                                  Width="28"
+                                  Height="24"
+                                  VerticalAlignment="Center"
+                                  ToolTip.Tip="{Binding OsIconTip}">
+                                <Viewbox Width="{Binding OsIconBoxSize}"
+                                         Height="{Binding OsIconBoxSize}"
+                                         HorizontalAlignment="Center"
+                                         VerticalAlignment="Center"
+                                         Stretch="Uniform">
+                                    <Path Width="24"
+                                          Height="24"
+                                          Stretch="Uniform"
+                                          Data="{Binding OsIconData}"
+                                          Fill="{Binding OsIconFill}" />
+                                </Viewbox>
+                            </Grid>
+
+                            <TextBlock Grid.Column="4"
+                                       Text="{Binding Name}"
+                                       FontSize="14"
+                                       FontWeight="SemiBold"
+                                       Foreground="#CCCCCC"
+                                       VerticalAlignment="Center"
+                                       TextTrimming="CharacterEllipsis" />
                         </Grid>
 
-                        <TextBlock Grid.Column="3"
-                                   Text="{Binding Name}"
-                                   FontSize="14"
-                                   FontWeight="SemiBold"
-                                   Foreground="#CCCCCC"
-                                   VerticalAlignment="Center"
-                                   TextTrimming="CharacterEllipsis" />
-
-                        <ItemsControl Grid.Column="4"
+                        <ItemsControl Grid.Column="2"
                                       ItemsSource="{Binding TagChips}"
                                       IsVisible="{Binding ShowTags}"
                                       VerticalAlignment="Center"
@@ -505,7 +650,7 @@
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
 
-                        <TextBlock Grid.Column="5"
+                        <TextBlock Grid.Column="3"
                                    Text="{Binding ProxyDisplay}"
                                    IsVisible="{Binding ShowProxy}"
                                    ToolTip.Tip="{Binding ProxyToolTip}"
@@ -514,7 +659,7 @@
                                    VerticalAlignment="Center"
                                    TextTrimming="CharacterEllipsis" />
 
-                        <Border Grid.Column="6"
+                        <Border Grid.Column="4"
                                 Classes="NotesHost"
                                 IsVisible="{Binding ShowNotes}"
                                 Background="#202326"
@@ -562,7 +707,7 @@
                             </Grid>
                         </Border>
 
-                        <StackPanel Grid.Column="7"
+                        <StackPanel Grid.Column="5"
                                     Orientation="Horizontal"
                                     Spacing="6"
                                     VerticalAlignment="Center"
