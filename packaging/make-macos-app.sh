@@ -69,12 +69,39 @@ cat > "${APP}/Contents/Info.plist" <<EOF
 EOF
 
 # Ad-hoc signing is enough to launch the app from a downloaded zip on Apple Silicon.
-# A Developer ID identity can be supplied through MACOS_SIGN_IDENTITY for notarization.
-if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
-    codesign --force --deep --options runtime --sign "${MACOS_SIGN_IDENTITY}" "${APP}"
+# A Developer ID identity can be supplied through MACOS_SIGN_IDENTITY.
+#
+# Every Mach-O file is signed explicitly: codesign --deep mistakes the Playwright
+# driver directory for a nested bundle and aborts with "bundle format unrecognized".
+SIGN_IDENTITY="${MACOS_SIGN_IDENTITY:--}"
+ENTITLEMENTS="$(mktemp)"
+cat > "${ENTITLEMENTS}" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>
+PLIST
+
+while IFS= read -r -d '' file; do
+    if file -b "${file}" | grep -q "Mach-O"; then
+        codesign --force --sign "${SIGN_IDENTITY}" "${file}"
+    fi
+done < <(find "${APP}" -type f -print0)
+
+if [ "${SIGN_IDENTITY}" = "-" ]; then
+    codesign --force --sign - "${APP}"
 else
-    codesign --force --deep --sign - "${APP}"
+    codesign --force --options runtime --entitlements "${ENTITLEMENTS}" --sign "${SIGN_IDENTITY}" "${APP}"
 fi
+rm -f "${ENTITLEMENTS}"
 
 STAGE="$(mktemp -d)/${NAME}"
 mkdir -p "${STAGE}"
