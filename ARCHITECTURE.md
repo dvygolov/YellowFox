@@ -416,8 +416,10 @@ Tags (`v*`) upload every artifact to a single GitHub release.
 
 **Windows**: zip with the desktop app and CLI; `setup-python.bat` prepares Python.
 
-**macOS**: `.app` bundle signed ad-hoc by default (`MACOS_SIGN_IDENTITY` can supply a
-Developer ID identity); notarization still has to be added for public distribution.
+**macOS**: `.app` bundle with every Mach-O component signed ad-hoc by default; the bundle
+itself is not sealed (codesign rejects managed assemblies in `Contents/MacOS` during
+sealing), so the first launch needs right-click -> Open. `MACOS_SIGN_IDENTITY` switches to
+a Developer ID signature; notarization still has to be added for public distribution.
 
 **Linux**: `.deb` (installs to `/opt/yellowfox` with a launcher and desktop entry) and a
 portable `tar.gz`.

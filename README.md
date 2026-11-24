@@ -338,8 +338,9 @@ the native window handle, macOS/Linux use the broker's open page count (closing 
 window keeps Firefox alive on macOS).
 
 Known gaps on macOS/Linux: the app still needs a system Python 3 to bootstrap its
-per-user virtual environment, and macOS builds are signed ad-hoc only, so distribution
-outside a local build needs a Developer ID identity and notarization.
+per-user virtual environment. macOS release zips sign every executable component ad-hoc
+but leave the app bundle unsealed, so the first launch needs right-click -> Open; proper
+distribution needs a Developer ID identity and notarization.
 
 ## Security Notes
 

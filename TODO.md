@@ -219,7 +219,7 @@ CREATE TABLE bookmarks (
 
 ## Known Issues 🐛
 
-- [ ] Python path detection on Linux/macOS
+- [x] Python path detection on Linux/macOS
 - [ ] Dialog system not implemented (ProfileEditor)
 - [ ] No confirmation dialogs for delete operations
 - [ ] Browser process orphaning on crash
@@ -279,4 +279,4 @@ CREATE TABLE bookmarks (
 - [ ] All Phase 1-4 features
 - [ ] Comprehensive testing
 - [ ] User documentation
-- [ ] Installers for all platforms
+- [x] Packages for all platforms (Windows zip, macOS .app, Linux .deb/tar.gz)
