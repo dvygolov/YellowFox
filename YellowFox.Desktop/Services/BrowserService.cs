@@ -4543,8 +4543,13 @@ public class BrowserService
         }
         else
         {
+            // Prefer the per-user environment created by setup-python.sh or by the
+            // dependency installer: packaged macOS/Linux apps are read-only.
+            var dataVenvBin = Path.Combine(AppPaths.DataDirectory, "venv", "bin");
             var candidates = new[]
             {
+                Path.Combine(dataVenvBin, "python3"),
+                Path.Combine(dataVenvBin, "python"),
                 Path.Combine(pythonDir, "venv", "bin", "python3"),
                 Path.Combine(pythonDir, "venv", "bin", "python"),
                 "python3",
@@ -4566,16 +4571,20 @@ public class BrowserService
 
     private static void ApplyLocalPythonEnvironment(ProcessStartInfo startInfo, string pythonDir)
     {
-        var localAppData = Path.Combine(pythonDir, ".localappdata");
-        var xdgCache = Path.Combine(pythonDir, ".cache");
-        Directory.CreateDirectory(localAppData);
-        Directory.CreateDirectory(xdgCache);
-
         if (OperatingSystem.IsWindows())
+        {
+            var localAppData = Path.Combine(pythonDir, ".localappdata");
+            Directory.CreateDirectory(localAppData);
             startInfo.Environment["LOCALAPPDATA"] = localAppData;
+        }
         else
-            startInfo.Environment["XDG_CACHE_HOME"] = xdgCache;
+        {
+            var cacheDirectory = Path.Combine(AppPaths.DataDirectory, "cache");
+            Directory.CreateDirectory(cacheDirectory);
+            startInfo.Environment["XDG_CACHE_HOME"] = cacheDirectory;
+        }
 
+        startInfo.Environment["YELLOWFOX_DATA_DIR"] = AppPaths.DataDirectory;
         startInfo.Environment["PYTHONUTF8"] = "1";
         startInfo.Environment["YELLOWFOX_BROKER_TIMEOUT_SECONDS"] =
             ((int)GetBrokerLaunchTimeout().TotalSeconds).ToString(CultureInfo.InvariantCulture);

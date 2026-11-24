@@ -1,7 +1,9 @@
 import importlib.util
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 PYTHON_DIR = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("yellowfox_platform", PYTHON_DIR / "yellowfox_platform.py")
@@ -47,6 +49,35 @@ class PlatformLayoutTests(unittest.TestCase):
         self.assertEqual(platform_layout.browser_process_names("lin"), ("camoufox-bin",))
         self.assertEqual(platform_layout.browser_process_names("win"), ("camoufox",))
         self.assertEqual(platform_layout.browser_process_names("mac"), ("camoufox",))
+
+
+    def test_data_directory_honours_the_override(self):
+        with patch.dict(os.environ, {"YELLOWFOX_DATA_DIR": "/tmp/yellowfox-data"}):
+            self.assertEqual(platform_layout.data_directory("lin"), Path("/tmp/yellowfox-data"))
+            self.assertEqual(platform_layout.data_directory("mac"), Path("/tmp/yellowfox-data"))
+            self.assertEqual(platform_layout.data_directory("win"), Path("/tmp/yellowfox-data"))
+
+    def test_linux_data_directory_uses_xdg_data_home(self):
+        environment = {"YELLOWFOX_DATA_DIR": "", "XDG_DATA_HOME": "/tmp/xdg-data"}
+        with patch.dict(os.environ, environment):
+            self.assertEqual(platform_layout.data_directory("lin"), Path("/tmp/xdg-data/YellowFox"))
+
+    def test_macos_data_directory_is_in_application_support(self):
+        with patch.dict(os.environ, {"YELLOWFOX_DATA_DIR": ""}):
+            self.assertEqual(
+                platform_layout.data_directory("mac"),
+                Path.home() / "Library" / "Application Support" / "YellowFox")
+
+    def test_camoufox_home_is_per_user_on_posix(self):
+        with patch.dict(os.environ, {"YELLOWFOX_DATA_DIR": "/tmp/yellowfox-data"}):
+            self.assertEqual(platform_layout.camoufox_home("lin"),
+                             Path("/tmp/yellowfox-data/camoufox"))
+            self.assertEqual(platform_layout.camoufox_home("mac"),
+                             Path("/tmp/yellowfox-data/camoufox"))
+
+    def test_camoufox_home_stays_portable_on_windows(self):
+        with patch.dict(os.environ, {"YELLOWFOX_DATA_DIR": "/tmp/yellowfox-data"}):
+            self.assertEqual(platform_layout.camoufox_home("win"), PYTHON_DIR / ".camoufox")
 
 
 if __name__ == "__main__":

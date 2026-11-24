@@ -8,6 +8,7 @@ Camoufox ships a different archive and a different executable layout per platfor
 """
 from __future__ import annotations
 
+import os
 import platform
 import sys
 from pathlib import Path
@@ -98,3 +99,33 @@ def browser_root_for(executable_path, os_name: str | None = None) -> Path:
 def browser_process_names(os_name: str | None = None) -> tuple[str, ...]:
     resolved = os_name or OS_NAME
     return ("camoufox-bin",) if resolved == "lin" else ("camoufox",)
+
+
+def data_directory(os_name: str | None = None) -> Path:
+    """Per-user directory for mutable runtime data.
+
+    Windows keeps the portable layout next to the executable; macOS and Linux
+    installs are read-only (.app bundle, /opt, AppImage), so their data lives in
+    the user profile. YELLOWFOX_DATA_DIR overrides the location everywhere.
+    """
+    override = os.environ.get("YELLOWFOX_DATA_DIR")
+    if override:
+        return Path(override).expanduser()
+
+    resolved = os_name or OS_NAME
+    if resolved == "win":
+        return Path(__file__).resolve().parent.parent / "data"
+    if resolved == "mac":
+        return Path.home() / "Library" / "Application Support" / "YellowFox"
+
+    xdg_data_home = os.environ.get("XDG_DATA_HOME")
+    base = Path(xdg_data_home).expanduser() if xdg_data_home else Path.home() / ".local" / "share"
+    return base / "YellowFox"
+
+
+def camoufox_home(os_name: str | None = None) -> Path:
+    """Where the Camoufox browsers and their version config are stored."""
+    resolved = os_name or OS_NAME
+    if resolved == "win":
+        return Path(__file__).resolve().parent / ".camoufox"
+    return data_directory(resolved) / "camoufox"

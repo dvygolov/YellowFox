@@ -1,5 +1,6 @@
 using System;
 using System.Diagnostics;
+using System.Linq;
 using System.IO;
 using System.Text;
 using System.Text.Json;
@@ -119,6 +120,13 @@ public sealed class CamoufoxUpdateService
             var pythonDir = ResolvePythonScriptsPath();
             if (!TryResolvePythonLauncher(pythonDir, out var launcher))
                 return CamoufoxUpdateResult.Failure("Python launcher was not found.");
+
+            if (!OperatingSystem.IsWindows())
+            {
+                launcher = await EnsureDataVenvAsync(launcher, cancellationToken);
+                if (launcher == null)
+                    return CamoufoxUpdateResult.Failure("Could not create the Python environment.");
+            }
 
             var requirementsPath = Path.Combine(pythonDir, "requirements.txt");
             if (!File.Exists(requirementsPath))
@@ -304,6 +312,8 @@ public sealed class CamoufoxUpdateService
             }
             : new[]
             {
+                Path.Combine(AppPaths.DataDirectory, "venv", "bin", "python3"),
+                Path.Combine(AppPaths.DataDirectory, "venv", "bin", "python"),
                 Path.Combine(pythonDir, "venv", "bin", "python3"),
                 Path.Combine(pythonDir, "venv", "bin", "python"),
                 "python3",
@@ -377,24 +387,77 @@ public sealed class CamoufoxUpdateService
 
     private static void ApplyLocalPythonEnvironment(ProcessStartInfo startInfo, string pythonDir)
     {
+        if (OperatingSystem.IsWindows())
+        {
+            if (!string.IsNullOrWhiteSpace(pythonDir))
+            {
+                var localAppData = Path.Combine(pythonDir, ".localappdata");
+                Directory.CreateDirectory(localAppData);
+                startInfo.Environment["LOCALAPPDATA"] = localAppData;
+            }
+        }
+        else
+        {
+            var cacheDirectory = Path.Combine(AppPaths.DataDirectory, "cache");
+            Directory.CreateDirectory(cacheDirectory);
+            startInfo.Environment["XDG_CACHE_HOME"] = cacheDirectory;
+        }
+
+        startInfo.Environment["YELLOWFOX_DATA_DIR"] = AppPaths.DataDirectory;
+        startInfo.Environment["PYTHONUTF8"] = "1";
         if (string.IsNullOrWhiteSpace(pythonDir))
             return;
-
-        var localAppData = Path.Combine(pythonDir, ".localappdata");
-        var xdgCache = Path.Combine(pythonDir, ".cache");
-        Directory.CreateDirectory(localAppData);
-        Directory.CreateDirectory(xdgCache);
-
-        if (OperatingSystem.IsWindows())
-            startInfo.Environment["LOCALAPPDATA"] = localAppData;
-        else
-            startInfo.Environment["XDG_CACHE_HOME"] = xdgCache;
-
-        startInfo.Environment["PYTHONUTF8"] = "1";
         startInfo.Environment.TryGetValue("PYTHONPATH", out var pythonPath);
         startInfo.Environment["PYTHONPATH"] = string.IsNullOrWhiteSpace(pythonPath)
             ? pythonDir
             : $"{pythonDir}{Path.PathSeparator}{pythonPath}";
+    }
+
+    private static string? GetDataVenvLauncher()
+    {
+        if (OperatingSystem.IsWindows())
+            return null;
+
+        var bin = Path.Combine(AppPaths.DataDirectory, "venv", "bin");
+        return new[] { Path.Combine(bin, "python3"), Path.Combine(bin, "python") }
+            .FirstOrDefault(File.Exists);
+    }
+
+    /// <summary>
+    /// Packaged macOS/Linux installs are read-only, so the dependency installer
+    /// creates its environment in the per-user data directory.
+    /// </summary>
+    private static async Task<string?> EnsureDataVenvAsync(string systemLauncher, CancellationToken cancellationToken)
+    {
+        var existing = GetDataVenvLauncher();
+        if (existing != null)
+            return existing;
+
+        var venvDirectory = Path.Combine(AppPaths.DataDirectory, "venv");
+        Directory.CreateDirectory(AppPaths.DataDirectory);
+
+        using var create = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = systemLauncher,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+                StandardOutputEncoding = PythonOutputEncoding,
+                StandardErrorEncoding = PythonOutputEncoding
+            }
+        };
+        create.StartInfo.ArgumentList.Add("-m");
+        create.StartInfo.ArgumentList.Add("venv");
+        create.StartInfo.ArgumentList.Add(venvDirectory);
+
+        if (!create.Start())
+            return null;
+
+        await create.WaitForExitAsync(cancellationToken);
+        return create.ExitCode == 0 ? GetDataVenvLauncher() : null;
     }
 
     private static void TryKill(Process process)

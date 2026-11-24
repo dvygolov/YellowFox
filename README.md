@@ -325,7 +325,9 @@ Platform-specific behavior:
 - **Data and settings** live in `data/` next to the executable on Windows (portable layout), under
   `~/Library/Application Support/YellowFox` on macOS and `$XDG_DATA_HOME/YellowFox`
   (usually `~/.local/share/YellowFox`) on Linux. `YELLOWFOX_DATA_DIR` overrides the location.
-- **Camoufox** is installed and updated from the official per-OS archive: `win.x86_64`,
+- **Python and Camoufox** live in the same data directory on macOS/Linux (the app bundle
+  and `/opt` stay read-only), while Windows keeps them next to the Python scripts.
+  Camoufox is installed and updated from the official per-OS archive: `win.x86_64`,
   `mac.arm64`/`mac.x86_64`, `lin.arm64`/`lin.x86_64`.
 - **Browser process names**: `camoufox.exe` on Windows, `camoufox` on macOS,
   `camoufox-bin` on Linux.
@@ -335,9 +337,9 @@ The profile stops as soon as its browser window closes on every platform: Window
 the native window handle, macOS/Linux use the broker's open page count (closing the last
 window keeps Firefox alive on macOS).
 
-Known gaps on macOS/Linux: the app still needs a system Python 3 (setup script creates
-`python/venv`), and macOS builds are signed ad-hoc only, so distribution outside a local
-build needs a Developer ID identity and notarization.
+Known gaps on macOS/Linux: the app still needs a system Python 3 to bootstrap its
+per-user virtual environment, and macOS builds are signed ad-hoc only, so distribution
+outside a local build needs a Developer ID identity and notarization.
 
 ## Security Notes
 

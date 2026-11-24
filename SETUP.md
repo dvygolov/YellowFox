@@ -110,9 +110,10 @@ brew install dotnet-sdk
 ./setup-python.sh
 ```
 
-The script creates `python/venv`, installs `python/requirements.txt` and downloads the
-official Camoufox build for the current OS and architecture (macOS arm64/x86_64, Linux
-x86_64/arm64).
+The script creates a per-user virtual environment (`~/Library/Application Support/YellowFox/venv`
+on macOS, `$XDG_DATA_HOME/YellowFox/venv` on Linux), installs `python/requirements.txt`
+there and downloads the official Camoufox build for the current OS and architecture
+(macOS arm64/x86_64, Linux x86_64/arm64) into the same per-user directory.
 
 ### 3. Build and Run
 
@@ -139,7 +140,8 @@ GitHub releases contain installable packages for every supported platform:
 Open on the first launch of the ad-hoc signed build).
 
 **Linux (deb):** `sudo apt install ./YellowFox-linux-x64.deb`, then run
-`/opt/yellowfox/setup-python.sh` once and start `yellowfox`.
+`/opt/yellowfox/setup-python.sh` once (as your normal user, without `sudo`) and start
+`yellowfox`. The script only writes to your home directory.
 
 **Linux (tarball):** unpack anywhere, run `./setup-python.sh` once, then start
 `./YellowFox.Desktop`.
