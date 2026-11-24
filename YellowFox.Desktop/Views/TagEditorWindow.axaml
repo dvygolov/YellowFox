@@ -8,8 +8,8 @@
         x:Class="YellowFox.Desktop.Views.TagEditorWindow"
         x:DataType="vm:TagEditorViewModel"
         Icon="/Assets/yellowfox.ico"
-        Width="460" Height="545"
-        MinWidth="430" MinHeight="500"
+        Width="460" Height="600"
+        MinWidth="430" MinHeight="520"
         Title="{Binding Title}"
         WindowStartupLocation="CenterOwner"
         CanResize="False"
@@ -25,14 +25,18 @@
         <Style Selector="ListBox.TagIconList ListBoxItem:selected /template/ ContentPresenter">
             <Setter Property="Background" Value="#2F6FB8" />
         </Style>
-        <Style Selector="ListBox.TagColorList ListBoxItem">
+        <Style Selector="Button.TagColorSwatch">
             <Setter Property="Padding" Value="0" />
             <Setter Property="Margin" Value="3" />
-            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="MinWidth" Value="0" />
+            <Setter Property="MinHeight" Value="0" />
             <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="CornerRadius" Value="10" />
         </Style>
-        <Style Selector="ListBox.TagColorList ListBoxItem:selected /template/ ContentPresenter">
-            <Setter Property="Background" Value="#2F6FB8" />
+        <Style Selector="Button.TagColorSwatch /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
         </Style>
     </Window.Styles>
 
@@ -152,29 +156,68 @@
                                FontWeight="SemiBold"
                                Foreground="#CCCCCC"
                                FontSize="13" />
-                    <ListBox Classes="TagColorList"
-                             AutomationProperties.AutomationId="TagColorList"
-                             ItemsSource="{Binding Colors}"
-                             SelectedItem="{Binding SelectedColorOption}"
-                             Background="Transparent"
-                             BorderThickness="0"
-                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                        <ListBox.ItemsPanel>
+                    <ItemsControl AutomationProperties.AutomationId="TagColorList"
+                                  ItemsSource="{Binding Colors}">
+                        <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
                                 <WrapPanel />
                             </ItemsPanelTemplate>
-                        </ListBox.ItemsPanel>
-                        <ListBox.ItemTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
                             <DataTemplate x:DataType="vm:TagColorOption">
-                                <Border Width="34"
-                                        Height="34"
-                                        CornerRadius="8"
-                                        Background="{Binding Brush}"
-                                        BorderBrush="#4A4A4E"
-                                        BorderThickness="1" />
+                                <Button Classes="TagColorSwatch"
+                                        AutomationProperties.Name="{Binding Color}"
+                                        Command="{Binding $parent[Window].((vm:TagEditorViewModel)DataContext).SelectPresetColorCommand}"
+                                        CommandParameter="{Binding}"
+                                        ToolTip.Tip="{Binding Color}">
+                                    <Grid Width="36" Height="36">
+                                        <Border Width="30"
+                                                Height="30"
+                                                CornerRadius="8"
+                                                Background="{Binding Brush}"
+                                                BorderBrush="#4A4A4E"
+                                                BorderThickness="1" />
+                                        <Border IsVisible="{Binding IsSelected}"
+                                                CornerRadius="10"
+                                                BorderBrush="White"
+                                                BorderThickness="2" />
+                                        <Border IsVisible="{Binding IsSelected}"
+                                                Width="20"
+                                                Height="20"
+                                                CornerRadius="10"
+                                                Background="#66000000">
+                                            <TextBlock Text="&#xE73E;"
+                                                       FontFamily="Segoe MDL2 Assets"
+                                                       FontSize="11"
+                                                       Foreground="White"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center" />
+                                        </Border>
+                                    </Grid>
+                                </Button>
                             </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12" Margin="3,4,0,0">
+                        <TextBlock Grid.Column="0"
+                                   Text="Any color"
+                                   Foreground="#999999"
+                                   FontSize="13"
+                                   VerticalAlignment="Center" />
+                        <ThemeVariantScope Grid.Column="1"
+                                           RequestedThemeVariant="Dark"
+                                           HorizontalAlignment="Left">
+                            <ColorPicker AutomationProperties.AutomationId="TagColorPicker"
+                                         Width="56"
+                                         ToolTip.Tip="Pick any color"
+                                         Color="{Binding SelectedColor, Mode=TwoWay}"
+                                         IsAlphaEnabled="False"
+                                         IsAlphaVisible="False"
+                                         IsHexInputVisible="True"
+                                         IsColorPaletteVisible="True" />
+                        </ThemeVariantScope>
+                    </Grid>
                 </StackPanel>
             </StackPanel>
         </ScrollViewer>

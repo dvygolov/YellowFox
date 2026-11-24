@@ -1,25 +1,34 @@
+using System;
 using System.Collections.ObjectModel;
 using System.Linq;
 using Avalonia.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using YellowFox.Desktop.Models;
 
 namespace YellowFox.Desktop.ViewModels;
 
-public sealed class TagColorOption
+public sealed partial class TagColorOption : ObservableObject
 {
-    public TagColorOption(string color)
+    public TagColorOption(string color, bool isPreset = true)
     {
         Color = color;
+        IsPreset = isPreset;
         Brush = new SolidColorBrush(Avalonia.Media.Color.Parse(color));
     }
 
     public string Color { get; }
+    public bool IsPreset { get; }
     public IBrush Brush { get; }
+
+    [ObservableProperty]
+    private bool _isSelected;
 }
 
 public partial class TagEditorViewModel : ViewModelBase
 {
+    private TagColorOption? _customColorOption;
+
     [ObservableProperty]
     private string _name = string.Empty;
 
@@ -27,31 +36,30 @@ public partial class TagEditorViewModel : ViewModelBase
     private TagIconOption? _selectedIconOption;
 
     [ObservableProperty]
-    private TagColorOption? _selectedColorOption;
+    private Color _selectedColor;
 
     public ObservableCollection<TagIconOption> Icons { get; } = new(TagIconCatalog.Options);
     public ObservableCollection<TagColorOption> Colors { get; } =
         new(TagIconCatalog.Palette.Select(color => new TagColorOption(color)));
     public string Title { get; }
     public string PreviewGlyph => SelectedIconOption?.Glyph ?? TagIconCatalog.GlyphFor(null);
-    public string PreviewColor => SelectedColorOption?.Color ?? TagIconCatalog.DefaultColor;
-    public IBrush PreviewBrush => SelectedColorOption?.Brush ?? Colors[0].Brush;
+    public string SelectedColorHex => $"#{SelectedColor.R:X2}{SelectedColor.G:X2}{SelectedColor.B:X2}";
+    public IBrush PreviewBrush => new SolidColorBrush(SelectedColor);
 
     public TagEditorViewModel(Tag? tag = null)
     {
         Title = tag == null ? "New Tag" : "Edit Tag";
+        SelectedColor = ParseColor(tag?.Color);
 
         if (tag == null)
         {
             SelectedIconOption = Icons[0];
-            SelectedColorOption = FindColor(TagIconCatalog.DefaultColor);
             return;
         }
 
         Name = tag.Name;
         var normalized = TagIconCatalog.FromKey(tag.Icon).Key;
         SelectedIconOption = Icons.FirstOrDefault(option => option.Key == normalized) ?? Icons[0];
-        SelectedColorOption = FindColor(tag.Color);
     }
 
     partial void OnSelectedIconOptionChanged(TagIconOption? value)
@@ -59,23 +67,57 @@ public partial class TagEditorViewModel : ViewModelBase
         OnPropertyChanged(nameof(PreviewGlyph));
     }
 
-    partial void OnSelectedColorOptionChanged(TagColorOption? value)
+    partial void OnSelectedColorChanged(Color value)
     {
-        OnPropertyChanged(nameof(PreviewColor));
+        var hex = SelectedColorHex;
+        SyncCustomColorOption(hex);
+
+        foreach (var option in Colors)
+            option.IsSelected = string.Equals(option.Color, hex, StringComparison.OrdinalIgnoreCase);
+
+        OnPropertyChanged(nameof(SelectedColorHex));
         OnPropertyChanged(nameof(PreviewBrush));
     }
 
-    private TagColorOption FindColor(string? color)
+    private void SyncCustomColorOption(string hex)
     {
-        if (!string.IsNullOrWhiteSpace(color))
+        if (Colors.Any(option => option.IsPreset && string.Equals(option.Color, hex, StringComparison.OrdinalIgnoreCase)))
         {
-            var match = Colors.FirstOrDefault(option =>
-                string.Equals(option.Color, color.Trim(), System.StringComparison.OrdinalIgnoreCase));
-            if (match != null)
-                return match;
+            if (_customColorOption != null)
+            {
+                Colors.Remove(_customColorOption);
+                _customColorOption = null;
+            }
+
+            return;
         }
 
-        return Colors[0];
+        if (_customColorOption != null && !string.Equals(_customColorOption.Color, hex, StringComparison.OrdinalIgnoreCase))
+        {
+            Colors.Remove(_customColorOption);
+            _customColorOption = null;
+        }
+
+        if (_customColorOption == null)
+        {
+            _customColorOption = new TagColorOption(hex, isPreset: false);
+            Colors.Add(_customColorOption);
+        }
+    }
+
+    [RelayCommand]
+    private void SelectPresetColor(TagColorOption? option)
+    {
+        if (option != null)
+            SelectedColor = Avalonia.Media.Color.Parse(option.Color);
+    }
+
+    private static Color ParseColor(string? color)
+    {
+        if (!string.IsNullOrWhiteSpace(color) && Avalonia.Media.Color.TryParse(color.Trim(), out var parsed))
+            return parsed;
+
+        return Avalonia.Media.Color.Parse(TagIconCatalog.DefaultColor);
     }
 
     public bool TryValidate(out string validationError)
@@ -100,7 +142,7 @@ public partial class TagEditorViewModel : ViewModelBase
     {
         tag.Name = Name.Trim();
         tag.Icon = SelectedIconOption?.Key ?? TagIconCatalog.DefaultKey;
-        tag.Color = SelectedColorOption?.Color ?? TagIconCatalog.DefaultColor;
+        tag.Color = SelectedColorHex;
         return tag;
     }
 }
