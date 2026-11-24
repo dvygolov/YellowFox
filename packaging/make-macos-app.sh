@@ -90,7 +90,13 @@ cat > "${ENTITLEMENTS}" <<'PLIST'
 </plist>
 PLIST
 
+MAIN_EXECUTABLE="${APP}/Contents/MacOS/YellowFox.Desktop"
 while IFS= read -r -d '' file; do
+    # The main executable is signed together with the bundle below; signing it
+    # on its own makes codesign walk the enclosing bundle and fail on its resources.
+    if [ "${file}" = "${MAIN_EXECUTABLE}" ]; then
+        continue
+    fi
     if file -b "${file}" | grep -q "Mach-O"; then
         codesign --force --sign "${SIGN_IDENTITY}" "${file}"
     fi
