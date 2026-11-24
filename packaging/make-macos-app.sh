@@ -119,7 +119,10 @@ while IFS= read -r -d '' file; do
 done < <(find "${APP}" -type f -print0)
 
 if [ "${SIGN_IDENTITY}" = "-" ]; then
-    codesign --force --sign - "${APP}"
+    # Sealing the bundle needs a Developer ID workflow: codesign re-validates every
+    # file in Contents/MacOS as nested code and rejects the managed assemblies.
+    # The ad-hoc signatures on the executables are enough to run the app locally.
+    echo "Signed the app components ad-hoc; the .app seal is skipped for ad-hoc builds."
 else
     codesign --force --options runtime --entitlements "${ENTITLEMENTS}" --sign "${SIGN_IDENTITY}" "${APP}"
 fi
