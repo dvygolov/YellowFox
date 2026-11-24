@@ -334,9 +334,12 @@ Platform-specific behavior:
   `camoufox-bin` on Linux.
 - **Taskbar identity and per-profile taskbar icons** remain Windows-only.
 
-Still to do for full macOS/Linux support: window-close detection on macOS, `.app`/Linux
-packaging and a release CI matrix. macOS/Linux `.app` code signing and notarization are
-also not set up yet.
+The profile stops as soon as its browser window closes on every platform: Windows uses
+the native window handle, macOS/Linux use the broker's open page count (closing the last
+window keeps Firefox alive on macOS).
+
+Still to do for full macOS/Linux support: `.app`/Linux packaging, a release CI matrix and
+macOS code signing/notarization.
 
 ## Security Notes
 

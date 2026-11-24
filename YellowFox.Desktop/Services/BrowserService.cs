@@ -3456,7 +3456,13 @@ public class BrowserService
             while (!cts.IsCancellationRequested)
             {
                 var hasTrackedBrowserProcess = IsAnyTrackedBrowserProcessRunning(instance.BrowserProcessIds);
-                var windowVisible = hasTrackedBrowserProcess && HasVisibleTrackedBrowserWindow(instance);
+                var brokerStatus = await TryGetBrokerStatusAsync(instance);
+                var brokerReportsBrowserAlive = brokerStatus?.BrowserConnected == true;
+                // Closing the last window keeps Firefox alive on macOS, so the native window
+                // handle check cannot see the close. The broker reports the open page count,
+                // which drops to zero once the window is gone.
+                var windowVisible = hasTrackedBrowserProcess
+                    && (HasVisibleTrackedBrowserWindow(instance) || BrokerReportsOpenWindow(brokerStatus));
 
                 if (windowVisible)
                     invisibleWindowLogged = false;
@@ -3483,9 +3489,6 @@ public class BrowserService
                     await Task.Delay(TimeSpan.FromSeconds(2), cts.Token);
                     continue;
                 }
-
-                var brokerStatus = await TryGetBrokerStatusAsync(instance);
-                var brokerReportsBrowserAlive = brokerStatus?.BrowserConnected == true;
 
                 if (brokerStatus is { PlaywrightServerRunning: false, BrowserConnected: true } && !exitedPlaywrightServerLogged)
                 {
@@ -4352,6 +4355,9 @@ public class BrowserService
         return payload;
     }
 
+    private static bool BrokerReportsOpenWindow(BrokerStatusResponse? status) =>
+        status is { BrowserConnected: true, OpenPages: > 0 };
+
     private static async Task<BrokerStatusResponse?> TryGetBrokerStatusAsync(RunningInstance instance)
     {
         if (string.IsNullOrWhiteSpace(instance.BrokerUrl))
@@ -4441,6 +4447,7 @@ public class BrowserService
         public bool PlaywrightServerRunning { get; set; }
         public int? PlaywrightServerReturnCode { get; set; }
         public bool BrowserConnected { get; set; }
+        public int? OpenPages { get; set; }
     }
 
     private sealed class BrokerPagesResponse : BrokerOkResponse

@@ -524,11 +524,20 @@ class BrokerState:
         except Exception:
             browser_connected = False
 
+        # Closing the last window keeps Firefox alive on macOS (the process stays in the
+        # dock), so the open page count is the platform-independent "window is open" signal.
+        open_pages = 0
+        try:
+            open_pages = len(self.context.pages)
+        except Exception:
+            pass
+
         return {
             "serverProcessPid": self.server_process.pid,
             "playwrightServerRunning": self.server_process.poll() is None,
             "playwrightServerReturnCode": self.server_process.returncode,
             "browserConnected": browser_connected,
+            "openPages": open_pages,
         }
 
     def close(self):
