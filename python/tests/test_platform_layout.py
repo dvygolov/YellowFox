@@ -40,8 +40,8 @@ class PlatformLayoutTests(unittest.TestCase):
                          Path("/tmp/Camoufox.app/Contents/Resources"))
         self.assertEqual(platform_layout.browser_root_for(Path("/tmp/linux/camoufox-bin"), "lin"),
                          Path("/tmp/linux"))
-        self.assertEqual(platform_layout.browser_root_for(Path(r"C:\browser\camoufox.exe"), "win"),
-                         Path(r"C:\browser"))
+        self.assertEqual(platform_layout.browser_root_for(Path("/opt/browser/camoufox.exe"), "win"),
+                         Path("/opt/browser"))
 
     def test_process_names_per_platform(self):
         self.assertEqual(platform_layout.browser_process_names("lin"), ("camoufox-bin",))
