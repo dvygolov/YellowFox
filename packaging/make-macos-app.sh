@@ -90,6 +90,22 @@ cat > "${ENTITLEMENTS}" <<'PLIST'
 </plist>
 PLIST
 
+# codesign treats every executable file in Contents/MacOS as a code subcomponent.
+# Managed assemblies must not keep the executable bit, or bundle signing fails with
+# "code object is not signed at all".
+while IFS= read -r -d '' file; do
+    case "${file}" in
+        *.sh) chmod 755 "${file}" ;;
+        *)
+            if file -b "${file}" | grep -q "Mach-O"; then
+                chmod 755 "${file}"
+            else
+                chmod 644 "${file}"
+            fi
+            ;;
+    esac
+done < <(find "${APP}" -type f -print0)
+
 MAIN_EXECUTABLE="${APP}/Contents/MacOS/YellowFox.Desktop"
 while IFS= read -r -d '' file; do
     # The main executable is signed together with the bundle below; signing it
