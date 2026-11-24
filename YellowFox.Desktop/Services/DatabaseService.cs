@@ -33,9 +33,7 @@ public class DatabaseService
         }
         else
         {
-            // Setup data directory relative to application
-            var appDir = AppDomain.CurrentDomain.BaseDirectory;
-            _dataDirectory = Path.Combine(appDir, "data");
+            _dataDirectory = AppPaths.DataDirectory;
             _seedBuiltInExtensions = true;
         }
 

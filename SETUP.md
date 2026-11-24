@@ -84,16 +84,16 @@ YellowFox.Desktop\bin\Debug\net8.0\YellowFox.Desktop.exe
 
 ### 1. Install Prerequisites
 
-**Python:**
+**Python 3 with venv:**
 ```bash
 # Ubuntu/Debian
-sudo apt install python3 python3-pip
+sudo apt install python3 python3-venv
 
 # macOS
 brew install python@3.12
 ```
 
-**.NET SDK:**
+**.NET SDK 8:**
 ```bash
 # Ubuntu/Debian
 wget https://dot.net/v1/dotnet-install.sh
@@ -104,20 +104,27 @@ chmod +x dotnet-install.sh
 brew install dotnet-sdk
 ```
 
-### 2. Install Python Dependencies
+### 2. Install Python Dependencies and Camoufox
 
 ```bash
-cd python
-pip3 install -r requirements.txt
+./setup-python.sh
 ```
+
+The script creates `python/venv`, installs `python/requirements.txt` and downloads the
+official Camoufox build for the current OS and architecture (macOS arm64/x86_64, Linux
+x86_64/arm64).
 
 ### 3. Build and Run
 
 ```bash
 dotnet build
-cd YellowFox.Desktop
-dotnet run
+dotnet run --project YellowFox.Desktop
 ```
+
+On macOS/Linux the database, settings and profile data live outside the install
+directory: `~/Library/Application Support/YellowFox` on macOS and
+`$XDG_DATA_HOME/YellowFox` (usually `~/.local/share/YellowFox`) on Linux. Set
+`YELLOWFOX_DATA_DIR` to use a different location.
 
 ## First Time Usage
 
@@ -156,8 +163,9 @@ Visit these sites to verify anti-detect is working:
 - Or use full path: `C:\Users\YourName\AppData\Local\Programs\Python\Python312\python.exe`
 
 **Linux/macOS:**
-- Use `python3` instead of `python`
-- Update BrowserService.cs line 54: change `"python"` to `"python3"`
+- Run `./setup-python.sh`; it creates `python/venv` and the app prefers
+  `python/venv/bin/python3` over the system Python.
+- If the environment already exists, check `python/venv/bin/python3 --version`.
 
 ### "CamouFox not starting"
 

@@ -251,7 +251,7 @@ public sealed class CamoufoxUpdateService
 
     public bool HasRunningBrowser()
     {
-        foreach (var process in Process.GetProcessesByName("camoufox"))
+        foreach (var process in Process.GetProcessesByName(BrowserPlatform.ProcessName))
         {
             using (process)
             {
@@ -402,7 +402,7 @@ public sealed class CamoufoxUpdateService
         try
         {
             if (!process.HasExited)
-                process.Kill(entireProcessTree: true);
+                BrowserService.KillProcessTreeSafe(process);
         }
         catch
         {

@@ -172,6 +172,16 @@ public class BrowserServiceTests : IDisposable
         Assert.False(BrowserService.IsProfileRuntimeProcess("cmd.exe", @"cmd.exe /c python.exe C:\Tmp\x.py D:\YellowFox\data\profiles\abc", profileDir));
         Assert.False(BrowserService.IsProfileRuntimeProcess("python.exe", null, profileDir));
         Assert.False(BrowserService.IsProfileRuntimeProcess("camoufox.exe", @"camoufox.exe -profile D:\YellowFox\data\profiles\abc", " "));
+
+        // Linux ships the browser binary as camoufox-bin; macOS reuses the camoufox name.
+        Assert.True(BrowserService.IsProfileRuntimeProcess(
+            "camoufox-bin",
+            "/home/user/repo/python/.camoufox/browsers/official/152.0.4-beta.30/camoufox-bin -no-remote -profile /home/user/YellowFox/data/profiles/abc -juggler-pipe",
+            "/home/user/YellowFox/data/profiles/abc"));
+        Assert.False(BrowserService.IsProfileRuntimeProcess(
+            "camoufox-bin",
+            "/home/user/repo/python/.camoufox/browsers/official/152.0.4-beta.30/camoufox-bin -profile /home/user/YellowFox/data/profiles/other",
+            "/home/user/YellowFox/data/profiles/abc"));
     }
 
     [Fact]

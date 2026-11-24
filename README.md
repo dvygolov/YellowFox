@@ -25,10 +25,11 @@ CLI.
 The project uses Avalonia UI and .NET for the desktop application, SQLite for
 local storage, and Python broker scripts to launch and control Camoufox.
 
-> Current platform status: Windows is the supported target. macOS and Linux are
-> not supported as full desktop targets yet because browser window management,
-> process handling, icons, and taskbar integration currently use Windows-specific
-> behavior.
+> Current platform status: Windows is the primary target and the only platform with a
+> ready-made release package. The build and the Camoufox runtime are platform-aware now
+> (per-OS browser archives, process names, data directories), so macOS and Linux can run
+> the desktop app from source. Window-close detection and macOS/Linux packaging are still
+> being finished.
 
 ## Features
 
@@ -319,20 +320,23 @@ profile is not running, the cookies will be applied at the next startup.
 
 ## Platform Status
 
-YellowFox is currently Windows-first.
+YellowFox builds and runs from source on Windows, macOS and Linux. Windows is the only
+platform with a ready-made release package today.
 
-Avalonia and .NET can run on macOS/Linux, and parts of the codebase are portable,
-but full profile launch behavior is not currently validated outside Windows.
-Known Windows-specific areas include:
+Platform-specific behavior:
 
-- Window visibility and monitoring.
-- Taskbar icon/grouping behavior.
-- Process-tree handling.
-- Camoufox native window integration.
-- Paths used by local setup scripts.
+- **Data and settings** live next to the executable on Windows (portable layout), under
+  `~/Library/Application Support/YellowFox` on macOS and `$XDG_DATA_HOME/YellowFox`
+  (usually `~/.local/share/YellowFox`) on Linux. `YELLOWFOX_DATA_DIR` overrides the location.
+- **Camoufox** is installed and updated from the official per-OS archive: `win.x86_64`,
+  `mac.arm64`/`mac.x86_64`, `lin.arm64`/`lin.x86_64`.
+- **Browser process names**: `camoufox.exe` on Windows, `camoufox` on macOS,
+  `camoufox-bin` on Linux.
+- **Taskbar identity and per-profile taskbar icons** remain Windows-only.
 
-Cross-platform support should be added through a platform abstraction layer
-instead of scattering OS checks through services.
+Still to do for full macOS/Linux support: window-close detection on macOS, `.app`/Linux
+packaging and a release CI matrix. macOS/Linux `.app` code signing and notarization are
+also not set up yet.
 
 ## Security Notes
 

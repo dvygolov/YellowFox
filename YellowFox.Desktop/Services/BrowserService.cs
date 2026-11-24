@@ -15,6 +15,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using Microsoft.Data.Sqlite;
 using Microsoft.Playwright;
 using YellowFox.Desktop.Models;
@@ -104,7 +105,7 @@ public class BrowserService
             {
                 try
                 {
-                    process.Kill(entireProcessTree: true);
+                    KillProcessTreeSafe(process);
                 }
                 catch
                 {
@@ -2920,7 +2921,7 @@ public class BrowserService
             var exited = await WaitForProcessExitAsync(process, TimeSpan.FromSeconds(20));
             if (!exited)
             {
-                process.Kill(entireProcessTree: true);
+                KillProcessTreeSafe(process);
                 await process.WaitForExitAsync();
                 throw new InvalidOperationException("Camoufox context options generator timed out.");
             }
@@ -2990,7 +2991,7 @@ public class BrowserService
         var exited = await WaitForProcessExitAsync(process, TimeSpan.FromSeconds(30));
         if (!exited)
         {
-            process.Kill(entireProcessTree: true);
+            KillProcessTreeSafe(process);
             await process.WaitForExitAsync();
             throw new InvalidOperationException("Camoufox launch options generator timed out.");
         }
@@ -3134,7 +3135,7 @@ public class BrowserService
             {
                 if (!process.HasExited)
                 {
-                    process.Kill(entireProcessTree: true);
+                    KillProcessTreeSafe(process);
                     await process.WaitForExitAsync();
                     await WriteLogAsync(logPath, "INFO", "Stopped proxy auth bridge.");
                 }
@@ -3816,7 +3817,7 @@ public class BrowserService
             if (rootProcess.HasExited)
                 return;
 
-            rootProcess.Kill(entireProcessTree: true);
+            KillProcessTreeSafe(rootProcess);
             await rootProcess.WaitForExitAsync();
         }
         catch (InvalidOperationException)
@@ -3827,26 +3828,25 @@ public class BrowserService
         {
             // PID is no longer valid.
         }
-        catch (PlatformNotSupportedException ex)
-        {
-            await WriteLogAsync(logPath, "WARN", $"Process tree kill is not supported on this platform/runtime: {ex.Message}");
-            try
-            {
-                var fallback = Process.GetProcessById(rootPid);
-                if (!fallback.HasExited)
-                {
-                    fallback.Kill();
-                    await fallback.WaitForExitAsync();
-                }
-            }
-            catch
-            {
-                // Ignore if fallback also fails.
-            }
-        }
         catch (Exception ex)
         {
             await WriteLogAsync(logPath, "WARN", $"Process tree kill warning: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Kills a process together with its children. macOS has no process-tree kill in
+    /// .NET, so there the browser process itself is killed and its children exit with it.
+    /// </summary>
+    internal static void KillProcessTreeSafe(Process process)
+    {
+        try
+        {
+            process.Kill(entireProcessTree: true);
+        }
+        catch (PlatformNotSupportedException)
+        {
+            process.Kill();
         }
     }
 
@@ -3859,7 +3859,7 @@ public class BrowserService
             {
                 try
                 {
-                    if (string.Equals(process.ProcessName, "camoufox", StringComparison.OrdinalIgnoreCase) && !process.HasExited)
+                    if (BrowserPlatform.IsKnownProcessName(process.ProcessName) && !process.HasExited)
                         ids.Add(process.Id);
                 }
                 catch
@@ -3910,7 +3910,7 @@ public class BrowserService
             {
                 using var process = Process.GetProcessById(processId);
                 process.Refresh();
-                if (!process.HasExited && string.Equals(process.ProcessName, "camoufox", StringComparison.OrdinalIgnoreCase))
+                if (!process.HasExited && BrowserPlatform.IsKnownProcessName(process.ProcessName))
                     return true;
             }
             catch
@@ -3988,21 +3988,26 @@ public class BrowserService
         if (reaped > 0)
             await WriteLogAsync(logPath, "INFO", $"Reaped {reaped} leftover profile runtime process(es).");
 
-        var lockPath = Path.Combine(userDataDir, "parent.lock");
-        for (var attempt = 1; attempt <= 5 && File.Exists(lockPath); attempt++)
+        // Firefox names its lock file differently per platform: parent.lock on
+        // Windows, lock/.parentlock on macOS and Linux.
+        foreach (var lockName in new[] { "parent.lock", "lock", ".parentlock" })
         {
-            try
+            var lockPath = Path.Combine(userDataDir, lockName);
+            for (var attempt = 1; attempt <= 5 && File.Exists(lockPath); attempt++)
             {
-                File.Delete(lockPath);
-                await WriteLogAsync(logPath, "INFO", "Removed stale browser lock file.");
-                break;
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                if (attempt == 5)
-                    await WriteLogAsync(logPath, "WARN", $"Could not remove the browser lock file: {ex.Message}");
-                else
-                    await Task.Delay(200);
+                try
+                {
+                    File.Delete(lockPath);
+                    await WriteLogAsync(logPath, "INFO", $"Removed stale browser lock file {lockName}.");
+                    break;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    if (attempt == 5)
+                        await WriteLogAsync(logPath, "WARN", $"Could not remove the browser lock file {lockName}: {ex.Message}");
+                    else
+                        await Task.Delay(200);
+                }
             }
         }
     }
@@ -4019,7 +4024,7 @@ public class BrowserService
                     continue;
 
                 var name = process.ProcessName;
-                process.Kill(entireProcessTree: true);
+                KillProcessTreeSafe(process);
                 await process.WaitForExitAsync();
                 reaped++;
                 await WriteLogAsync(logPath, "INFO", $"Killed leftover profile runtime process PID={processId} ({name}).");
@@ -4043,9 +4048,21 @@ public class BrowserService
 
     private static async Task<List<int>> FindProfileRuntimeProcessIds(string profileDir, string logPath)
     {
+        if (string.IsNullOrWhiteSpace(profileDir))
+            return new List<int>();
+
+        if (OperatingSystem.IsWindows())
+            return await FindWindowsProfileRuntimeProcessIds(profileDir, logPath);
+        if (OperatingSystem.IsLinux())
+            return FindLinuxProfileRuntimeProcessIds(profileDir);
+
+        return await FindMacProfileRuntimeProcessIdsAsync(profileDir, logPath);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static async Task<List<int>> FindWindowsProfileRuntimeProcessIds(string profileDir, string logPath)
+    {
         var processIds = new List<int>();
-        if (!OperatingSystem.IsWindows() || string.IsNullOrWhiteSpace(profileDir))
-            return processIds;
 
         try
         {
@@ -4071,6 +4088,81 @@ public class BrowserService
         return processIds;
     }
 
+    private static List<int> FindLinuxProfileRuntimeProcessIds(string profileDir)
+    {
+        var processIds = new List<int>();
+        if (!Directory.Exists("/proc"))
+            return processIds;
+
+        foreach (var directory in Directory.EnumerateDirectories("/proc"))
+        {
+            if (!int.TryParse(Path.GetFileName(directory), out var processId) || processId == Environment.ProcessId)
+                continue;
+
+            string name;
+            string commandLine;
+            try
+            {
+                name = File.ReadAllText(Path.Combine(directory, "comm")).Trim();
+                commandLine = File.ReadAllText(Path.Combine(directory, "cmdline"))
+                    .Replace('\0', ' ')
+                    .Trim();
+            }
+            catch (Exception)
+            {
+                // The process exited or is not readable for this user.
+                continue;
+            }
+
+            if (IsProfileRuntimeProcess(name, commandLine, profileDir))
+                processIds.Add(processId);
+        }
+
+        return processIds;
+    }
+
+    private static async Task<List<int>> FindMacProfileRuntimeProcessIdsAsync(string profileDir, string logPath)
+    {
+        var processIds = new List<int>();
+
+        try
+        {
+            using var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = "ps",
+                Arguments = "-axo pid=,command=",
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            });
+            if (process == null)
+                return processIds;
+
+            var output = await process.StandardOutput.ReadToEndAsync();
+            await process.WaitForExitAsync();
+
+            foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var trimmed = line.TrimStart();
+                var separator = trimmed.IndexOf(' ');
+                if (separator <= 0 || !int.TryParse(trimmed[..separator], out var processId) || processId == Environment.ProcessId)
+                    continue;
+
+                var commandLine = trimmed[(separator + 1)..];
+                var name = Path.GetFileName(commandLine.Split(' ', 2)[0]);
+                if (IsProfileRuntimeProcess(name, commandLine, profileDir))
+                    processIds.Add(processId);
+            }
+        }
+        catch (Exception ex)
+        {
+            await WriteLogAsync(logPath, "WARN", $"Could not enumerate leftover profile runtime processes: {ex.Message}");
+        }
+
+        return processIds;
+    }
+
     /// <summary>
     /// True for a Camoufox/python/node process that was started for the given profile directory.
     /// Other profiles, the user's own browser and unrelated processes never match.
@@ -4085,7 +4177,7 @@ public class BrowserService
             ? processName[..^4]
             : processName;
 
-        var isRuntimeProcess = name.Equals("camoufox", StringComparison.OrdinalIgnoreCase)
+        var isRuntimeProcess = BrowserPlatform.IsKnownProcessName(name)
             || name.Equals("python", StringComparison.OrdinalIgnoreCase)
             || name.Equals("python3", StringComparison.OrdinalIgnoreCase)
             || name.Equals("node", StringComparison.OrdinalIgnoreCase);
@@ -4109,7 +4201,7 @@ public class BrowserService
                 if (process.HasExited)
                     continue;
 
-                process.Kill(entireProcessTree: true);
+                KillProcessTreeSafe(process);
                 await process.WaitForExitAsync();
                 killed++;
             }

@@ -226,6 +226,10 @@ public static class AgentCli
         };
     }
 
+    /// <summary>The apphost keeps the .exe suffix on Windows only.</summary>
+    private static string DesktopExecutableName =>
+        OperatingSystem.IsWindows() ? "YellowFox.Desktop.exe" : "YellowFox.Desktop";
+
     private static DesktopStartResult StartDesktop()
     {
         var running = Process.GetProcessesByName("YellowFox.Desktop");
@@ -234,7 +238,7 @@ public static class AgentCli
 
         var path = ResolveDesktopExecutablePath();
         if (path == null)
-            return new DesktopStartResult(false, false, null, "YellowFox.Desktop.exe was not found. Build the desktop project first.");
+            return new DesktopStartResult(false, false, null, $"{DesktopExecutableName} was not found. Build the desktop project first.");
 
         try
         {
@@ -259,12 +263,12 @@ public static class AgentCli
         if (!string.IsNullOrWhiteSpace(envPath))
             candidates.Add(envPath);
 
-        candidates.Add(Path.Combine(Environment.CurrentDirectory, "YellowFox.Desktop", "bin", "Debug", "net8.0", "YellowFox.Desktop.exe"));
-        candidates.Add(Path.Combine(AppContext.BaseDirectory, "YellowFox.Desktop.exe"));
+        candidates.Add(Path.Combine(Environment.CurrentDirectory, "YellowFox.Desktop", "bin", "Debug", "net8.0", DesktopExecutableName));
+        candidates.Add(Path.Combine(AppContext.BaseDirectory, DesktopExecutableName));
         candidates.Add(Path.GetFullPath(Path.Combine(
             AppContext.BaseDirectory,
             "..", "..", "..", "..",
-            "YellowFox.Desktop", "bin", "Debug", "net8.0", "YellowFox.Desktop.exe")));
+            "YellowFox.Desktop", "bin", "Debug", "net8.0", DesktopExecutableName)));
 
         return candidates.FirstOrDefault(File.Exists);
     }

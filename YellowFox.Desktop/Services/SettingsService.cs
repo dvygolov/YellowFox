@@ -14,7 +14,7 @@ public class SettingsService
     {
         _settingsPath = !string.IsNullOrWhiteSpace(settingsPath)
             ? settingsPath!
-            : Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "settings.json");
+            : ResolveDefaultSettingsPath();
     }
     
     public AppSettings GetSettings()
@@ -62,6 +62,34 @@ public class SettingsService
         }
     }
     
+    /// <summary>
+    /// Settings live next to the database. Windows installations that kept the old
+    /// settings.json beside the executable are migrated once, so custom paths survive
+    /// the move to the data directory.
+    /// </summary>
+    private static string ResolveDefaultSettingsPath()
+    {
+        var target = AppPaths.SettingsFile;
+        if (!OperatingSystem.IsWindows() || File.Exists(target))
+            return target;
+
+        var legacyPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "settings.json");
+        if (!File.Exists(legacyPath))
+            return target;
+
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            File.Copy(legacyPath, target);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error migrating settings: {ex.Message}");
+        }
+
+        return target;
+    }
+
     public string GetPythonScriptsPath()
     {
         var settings = GetSettings();

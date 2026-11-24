@@ -11,6 +11,7 @@ import subprocess
 import contextlib
 from pathlib import Path
 
+import yellowfox_platform as platform_layout
 from yellowfox_camoufox_home import configure_camoufox_home
 
 configure_camoufox_home()
@@ -216,7 +217,7 @@ def ensure_browser_policies(executable_path, bookmarks):
         return
 
     try:
-        browser_root = Path(executable_path).parent
+        browser_root = platform_layout.browser_root_for(executable_path)
         remove_legacy_browser_autoconfig(browser_root)
         ensure_minimal_browser_autoconfig(browser_root)
         remove_yellowfox_native_window_button_css(browser_root)

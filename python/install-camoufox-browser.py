@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install official Windows x64 Camoufox releases beside the active browser."""
+"""Install official Camoufox releases beside the active browser."""
 from __future__ import annotations
 
 import argparse
@@ -15,11 +15,14 @@ import zipfile
 from pathlib import Path
 
 import requests
+import yellowfox_platform as platform_layout
 from yellowfox_camoufox_home import configure_camoufox_home
 
 configure_camoufox_home()
 from camoufox.multiversion import BROWSERS_DIR, COMPAT_FLAG, CONFIG_FILE
 
+OS_NAME = platform_layout.OS_NAME
+ARCH = platform_layout.browser_arch()
 TARGET_REPO = "official"
 GITHUB_REPO = "daijro/camoufox"
 FOLDER_PATTERN = re.compile(r"\d+(?:\.\d+)+-[A-Za-z]+\.\d+")
@@ -65,7 +68,7 @@ def asset_from_release(release):
         raise RuntimeError("The release is not marked stable by its publisher.")
     folder = str(release.get("tag_name", "")).removeprefix("v")
     version_key(folder)
-    name = f"camoufox-{folder}-win.x86_64.zip"
+    name = platform_layout.browser_asset_name(folder, os_name=OS_NAME, arch=ARCH)
     for item in release.get("assets", []):
         if item.get("name") != name or item.get("state") != "uploaded":
             continue
@@ -79,7 +82,7 @@ def asset_from_release(release):
         return dict(version=version, build=build, url=url, digest=digest.lower(),
                     asset_size=int(item["size"]), asset_id=item["id"],
                     asset_updated_at=item["updated_at"], is_prerelease=False)
-    raise RuntimeError("This release has no Windows x64 browser archive yet.")
+    raise RuntimeError(f"This release has no browser archive for {OS_NAME} {ARCH}.")
 
 
 def load_latest_asset(folder=None):
@@ -201,12 +204,28 @@ def update_lock():
                 msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
 
 
+def restore_executable_bits(root, archive):
+    """zipfile drops Unix permissions, and Linux/macOS browsers cannot start without +x."""
+    if os.name == "nt":
+        return
+    for member in archive.infolist():
+        if member.is_dir():
+            continue
+        mode = (member.external_attr >> 16) & 0o777
+        if not mode:
+            continue
+        try:
+            (root / member.filename.replace("\\", "/")).chmod(mode)
+        except OSError:
+            pass
+
+
 def install_zip(zip_path, asset):
     folder = asset_folder(asset)
     parent = BROWSERS_DIR / TARGET_REPO
     target = parent / folder
     parent.mkdir(parents=True, exist_ok=True)
-    if not (target / "version.json").exists() or not (target / "camoufox.exe").exists():
+    if not (target / "version.json").exists() or not platform_layout.browser_is_installed(target, os_name=OS_NAME):
         verify_archive(zip_path, asset)
         progress("Распаковка файлов ядра…")
         with tempfile.TemporaryDirectory(dir=parent, prefix=".install-") as temporary:
@@ -218,7 +237,13 @@ def install_zip(zip_path, asset):
                     if not resolved.is_relative_to(staging.resolve()) or (member.external_attr >> 16) & 0o170000 == 0o120000:
                         raise RuntimeError("Unsafe browser archive entry.")
                 archive.extractall(staging)
-            for required in ("camoufox.exe", "application.ini", "omni.ja"):
+                restore_executable_bits(staging, archive)
+            if os.name != "nt":
+                binary = platform_layout.browser_binary(staging, os_name=OS_NAME)
+                if binary.is_file():
+                    binary.chmod(0o755)
+            required_files = platform_layout.BROWSER_REQUIRED_FILES[platform_layout.require_platform(OS_NAME)]
+            for required in required_files:
                 if not (staging / required).is_file():
                     raise RuntimeError(f"Incomplete browser archive: {required} missing.")
             atomic_json(staging / "version.json", {**asset, "prerelease": False})
@@ -242,9 +267,10 @@ def install_asset(asset):
         current = current_install_state()
         if current["installed"] and version_key(current["folder"]) > version_key(asset_folder(asset)):
             raise RuntimeError("Refusing to downgrade the active browser.")
-        archive = CONFIG_FILE.parent / f"camoufox-{asset_folder(asset)}-win.x86_64.zip"
+        archive = CONFIG_FILE.parent / platform_layout.browser_asset_name(
+            asset_folder(asset), os_name=OS_NAME, arch=ARCH)
         target = BROWSERS_DIR / TARGET_REPO / asset_folder(asset)
-        if not (target / "version.json").exists() or not (target / "camoufox.exe").exists():
+        if not (target / "version.json").exists() or not platform_layout.browser_is_installed(target, os_name=OS_NAME):
             download_with_resume(asset["url"], archive, asset["asset_size"])
         return install_zip(archive, asset)
 

@@ -20,7 +20,10 @@ class UpdateTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.patches = [patch.object(u, 'CONFIG_FILE', self.root / 'config.json'),
                         patch.object(u, 'BROWSERS_DIR', self.root / 'browsers'),
-                        patch.object(u, 'COMPAT_FLAG', self.root / '.flag')]
+                        patch.object(u, 'COMPAT_FLAG', self.root / '.flag'),
+                        # The fixtures below model the Windows archive layout.
+                        patch.object(u, 'OS_NAME', 'win'),
+                        patch.object(u, 'ARCH', 'x86_64')]
         for item in self.patches:
             item.start()
         self.old = {'active_version': 'browsers/coryking/142.0.1-fork.26', 'pinned': '142.0.1-fork.26', 'channel': 'coryking/stable'}
@@ -96,11 +99,24 @@ class UpdateTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             u.version_key('../../152.0.4-beta.30')
 
-    def test_prerelease_and_missing_windows_asset_rejected(self):
+    def test_prerelease_and_missing_platform_asset_rejected(self):
         with self.assertRaisesRegex(RuntimeError, 'stable'):
             u.asset_from_release({'prerelease': True})
-        with self.assertRaisesRegex(RuntimeError, 'Windows'):
+        with self.assertRaisesRegex(RuntimeError, 'no browser archive for win'):
             u.asset_from_release({'tag_name': 'v152.0.4-beta.30', 'assets': []})
+
+    def test_linux_archive_requires_the_linux_binary(self):
+        path = self.root / 'browser.zip'
+        with zipfile.ZipFile(path, 'w') as z:
+            z.writestr('camoufox.exe', b'wrong platform')
+            z.writestr('application.ini', b'version')
+            z.writestr('omni.ja', b'resources')
+        asset = {'version': '152.0.4', 'build': 'beta.30', 'asset_size': path.stat().st_size,
+                 'digest': 'sha256:' + hashlib.sha256(path.read_bytes()).hexdigest()}
+        with patch.object(u, 'OS_NAME', 'lin'):
+            with self.assertRaisesRegex(RuntimeError, 'camoufox-bin'):
+                u.install_zip(path, asset)
+        self.assertEqual(self.old, u.read_config())
 
     def test_activation_failure_preserves_config_and_allows_retry(self):
         path, asset = self.archive()
