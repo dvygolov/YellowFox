@@ -102,11 +102,11 @@ jobs:
 
       - name: Package (Linux)
         if: runner.os == 'Linux'
-        run: ./packaging/make-linux-package.sh artifacts/publish/app artifacts/publish/cli artifacts/package "$YELLOWFOX_VERSION" x64
+        run: bash packaging/make-linux-package.sh artifacts/publish/app artifacts/publish/cli artifacts/package "$YELLOWFOX_VERSION" x64
 
       - name: Package (macOS)
         if: runner.os == 'macOS'
-        run: ./packaging/make-macos-app.sh artifacts/publish/app artifacts/publish/cli artifacts/package "$YELLOWFOX_VERSION" "${{ matrix.name == 'macos-arm64' && 'arm64' || 'x64' }}"
+        run: bash packaging/make-macos-app.sh artifacts/publish/app artifacts/publish/cli artifacts/package "$YELLOWFOX_VERSION" "${{ matrix.name == 'macos-arm64' && 'arm64' || 'x64' }}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
