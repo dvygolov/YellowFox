@@ -1133,6 +1133,7 @@ public class BrowserService
         EnsureUserPref(userJsLines, "browser.preonboarding.enabled", "false");
         EnsureUserPref(userJsLines, "browser.tabs.drawInTitlebar", "false");
         EnsureUserPref(userJsLines, "browser.tabs.inTitlebar", "0");
+        ApplyTabUiPrefs(userJsLines);
         EnsureUserPref(userJsLines, "taskbar.grouping.useprofile", "true");
         EnsureUserPref(userJsLines, "browser.startup.blankWindow", "false");
         EnsureUserPref(userJsLines, "extensions.autoDisableScopes", "0");
@@ -2249,6 +2250,7 @@ public class BrowserService
         EnsureUserPref(lines, "browser.preonboarding.enabled", "false");
         EnsureUserPref(lines, "browser.tabs.drawInTitlebar", "false");
         EnsureUserPref(lines, "browser.tabs.inTitlebar", "0");
+        ApplyTabUiPrefs(lines);
         EnsureUserPref(lines, "taskbar.grouping.useprofile", "true");
         EnsureUserPref(lines, "browser.startup.blankWindow", "false");
         EnsureUserPref(lines, "extensions.autoDisableScopes", "0");
@@ -2274,6 +2276,12 @@ public class BrowserService
         RemoveUserPref(lines, "browser.uiCustomization.state");
 
         File.WriteAllLines(prefsPath, lines);
+    }
+
+    private static void ApplyTabUiPrefs(List<string> lines)
+    {
+        EnsureUserPref(lines, "browser.tabs.hoverPreview.enabled", "false");
+        EnsureUserPref(lines, "browser.tabs.hoverPreview.showThumbnails", "false");
     }
 
     private static void ApplyNavigationPrefs(List<string> lines)

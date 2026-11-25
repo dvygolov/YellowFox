@@ -508,6 +508,7 @@ public class BrowserServiceTests : IDisposable
     {
         File.WriteAllText(Path.Combine(_testDataDir, "prefs.js"), """
         user_pref("browser.toolbars.bookmarks.visibility", "always");
+        user_pref("browser.tabs.hoverPreview.enabled", true);
         user_pref("toolkit.legacyUserProfileCustomizations.stylesheets", false);
         """);
 
@@ -519,6 +520,9 @@ public class BrowserServiceTests : IDisposable
         var prefsJs = File.ReadAllText(Path.Combine(_testDataDir, "prefs.js"));
         Assert.Contains("browser.toolbars.bookmarks.visibility\", \"never\"", prefsJs);
         Assert.DoesNotContain("browser.toolbars.bookmarks.visibility\", \"always\"", prefsJs);
+        Assert.Contains("browser.tabs.hoverPreview.enabled\", false", prefsJs);
+        Assert.DoesNotContain("browser.tabs.hoverPreview.enabled\", true", prefsJs);
+        Assert.Contains("browser.tabs.hoverPreview.showThumbnails\", false", prefsJs);
         Assert.DoesNotContain("toolkit.legacyUserProfileCustomizations.stylesheets", prefsJs);
         Assert.DoesNotContain("browser.uiCustomization.state", prefsJs);
     }
