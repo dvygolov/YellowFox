@@ -1,0 +1,20 @@
+/* YellowFox Ads Lite — declutter Ads Manager without losing functionality.
+ *
+ * Verified selectors from the live DOM (2026-11-26, act=1117375422709051):
+ *  - [role=button][aria-label="Opportunity score"] — the gamified score chip
+ *    next to the ad-account picker.
+ * Everything without a stable selector (promo banners, AI-assistant nav item)
+ * is handled by content.js via text matching. Table, editor, toolbars, menus
+ * and notifications bell are deliberately NOT touched here.
+ */
+
+/* Opportunity score chip (hide, keep account picker beside it intact). */
+[role="button"][aria-label="Opportunity score"] {
+  display: none !important;
+}
+
+/* Trending/education hovercards opened from metric headers
+   (AdsInsightsLayerView surfaces). Cosmetic only. */
+[role="dialog"][aria-label*="trending" i] {
+  display: none !important;
+}

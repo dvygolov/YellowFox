@@ -1,0 +1,38 @@
+{
+  "manifest_version": 2,
+  "name": "YellowFox Ads Lite",
+  "version": "0.1.0",
+  "description": "Lightens Facebook Ads Manager: blocks growth/telemetry/notification endpoints and hides clutter UI. YellowFox-built.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "yellowfox-ads-lite@yellowfox.local"
+    }
+  },
+  "permissions": [
+    "webRequest",
+    "webRequestBlocking",
+    "https://adsmanager.facebook.com/*",
+    "https://*.facebook.com/*"
+  ],
+  "background": {
+    "scripts": [
+      "background.js"
+    ],
+    "persistent": false
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://adsmanager.facebook.com/*",
+        "https://www.facebook.com/adsmanager/*"
+      ],
+      "css": [
+        "lite.css"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start"
+    }
+  ]
+}
