@@ -511,8 +511,25 @@ def descendant_process_ids(root_process_id):
     return set(created)
 
 
+WS_POPUP = 0x80000000
+WS_EX_APPWINDOW = 0x00040000
+
+
+def is_taskbar_app_window(style, exstyle, owner):
+    """Whether a top-level window is a real app window rather than a popup widget.
+
+    Firefox renders context menus, panels and tooltips as owned WS_POPUP
+    top-level windows of the browser process. They must never receive the
+    profile identity or a native frame: restyling an open popup makes it jump.
+    Only windows that get their own taskbar button qualify.
+    """
+    if style & WS_POPUP:
+        return False
+    return not owner or bool(exstyle & WS_EX_APPWINDOW)
+
+
 def browser_window_handles(root_process_id, executable_path=None):
-    """Visible top-level windows owned by the browser started as root_process_id."""
+    """Visible top-level app windows owned by the browser started as root_process_id."""
     if not sys.platform.startswith("win"):
         return []
 
@@ -525,6 +542,15 @@ def browser_window_handles(root_process_id, executable_path=None):
     user32.EnumWindows.argtypes = [enum_windows_proc, wintypes.LPARAM]
     user32.IsWindowVisible.argtypes = [wintypes.HWND]
     user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    get_window_long = user32.GetWindowLongPtrW if ctypes.sizeof(ctypes.c_void_p) == 8 else user32.GetWindowLongW
+    if ctypes.sizeof(ctypes.c_void_p) == 8:
+        get_window_long.restype = ctypes.c_longlong
+        get_window_long.argtypes = [wintypes.HWND, ctypes.c_int]
+    else:
+        get_window_long.restype = ctypes.c_long
+        get_window_long.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+    user32.GetWindow.restype = wintypes.HWND
 
     expected_image = _normalize_image_path(executable_path)
     process_ids = descendant_process_ids(root_process_id)
@@ -545,7 +571,11 @@ def browser_window_handles(root_process_id, executable_path=None):
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
         owner_process_id = int(owner.value)
         if owner_process_id in process_ids and image_matches(owner_process_id):
-            handles.append(hwnd)
+            style = int(get_window_long(hwnd, -16)) & 0xFFFFFFFF
+            exstyle = int(get_window_long(hwnd, -20)) & 0xFFFFFFFF
+            owner_hwnd = int(user32.GetWindow(hwnd, 4) or 0)
+            if is_taskbar_app_window(style, exstyle, owner_hwnd):
+                handles.append(hwnd)
         return True
 
     user32.EnumWindows(enum_windows_proc(callback), 0)

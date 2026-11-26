@@ -41,5 +41,22 @@ class DescendantProcessTests(unittest.TestCase):
         self.assertEqual({100}, descendants(parents, created, 100))
 
 
+class AppWindowFilterTests(unittest.TestCase):
+    """Firefox menus are owned WS_POPUP windows of the browser process; the
+    identity refresh must not restyle them or they jump while open."""
+
+    def test_popup_widgets_are_excluded(self):
+        popup = 0x96000000  # WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN
+        self.assertFalse(native.is_taskbar_app_window(popup, 0x88, 12345))
+        self.assertFalse(native.is_taskbar_app_window(popup, 0x88, 0))
+
+    def test_owned_dialogs_without_taskbar_button_are_excluded(self):
+        self.assertFalse(native.is_taskbar_app_window(0x16CF0000, 0x100, 12345))
+
+    def test_real_browser_windows_are_included(self):
+        self.assertTrue(native.is_taskbar_app_window(0x16CF0000, 0x100, 0))
+        self.assertTrue(native.is_taskbar_app_window(0x16CF0000, 0x40100, 12345))
+
+
 if __name__ == "__main__":
     unittest.main()
